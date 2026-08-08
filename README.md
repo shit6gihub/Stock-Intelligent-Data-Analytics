@@ -1,14 +1,14 @@
-# 盯盘侠 PanWatch
+# 数智分析 (Stock-Intelligent-Data-Analytics)
 
 **自托管 AI 盯盘助手 · 集成 [TradingAgents](https://github.com/TauricResearch/TradingAgents) 多 Agent 投资决策** — A 股 / 港股 / 美股实时监控、持仓管理、智能分析、全渠道推送
 
-[![GitHub stars](https://img.shields.io/github/stars/TNT-Likely/PanWatch?style=flat&logo=github&color=yellow)](https://github.com/TNT-Likely/PanWatch/stargazers)
-[![Docker Pulls](https://img.shields.io/docker/pulls/sunxiao0721/panwatch?logo=docker&label=docker%20pulls&color=2496ED)](https://hub.docker.com/r/sunxiao0721/panwatch)
+[![GitHub stars](https://img.shields.io/github/stars/xiaoze-hub/Stock-Intelligent-Data-Analytics?style=flat&logo=github&color=yellow)](https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics/stargazers)
+[![GHCR Package](https://img.shields.io/badge/ghcr-stock--intelligent--data--analytics-2496ED?logo=docker&logoColor=white)](https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics/pkgs/container/stock-intelligent-data-analytics)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Last commit](https://img.shields.io/github/last-commit/TNT-Likely/PanWatch)](https://github.com/TNT-Likely/PanWatch/commits/main)
-[![PWA](https://img.shields.io/badge/PWA-installable-5A0FC8?logo=pwa&logoColor=white)](https://github.com/TNT-Likely/PanWatch)
+[![Last commit](https://img.shields.io/github/last-commit/xiaoze-hub/Stock-Intelligent-Data-Analytics)](https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics/commits/main)
+[![PWA](https://img.shields.io/badge/PWA-installable-5A0FC8?logo=pwa&logoColor=white)](https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics)
 
-![盯盘侠 PanWatch · TradingAgents 深度分析演示](docs/screenshots/tradingagents-demo.gif)
+![数智分析 · TradingAgents 深度分析演示](docs/screenshots/tradingagents-demo.gif)
 
 > 🧠 **持仓页点一下 → TradingAgents 9-Agent 投研团队接力分析 → 看多看空辩论 → 风控审查 → PM 决策书,3-5 分钟一条完整推理链,结论直推到你的 IM。**
 
@@ -31,7 +31,7 @@
 
 </details>
 
-> 💡 如果盯盘侠对你有帮助，点右上角 ⭐ **Star** 支持一下 —— 这是对开源项目最好的鼓励，也能让更多人发现它。
+> 💡 如果数智分析对你有帮助，点右上角 ⭐ **Star** 支持一下 —— 这是对开源项目最好的鼓励，也能让更多人发现它。
 
 ## 🧠 深度分析：TradingAgents 多 Agent 决策
 
@@ -41,7 +41,7 @@
 - 3-5 分钟输出完整推理链，结论同步推送到 Telegram / 微信 / 钉钉
 - 默认 deepseek-chat，单次 ~$0.05，月度预算可控
 
-## 为什么选择盯盘侠？
+## 为什么选择数智分析？
 
 - **数据私有** — 自托管部署，持仓数据不经过任何第三方
 - **AI 原生** — 不是简单的指标堆砌，而是让 AI 理解你的持仓、风格和目标
@@ -105,7 +105,7 @@ docker run -d \
   --name panwatch \
   -p 8000:8000 \
   -v panwatch_data:/app/data \
-  sunxiao0721/panwatch:latest
+  ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest
 ```
 
 访问 `http://localhost:8000`，首次使用设置账号密码即可。
@@ -121,7 +121,7 @@ docker run -d \
 version: '3.8'
 services:
   panwatch:
-    image: sunxiao0721/panwatch:latest
+    image: ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest
     container_name: panwatch
     ports:
       - "8000:8000"
@@ -203,11 +203,11 @@ cd frontend && pnpm install && pnpm dev       # 前端 :5183
 本项目内置 GitHub Actions 发布流程：
 
 - 打 tag（例如 `0.2.3`）会自动构建并推送 Docker 镜像
-  - `sunxiao0721/panwatch:0.2.3`
-  - `sunxiao0721/panwatch:latest`
+  - `ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:0.2.3`
+  - `ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest`
 - 也支持在 GitHub Actions 里手动触发（workflow_dispatch）指定版本号
 
-需要在仓库 Secrets 中配置：
+需要在仓库 Secrets 中配置（发布到 GitHub Container Registry）：
 
 - `DOCKERHUB_USERNAME`
 - `DOCKERHUB_TOKEN`
