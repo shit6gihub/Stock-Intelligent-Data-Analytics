@@ -38,7 +38,8 @@ SYSTEM_PROMPT = """你是 PanWatch 的 AI 投资助手。
 - 给出明确的观点和理由
 - 涉及买卖建议时说明风险
 - 用中文回答
-- 保持简洁，避免冗余"""
+- 保持简洁，避免冗余
+- 用户问「新闻 / 资讯 / 热点 / 今天有什么消息」类问题时，必须调用 get_market_news 工具获取实时资讯热榜与每日简报，再基于返回内容回答；严禁在不调用工具的情况下凭记忆编造新闻、题材或资金流向。若工具返回为空，如实说明「暂无实时资讯数据」并建议盘后重试。"""
 
 MAX_HISTORY_MESSAGES = 20
 MAX_TOOL_ROUNDS = 5
@@ -136,6 +137,21 @@ CHAT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_market_news",
+            "description": "获取市场资讯与新闻：聚合全网/财经媒体热点话题(news_hotlist)与 AI 生成的每日市场简报(briefings, 早/午/收盘/晚盘)。用于回答「有什么新闻/资讯/热点」「今天消息面」「近期题材催化」等新闻资讯类问题。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "资讯热榜返回条数，默认 15", "default": 15},
+                    "briefing_type": {"type": "string", "description": "每日简报类型：morning(早盘)/noon(午盘)/close(收盘)/evening(晚间)，不填则返回全部", "default": ""},
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 
@@ -210,6 +226,58 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
             except Exception as e:
                 logger.warning(f"TDX 问小达工具失败: {e}")
                 return f"通达信问小达查询失败: {e}"
+        elif name == "get_market_news":
+            limit = int((args.get("limit") or 15))
+            briefing_type = (args.get("briefing_type") or "").strip()
+            try:
+                from src.collectors.wudao_mcp_client import WudaoMCPClient
+                cli = WudaoMCPClient()
+                cli._initialize()
+                parts = []
+                try:
+                    hot = cli.call_tool("news_hotlist", {"limit": limit})
+                    # wudao news_hotlist 返回 {'text': '...'} 或 {'rows':[...]}
+                    hot_text = hot.get("text") if isinstance(hot, dict) else ""
+                    if hot_text:
+                        parts.append("【资讯热榜】\n" + str(hot_text))
+                    else:
+                        hot_rows = hot.get("rows") or hot.get("data") or hot.get("items") or []
+                        if isinstance(hot_rows, dict):
+                            hot_rows = hot_rows.get("rows") or hot_rows.get("data") or []
+                        if hot_rows:
+                            lines = ["【资讯热榜】"]
+                            for r in hot_rows[:limit]:
+                                if isinstance(r, dict):
+                                    title = r.get("title") or r.get("name") or r.get("keyword") or ""
+                                    heat = r.get("heat") or r.get("hot") or r.get("count") or ""
+                                    tag = r.get("tag") or r.get("source") or ""
+                                    line = "- " + str(title)
+                                    if tag:
+                                        line += " #" + str(tag)
+                                    if heat:
+                                        line += " (热度" + str(heat) + ")"
+                                    lines.append(line)
+                            parts.append("\n".join(lines))
+                except Exception as e:
+                    logger.warning(f"news_hotlist 失败: {e}")
+                try:
+                    brief_args = {"detailLevel": "digest"}
+                    if briefing_type:
+                        brief_args["type"] = briefing_type
+                    brief = cli.call_tool("briefings", brief_args)
+                    brief_text = ""
+                    if isinstance(brief, dict):
+                        brief_text = brief.get("text") or brief.get("digest") or ""
+                    if brief_text:
+                        parts.append("【每日简报】\n" + str(brief_text))
+                except Exception as e:
+                    logger.warning(f"briefings 失败: {e}")
+                if not parts:
+                    return "暂无实时资讯数据（可能非交易时段或数据源未就绪），建议盘后重试。"
+                return "\n\n".join(parts)
+            except Exception as e:
+                logger.error(f"get_market_news 工具失败: {e}")
+                return f"资讯获取失败: {e}"
         else:
             return f"未知工具: {name}"
     except Exception as e:
