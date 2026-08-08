@@ -214,13 +214,47 @@ cd frontend && pnpm install && pnpm dev       # 前端 :5183
 
 </details>
 
-## 捐赠支持
+## 🚀 新增核心功能（本 fork 定制）
 
-如果你觉得 PanWatch 有帮助，欢迎请作者喝杯咖啡：
+基于上游 PanWatch 深度定制，新增以下能力（均已合入 `ghcr.io/xiaoze-hub/stock-intelligent-data-analytics` 镜像）：
 
-| 微信赞赏 | 支付宝 |
-|:---:|:---:|
-| <img src="./docs/donate/wechat.png" width="240" /> | <img src="./docs/donate/alipay.png" width="240" /> |
+### 1. 四模型融合预测引擎（8010 独立服务）
+- **模型**：XGBoost / 线性回归 / Kronos（时序）/ Lag-Llama（长期）四模型并行预测个股价格
+- **质量修复**：自动剔除离谱外推（±40% 截断）、权重/置信度按方向一致率动态回算（不再写死 100%）
+- **LLM 情绪总结**：基于公告/板块/资金面，输出自然语言点评（如「连续发布异常波动公告 → 监管风险」）
+- **企微推送美化**：专用 `generate_wecom_report()`，emoji 分段 + 分隔线 + 四模型逐行 + 去 JSON，手机友好
+
+### 2. 主力资金面融合（关键特征）
+- **数据源**：东方财富标准口径（超大单+大单净买入），经 8000 主后端 `tdx ask`（问小达）接口注入 8010
+- **参与决策**：计算 `capital_score`（连续净流入天数 / 合计力度 / 当日方向 → -1~+1），联动模型权重与策略合成
+- **展示**：近 5 日主力净流入趋势 + 对策略影响结论（偏多确认看多 / 偏空下调）
+
+### 3. 龙虎榜游资信号
+- **数据源**：`marketdata` 包 ftshare vendor（经 8000 `/api/market-data/dragon-tiger` 代理，Key 实时来自 UI）
+- **展示**：当日上榜明细 + 全市场情绪 + 游资净买合计，作为短线博弈特征
+
+### 4. 数据源 Key 全经 UI 维护
+- 所有 key（zhitu / wudao / tdx / itick / ftshare 等）在「设置 → 接口Key」配置，运行时从 DB 读取，国内外通用
+
+## 🔌 接口与 Key 获取地址
+
+| 数据源 | 用途 | Key 获取地址 |
+|--------|------|--------------|
+| **通达信 / 问小达 (tdx)** | 行情/K线/资金流(东财口径)/选股 | 通达信开放平台 / 问小达开放 API（项目内 `src/tdx_mcp/`）
+| **悟道 (wudao) MCP** | A股实时数据/龙虎榜/情绪/公告 | [wudao 开放平台](https://wudao.com) 申请 `WUDAO_MCP_TOKEN`
+| **智兔 (zhitu) MCP** | 资金流/公告/概念板块 | [智兔数科](https://zhitu.com) 申请 `ZHITU_TOKEN`
+| **itick** | 实时/历史行情补充 | [itick API](https://itick.org) 申请 `ITICK_TOKEN`
+| **ftshare (marketdata)** | 龙虎榜/北向等 | 经 8000 代理，Key 在「设置 → 接口Key」配置
+| **LLM (情绪打分)** | 8010 预测引擎情绪点评 | OpenAI 兼容端点（默认 `https://api.agnes-ai.cn/v1`，模型 `agnes-2.5-flash`）
+
+> 所有 Key 在 Web UI「设置 → 接口Key」统一维护，无需硬编码，改后实时生效。
+
+## 📦 版本
+
+- **当前版本**：`v0.1.0`（镜像 tag 与 GitHub Release 对齐）
+- **容器镜像**：`ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest`（已公开，匿名可拉）
+- **更新日志**：见 [Releases](https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics/releases)
+- 打 tag（如 `v0.1.1`）触发 GitHub Actions 自动构建并推送镜像到 GHCR
 
 ## 贡献
 
