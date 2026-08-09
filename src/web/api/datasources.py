@@ -28,6 +28,8 @@ TYPE_LABELS = {
     "shareholders": "股东户数",
     "dividend": "分红",
     "northbound": "北向资金",
+    "board_capital_flow": "板块资金",
+    "market_capital_flow": "大盘资金",
 }
 
 
@@ -83,6 +85,8 @@ _ENGINE_ATTACHED_TYPES = {
     "shareholders",
     "dividend",
     "northbound",
+    "board_capital_flow",
+    "market_capital_flow",
 }
 
 

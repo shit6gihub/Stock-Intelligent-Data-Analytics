@@ -59,6 +59,11 @@ SETTING_DESCRIPTIONS = {
     "wudao_mcp_token": "悟道(wudao) MCP 接口 Token(竞价/题材数据源)",
     "zhitu_token": "智兔(zhitu) 数据接口 Token(分红/股东数据源,200次/天)",
     "tdx_api_key": "通达信问小达 MCP 接口 Token(TDX 自然语言投研/选股数据源)",
+    # ---- 同花顺登录态(扫码登录维护,ths_auth.py 自动续期) ----
+    "ths_account": "同花顺账号(扫码登录自动写入,勿手改)",
+    "ths_password": "同花顺登录凭证(扫码返回,非用户密码,自动续期用)",
+    "ths_userid": "同花顺用户ID(登录后自动写入)",
+    "ths_expires": "同花顺 session 过期时间(自动续期后更新)",
     # ---- 预测引擎 LLM 配置(设置页维护 → sync 脚本同步到主机 env) ----
     "forecast_llm_base_url": "预测引擎 LLM 接口地址(Base URL)",
     "forecast_llm_model": "预测引擎 LLM 模型名(情绪打分)",
@@ -66,7 +71,7 @@ SETTING_DESCRIPTIONS = {
 }
 
 # 敏感 key:列表接口不回显完整值,只返回是否已配置
-SECRET_SETTING_KEYS = {"wudao_mcp_token", "zhitu_token", "forecast_llm_api_key", "tdx_api_key"}
+SECRET_SETTING_KEYS = {"wudao_mcp_token", "zhitu_token", "forecast_llm_api_key", "tdx_api_key", "ths_password"}
 
 # 预测引擎 LLM 配置 key(设置页维护 → sync_forecast_llm.sh 同步到主机 env)
 FORECAST_LLM_KEYS = ("forecast_llm_base_url", "forecast_llm_model", "forecast_llm_api_key")

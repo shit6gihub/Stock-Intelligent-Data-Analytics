@@ -699,6 +699,31 @@ DATA_SOURCE_SEEDS: list[dict] = [
             "supports_batch": False,
             "test_symbols": [],
         },
+        # 板块/大盘资金数据源(同花顺,免登录页面版)
+        {
+            "name": "同花顺板块资金",
+            "type": "board_capital_flow",
+            "provider": "ths_flow",
+            "config": {
+                "description": "同花顺行业/概念资金流向(页面版解析,免登录,海外可达)。",
+            },
+            "enabled": True,
+            "priority": 0,
+            "supports_batch": False,
+            "test_symbols": [],
+        },
+        {
+            "name": "同花顺大盘资金",
+            "type": "market_capital_flow",
+            "provider": "ths_market_flow",
+            "config": {
+                "description": "全市场行业资金合计(大盘主力净额)。",
+            },
+            "enabled": True,
+            "priority": 0,
+            "supports_batch": False,
+            "test_symbols": [],
+        },
         # K线截图数据源
         {
             "name": "雪球K线截图",
