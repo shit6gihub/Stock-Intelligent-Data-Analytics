@@ -60,6 +60,30 @@ export default function ShadowAccountPage() {
     }
   }
 
+  const openReportHtml = async () => {
+    if (!result) return
+    try {
+      const token = localStorage.getItem('token') || ''
+      const resp = await fetch(result.report_html, { headers: { Authorization: `Bearer ${token}` } })
+      const html = await resp.text()
+      const w = window.open('', '_blank')
+      if (w) { w.document.write(html); w.document.close() }
+    } catch { window.open(result.report_html, '_blank') }
+  }
+
+  const downloadPdf = async () => {
+    if (!result?.report_pdf) return
+    try {
+      const token = localStorage.getItem('token') || ''
+      const resp = await fetch(result.report_pdf, { headers: { Authorization: `Bearer ${token}` } })
+      const blob = await resp.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = `${result.shadow_id}.pdf`; a.click()
+      URL.revokeObjectURL(url)
+    } catch { window.open(result.report_pdf, '_blank') }
+  }
+
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
       {/* 页头 */}
@@ -124,15 +148,15 @@ export default function ShadowAccountPage() {
                 <TrendingUp className="w-4 h-4 text-primary" /> 行为画像
               </h2>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <StatCard icon={Activity} label="总交易回合" value={fmt(result.profile.total_rounds)} color="text-blue-500" />
-                <StatCard icon={CheckCircle2} label="盈利回合" value={fmt(result.profile.win_rounds)} sub={`胜率 ${result.profile.win_rate ?? '--'}%`} color="text-emerald-500" />
-                <StatCard icon={TrendingUp} label="累计收益" value={fmt(result.profile.total_pnl)} color="text-emerald-500" />
-                <StatCard icon={Activity} label="平均持有时长" value={fmt(result.profile.avg_holding_days, '天')} color="text-violet-500" />
+                <StatCard icon={Activity} label="总交易回合" value={fmt(result.profile.total_roundtrips)} color="text-blue-500" />
+                <StatCard icon={CheckCircle2} label="盈利回合" value={fmt(result.profile.profitable_roundtrips)} sub={result.profile.total_roundtrips ? `胜率 ${((result.profile.profitable_roundtrips / result.profile.total_roundtrips) * 100).toFixed(0)}%` : undefined} color="text-emerald-500" />
+                <StatCard icon={Activity} label="平均持有时长" value={fmt(result.profile.typical_holding_days, '天')} color="text-violet-500" />
+                <StatCard icon={Target} label="偏好市场" value={(result.profile.preferred_markets || []).join(', ') || '--'} color="text-amber-500" />
               </div>
-              {result.profile.behavior_labels && result.profile.behavior_labels.length > 0 && (
+              {result.profile.rules && result.profile.rules.length > 0 && (
                 <div className="flex flex-wrap gap-2">
-                  {result.profile.behavior_labels.map((b: string) => (
-                    <span key={b} className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-1 text-[11px] text-primary">{b}</span>
+                  {result.profile.rules.map((r: string) => (
+                    <span key={r} className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-1 text-[11px] text-primary">{r}</span>
                   ))}
                 </div>
               )}
@@ -160,21 +184,21 @@ export default function ShadowAccountPage() {
                 <Shield className="w-4 h-4 text-primary" /> 归因分析
               </h2>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <StatCard icon={TrendingUp} label="影子收益" value={fmt(result.attribution.shadow_pnl)} color="text-emerald-500" />
-                <StatCard icon={Activity} label="实际收益" value={fmt(result.attribution.real_pnl)} color="text-blue-500" />
-                <StatCard icon={CheckCircle2} label="有效规则" value={fmt(result.attribution.rule_count)} color="text-violet-500" />
-                <StatCard icon={Target} label="诊断项" value={fmt(result.attribution.diagnosis_count)} color="text-amber-500" />
+                <StatCard icon={TrendingUp} label="影子收益" value={fmt(result.attribution.shadow_total_pnl)} color="text-emerald-500" />
+                <StatCard icon={Activity} label="实际收益" value={fmt(result.attribution.real_total_pnl)} color="text-blue-500" />
+                <StatCard icon={CheckCircle2} label="差值" value={fmt(result.attribution.delta_pnl)} color="text-violet-500" />
+                <StatCard icon={Target} label="归因项" value={fmt((result.attribution.attribution || []).length)} color="text-amber-500" />
               </div>
             </div>
           )}
 
           {/* 报告链接 */}
           <div className="flex flex-wrap gap-2 pt-2">
-            <Button size="sm" onClick={() => window.open(result.report_html, '_blank')}>
+            <Button size="sm" onClick={openReportHtml}>
               <FileText className="w-3.5 h-3.5 mr-1.5" /> 查看完整报告
             </Button>
             {result.report_pdf && (
-              <Button size="sm" variant="secondary" onClick={() => result.report_pdf && window.open(result.report_pdf, '_blank')}>
+              <Button size="sm" variant="secondary" onClick={downloadPdf}>
                 <Download className="w-3.5 h-3.5 mr-1.5" /> 下载 PDF
               </Button>
             )}
