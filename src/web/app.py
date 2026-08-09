@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -49,9 +51,10 @@ app = FastAPI(
 )
 
 app.add_middleware(ResponseWrapperMiddleware)
+_cors_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:8000").split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

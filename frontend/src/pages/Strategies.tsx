@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Search, BookOpen, TrendingUp, TrendingDown, AlertCircle, CheckCircle2, Loader2, Play, X, Sparkles } from 'lucide-react'
+import { Search, BookOpen, AlertCircle, CheckCircle2, Loader2, Play } from 'lucide-react'
 import { strategiesApi, type StrategyItem, type ApplyResult } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Input } from '@panwatch/base-ui/components/ui/input'

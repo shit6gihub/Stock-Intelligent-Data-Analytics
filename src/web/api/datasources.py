@@ -101,12 +101,20 @@ def _is_orphan(type_: str, provider: str) -> bool:
 def _to_response(source: DataSource, health_map: dict | None = None) -> dict:
     """转换为响应格式。health_map: {provider: 指标快照};缺失则 health=None。"""
     health = (health_map or {}).get(source.provider)
+    raw_keys = (source.config or {}).get("api_keys", [])
+    if isinstance(raw_keys, str):
+        key_count = 1 if raw_keys.strip() else 0
+    elif isinstance(raw_keys, list):
+        key_count = sum(1 for key in raw_keys if isinstance(key, str) and key.strip())
+    else:
+        key_count = 0
     return {
         "id": source.id,
         "name": source.name,
         "type": source.type,
         "type_label": TYPE_LABELS.get(source.type, source.type),
         "provider": source.provider,
+        "key_count": key_count,
         "config": source.config or {},
         "enabled": source.enabled,
         "priority": source.priority,

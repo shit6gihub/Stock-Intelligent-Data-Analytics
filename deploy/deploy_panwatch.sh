@@ -41,7 +41,10 @@ IMAGE="${PANWATCH_IMAGE:-$IMAGE}"
 REPO_DIR="${PANWATCH_REPO:-$REPO_DIR}"
 TOKEN="${WUDAO_MCP_TOKEN:-$TOKEN}"
 AUTH_USERNAME="${AUTH_USERNAME:-admin}"
-AUTH_PASSWORD="${AUTH_PASSWORD:-admin123}"
+if [ -z "${AUTH_PASSWORD:-}" ]; then
+  AUTH_PASSWORD="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 16)"
+  echo "未提供 AUTH_PASSWORD，已生成一次性初始密码: $AUTH_PASSWORD"
+fi
 # Obsidian vault 路径(报告同步目标): 主机真实路径挂载进容器
 OBSIDIAN_VAULT="${OBSIDIAN_VAULT:-/home/ubuntu/Obsidian/FinanceVault}"
 
@@ -227,6 +230,6 @@ if [ -f "$REPO_DIR/forecast_server.py" ]; then
   echo ""
 fi
 echo "=============================================="
-echo " ✅ 完成。数据卷保留账号: admin/admin123"
+echo " ✅ 完成。请使用上方输出的账号密码登录，并立即修改密码。"
 echo "    wudao token: $([ -n "$TOKEN" ] && echo '已配置(环境变量)' || echo '未配置,用 --full 时加 WUDAO_MCP_TOKEN=<token>')"
 echo "=============================================="

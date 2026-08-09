@@ -23,6 +23,7 @@ interface IndexDetail {
   klines: { date: string; open: number; close: number; high: number; low: number; volume: number }[]
   amount_trend: { date: string; amount: number }[]
   note?: string
+  error?: string
 }
 
 // 成交额柱状图(大盘资金流替代: 近20日成交额)

@@ -99,7 +99,7 @@ export default function ForecastPage() {
   const [searchResults, setSearchResults] = useState<{ symbol: string; name: string }[]>([])
   const [stockName, setStockName] = useState('')
   const [targetDate, setTargetDate] = useState('')
-  const [lastKlineDate, setLastKlineDate] = useState('')
+  const [lastKlineDate] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<PredictResult | null>(null)
   const [backtest, setBacktest] = useState<BacktestResult | null>(null)
@@ -240,7 +240,7 @@ export default function ForecastPage() {
         { timeoutMs: 300000 }
       )
       let pollDone = false
-      const pollPromise = (async () => {
+      void (async () => {
         while (!pollDone) {
           await new Promise(res => setTimeout(res, 1500))
           try {

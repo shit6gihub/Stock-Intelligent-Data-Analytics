@@ -10,7 +10,11 @@ set -e
 
 PANWATCH_URL="${PANWATCH_URL:-http://localhost:8000}"
 USERNAME="${AUTH_USERNAME:-admin}"
-PASSWORD="${AUTH_PASSWORD:-admin123}"
+PASSWORD="${AUTH_PASSWORD:-}"
+if [ -z "$PASSWORD" ]; then
+  echo "错误: 请设置 AUTH_PASSWORD 后再同步预测引擎配置" >&2
+  exit 1
+fi
 ENV_FILE="${ENV_FILE:-$HOME/.panwatch_forecast.env}"
 
 echo "▶ 登录 PanWatch..."

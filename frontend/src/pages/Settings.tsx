@@ -16,6 +16,15 @@ interface Setting {
   description: string
 }
 
+interface KeyDataSource {
+  id: number
+  name: string
+  type: string
+  provider: string
+  enabled: boolean
+  key_count?: number
+}
+
 interface TemplatePayload {
   version: number
   exported_at?: string
@@ -146,6 +155,7 @@ const FORECAST_LLM_KEYS = new Set(['forecast_llm_base_url', 'forecast_llm_model'
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Setting[]>([])
+  const [keyDataSources, setKeyDataSources] = useState<KeyDataSource[]>([])
   const [services, setServices] = useState<AIService[]>([])
   const [forecastModels, setForecastModels] = useState<any[]>([])
   const [forecastModelsLoading, setForecastModelsLoading] = useState(false)
@@ -259,14 +269,16 @@ export default function SettingsPage() {
 
   const load = async () => {
     try {
-      const [settingsData, servicesData, channelsData, versionData, healthData] = await Promise.all([
+      const [settingsData, keyDataSourcesData, servicesData, channelsData, versionData, healthData] = await Promise.all([
         fetchAPI<Setting[]>('/settings'),
+        fetchAPI<KeyDataSource[]>('/datasources'),
         fetchAPI<AIService[]>('/providers/services'),
         fetchAPI<NotifyChannel[]>('/channels'),
         fetchAPI<{ version: string }>('/settings/version'),
         fetchAPI<AgentsHealth>('/agents/health'),
       ])
       setSettings(settingsData)
+      setKeyDataSources(keyDataSourcesData)
       setServices(servicesData)
       setChannels(channelsData)
       setVersion(versionData.version)
@@ -974,6 +986,16 @@ export default function SettingsPage() {
               <div>
                 <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">接口 Key</h3>
                 <p className="text-[11px] text-muted-foreground mt-1">数据源接口凭证，保存在本机数据库，修改后立即生效（无需重启）。</p>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {keyDataSources.filter(s => (s.key_count ?? 0) > 0).map(s => (
+                    <span key={s.id} className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary" title={`${s.name} · ${s.provider}`}>
+                      {s.provider} · {s.key_count} 个 Key
+                    </span>
+                  ))}
+                  {keyDataSources.every(s => (s.key_count ?? 0) === 0) && (
+                    <span className="text-[10px] text-muted-foreground">当前接口 Key 为单 Key 配置</span>
+                  )}
+                </div>
               </div>
             </div>
             <div className="space-y-4">

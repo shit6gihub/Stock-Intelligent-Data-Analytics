@@ -1,6 +1,7 @@
 """认证 API - 简单的单用户 JWT 认证"""
 import os
 import hashlib
+import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -19,7 +20,7 @@ security = HTTPBearer(auto_error=False)
 
 # JWT 配置
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRE_DAYS = 30
+JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "12"))
 
 # 环境变量配置（Docker 部署用）
 ENV_AUTH_USERNAME = os.getenv("AUTH_USERNAME")
@@ -29,6 +30,7 @@ ENV_AUTH_PASSWORD = os.getenv("AUTH_PASSWORD")
 AUTH_USERNAME_KEY = "auth_username"
 PASSWORD_HASH_KEY = "auth_password_hash"
 JWT_SECRET_KEY = "jwt_secret"
+AUTH_TOKEN_VERSION_KEY = "auth_token_version"
 
 # JWT Secret 缓存
 _jwt_secret: str | None = None
@@ -76,27 +78,61 @@ class TokenResponse(BaseModel):
 
 
 def hash_password(password: str) -> str:
-    """简单的密码哈希"""
-    return hashlib.sha256(password.encode()).hexdigest()
+    """使用标准库 scrypt + 随机盐保存密码。"""
+    salt = secrets.token_bytes(16)
+    digest = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=2**14, r=8, p=1)
+    return f"scrypt${salt.hex()}${digest.hex()}"
 
 
-def create_token(expires_days: int = JWT_EXPIRE_DAYS) -> tuple[str, datetime]:
+def verify_password(password: str, stored: str) -> bool:
+    """校验 scrypt，并兼容旧版 SHA-256 哈希。"""
+    if stored.startswith("scrypt$"):
+        try:
+            _, salt_hex, digest_hex = stored.split("$", 2)
+            digest = hashlib.scrypt(password.encode("utf-8"), salt=bytes.fromhex(salt_hex), n=2**14, r=8, p=1)
+            return hmac.compare_digest(digest.hex(), digest_hex)
+        except (ValueError, TypeError):
+            return False
+    return hmac.compare_digest(hashlib.sha256(password.encode("utf-8")).hexdigest(), stored)
+
+
+def get_token_version(db: Session) -> int:
+    setting = db.query(AppSettings).filter(AppSettings.key == AUTH_TOKEN_VERSION_KEY).first()
+    return int(setting.value) if setting and setting.value.isdigit() else 1
+
+
+def bump_token_version(db: Session) -> int:
+    version = get_token_version(db) + 1
+    setting = db.query(AppSettings).filter(AppSettings.key == AUTH_TOKEN_VERSION_KEY).first()
+    if setting:
+        setting.value = str(version)
+    else:
+        db.add(AppSettings(key=AUTH_TOKEN_VERSION_KEY, value=str(version), description="认证 Token 版本"))
+    db.commit()
+    return version
+
+
+def create_token(expires_hours: int = JWT_EXPIRE_HOURS, token_version: int = 1) -> tuple[str, datetime]:
     """创建 JWT token"""
     now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(days=expires_days)
+    expires_at = now + timedelta(hours=expires_hours)
     payload = {
         "exp": expires_at,
         "iat": now,
         "sub": "user",
+        "jti": secrets.token_hex(16),
+        "ver": token_version,
     }
     token = jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
     return token, expires_at
 
 
-def verify_token(token: str) -> bool:
+def verify_token(token: str, db: Session | None = None) -> bool:
     """验证 JWT token"""
     try:
-        jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        if db is not None and int(payload.get("ver", 0)) != get_token_version(db):
+            return False
         return True
     except jwt.ExpiredSignatureError:
         return False
@@ -176,7 +212,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if not verify_token(credentials.credentials):
+    if not verify_token(credentials.credentials, db):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="登录已过期",
@@ -204,14 +240,14 @@ async def setup_password(data: SetupRequest, db: Session = Depends(get_db)):
     if not data.username or len(data.username) < 2:
         raise HTTPException(400, "用户名长度至少 2 位")
 
-    if len(data.password) < 6:
-        raise HTTPException(400, "密码长度至少 6 位")
+    if len(data.password) < 8:
+        raise HTTPException(400, "密码长度至少 8 位")
 
     set_stored_username(db, data.username)
     password_hash = hash_password(data.password)
     set_password_hash(db, password_hash)
 
-    token, expires_at = create_token()
+    token, expires_at = create_token(token_version=get_token_version(db))
     return TokenResponse(token=token, expires_at=expires_at.isoformat())
 
 
@@ -226,10 +262,13 @@ async def login(data: LoginRequest, db: Session = Depends(get_db)):
     if data.username != stored_username:
         raise HTTPException(401, "用户名或密码错误")
 
-    if hash_password(data.password) != stored_hash:
+    if not verify_password(data.password, stored_hash):
         raise HTTPException(401, "用户名或密码错误")
 
-    token, expires_at = create_token()
+    if not stored_hash.startswith("scrypt$"):
+        set_password_hash(db, hash_password(data.password))
+
+    token, expires_at = create_token(token_version=get_token_version(db))
     return TokenResponse(token=token, expires_at=expires_at.isoformat())
 
 
@@ -239,12 +278,13 @@ async def change_password(
     db: Session = Depends(get_db),
     _: str = Depends(get_current_user),
 ):
-    """修改密码"""
-    if len(data.password) < 6:
-        raise HTTPException(400, "密码长度至少 6 位")
+    """修改密码，同时使既有 Token 失效。"""
+    if len(data.password) < 8:
+        raise HTTPException(400, "密码长度至少 8 位")
 
     password_hash = hash_password(data.password)
     set_password_hash(db, password_hash)
+    bump_token_version(db)
 
     return {"message": "密码已更新"}
 

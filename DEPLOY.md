@@ -17,7 +17,7 @@ sudo docker pull ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest
 mkdir -p ~/panwatch && cd ~/panwatch
 cat > .env <<'EOF'
 AUTH_USERNAME=admin
-AUTH_PASSWORD=admin123
+AUTH_PASSWORD=<请替换为至少 8 位强密码>
 # 可选: 数据源 token(影响功能完整性)
 ZHITU_TOKEN=your-zhitu-token
 WUDAO_MCP_TOKEN=your-wudao-token
