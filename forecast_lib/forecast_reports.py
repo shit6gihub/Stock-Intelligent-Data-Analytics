@@ -60,6 +60,142 @@ def _model_cn(name: str) -> str:
     return MODEL_CN.get(name, name)
 
 
+def _emotion_temperature_score(sentiment: dict) -> int | None:
+    """借鉴 TSP 飞书 AI 复盘的「情绪温度」量化(0-100)。
+
+    维度:
+      - 情绪面 adjustment_pct 映射到 0-100(±2% → 0-100 区间)
+      - market_sentiment 文本定性加分(看多 +10,看空 -10)
+      - notes 数量 > 3 加 5(情绪信号密集度)
+    返回 None 表示无足够数据。
+    """
+    if not sentiment:
+        return None
+    adj = sentiment.get("adjustment_pct")
+    if adj is None:
+        return None
+    # adjustment_pct 通常 -2 到 +2, 线性映射 0..100
+    base = max(0, min(100, 50 + adj * 25))
+    market = (sentiment.get("market_sentiment") or "").strip()
+    if "看多" in market or "多头" in market or "强势" in market:
+        base = min(100, base + 10)
+    elif "看空" in market or "空头" in market or "弱势" in market:
+        base = max(0, base - 10)
+    notes = sentiment.get("notes") or []
+    if isinstance(notes, list) and len(notes) >= 3:
+        base = min(100, base + 5)
+    return int(round(base))
+
+
+def _emotion_temperature_label(score: int) -> str:
+    """0-100 温度转中文标签(借鉴 TSP 飞书 AI 复盘)。"""
+    if score >= 80:
+        return "🔥 火热"
+    if score >= 60:
+        return "😊 偏暖"
+    if score >= 40:
+        return "😐 中性"
+    if score >= 20:
+        return "😟 偏冷"
+    return "🥶 极冷"
+
+
+def _model_direction_consensus(models: dict) -> dict | None:
+    """统计四模型方向一致率(借鉴 TSP「投机维度」「指数维度」拆解思路)。
+
+    返回: {"up": int, "down": int, "flat": int, "total": int, "dominant": "up"|"down"|"flat"}
+    models 形如 {"kronos": {"median": [...], "direction": "up"}, "xgboost": {"direction": "up"}, ...}
+    """
+    if not models or not isinstance(models, dict):
+        return None
+    counts = {"up": 0, "down": 0, "flat": 0}
+    total = 0
+    for _, v in models.items():
+        if not isinstance(v, dict):
+            continue
+        d = v.get("direction")
+        if d in counts:
+            counts[d] += 1
+            total += 1
+    if total == 0:
+        return None
+    # tie-break: up > flat > down (按倾向选择, 避免 flat 抢优先)
+    dominant = max(counts, key=lambda k: (counts[k], {"up": 2, "flat": 1, "down": 0}[k]))
+    return {**counts, "total": total, "dominant": dominant, "consensus_pct": round(counts[dominant] / total * 100)}
+
+
+def _build_one_liner(direction: str, expected_pct: float, action: str, confidence: str,
+                     sentiment: dict, models: dict) -> str:
+    """借鉴 TSP「一句话定调」:基于多维信号合成一段 narrative(1-2 句)。
+
+    设计原则(借鉴 TSP 飞书 AI 复盘):
+      - 短(<= 60 字,手机单屏可见)
+      - 信息密集(包含方向 + 共识 + 情绪温度)
+      - 不编造数据(全用 result 里有的字段)
+    """
+    parts = []
+
+    # 1. 方向 + 一致性(借鉴 TSP「指数强弱排序」)
+    consensus = _model_direction_consensus(models)
+    dir_cn = {"up": "看多", "down": "看空", "flat": "横盘"}.get(direction, direction)
+    if consensus and consensus["consensus_pct"] >= 75:
+        parts.append(f"四模型高度一致{consensus['consensus_pct']}%{dir_cn}")
+    elif consensus and consensus["consensus_pct"] >= 50:
+        parts.append(f"四模型{consensus['consensus_pct']}%{dir_cn}")
+    else:
+        parts.append(f"四模型分歧明显,共识偏向 {dir_cn}")
+
+    # 2. 预期幅度
+    pct = f"{abs(expected_pct):.1f}%"
+    if expected_pct > 0:
+        parts.append(f"预期上行 {pct}")
+    elif expected_pct < 0:
+        parts.append(f"预期下行 {pct}")
+    else:
+        parts.append("预期横盘")
+
+    # 3. 情绪温度(借鉴 TSP「情绪温度 67 = 偏暖」)
+    temp_score = _emotion_temperature_score(sentiment)
+    if temp_score is not None:
+        temp_label = _emotion_temperature_label(temp_score)
+        parts.append(f"市场情绪 {temp_label}({temp_score})")
+
+    # 4. 操作建议(短)
+    action_short = {"买入": "建议介入", "持有": "建议持仓观望", "卖出": "建议减仓"}.get(action, action)
+    if confidence in ("高", "中高"):
+        parts.append(f"{action_short}({confidence}置信)")
+    else:
+        parts.append(f"{action_short}")
+
+    # 用「;」分隔,符合 TSP 飞书版"结构化 narrative"风格
+    return " · ".join(parts)
+
+
+def _build_tomorrow_tone(direction: str, expected_pct: float, action: str,
+                         confidence: str, sentiment: dict) -> str:
+    """借鉴 TSP「明日基调」:结尾给一段展望性 narrative。
+
+    设计:
+      - 包含方向 + 置信度(让用户知道 AI 站位)
+      - 不超过 50 字
+      - 高置信度给明确指引,中低置信度给"等待确认"风格(借鉴 TSP「明日基调:均衡」)
+    """
+    dir_cn = {"up": "偏多", "down": "偏空", "flat": "震荡"}.get(direction, "震荡")
+    abs_pct = abs(expected_pct)
+
+    # 高置信 + 大幅度 → 明确基调
+    if confidence in ("高", "中高") and abs_pct >= 3:
+        if direction == "up":
+            return f"高置信看多,可考虑顺势而为,但注意回踩风险。"
+        if direction == "down":
+            return f"高置信看空,建议观望或减仓,等待企稳信号。"
+    # 中等置信 → 中性基调
+    if confidence == "中":
+        return f"中等置信偏{action},建议持仓观望,等待明日开盘信号确认。"
+    # 低置信 → 等待基调(借鉴 TSP「均衡」风格)
+    return f"信号偏弱,明日基调:观望,建议不追高/杀跌,等市场给出明确方向。"
+
+
 # ── 主报告生成器 ────────────────────────────────────────────
 def generate_report(
     run_id: int,
@@ -515,6 +651,14 @@ def generate_wecom_report(result: dict, backtest_data: dict | None = None) -> st
     if summary:
         L.append("")
         L.append(f"📝 {summary}")
+    # ✨ 借鉴 TSP 飞书 AI 复盘:一句话定调(基于多维信号合成的 narrative)
+    # 用情绪面 + 资金面 + 方向 + 置信度综合成一段 narrative
+    one_liner = _build_one_liner(direction, expected_pct, action, confidence,
+                                 sentiment=sentiment, models=models)
+    if one_liner:
+        L.append("")
+        L.append(f"### 🎯 一句话定调")
+        L.append(f"_{one_liner}_")
     L.append("")
     L.append("---")
     # 数据面(要点)
@@ -559,6 +703,11 @@ def generate_wecom_report(result: dict, backtest_data: dict | None = None) -> st
     adj = sentiment.get("adjustment_pct", 0)
     L.append("## 💭 情绪面")
     L.append(f"- 市场情绪：{sentiment.get('market_sentiment', '中性')}")
+    # ✨ 借鉴 TSP 飞书 AI 复盘:情绪温度量化(0-100 + 标签)
+    temp_score = _emotion_temperature_score(sentiment)
+    if temp_score is not None:
+        temp_label = _emotion_temperature_label(temp_score)
+        L.append(f"- 情绪温度：**{temp_score} / 100** · {temp_label}（借鉴 TSP AI 复盘量化模型）")
     if adj:
         L.append(f"- 情绪修正：**{adj:+.2f}%**")
     notes = sentiment.get("notes") or []
@@ -638,6 +787,17 @@ def generate_wecom_report(result: dict, backtest_data: dict | None = None) -> st
         L.append(f"📈 历史回测命中率：**{backtest_data['direction_accuracy_pct']}%**")
     L.append("")
     L.append("---")
+    # ✨ 借鉴 TSP 飞书 AI 复盘:「明日基调」+「免责声明」(结尾 narrative)
+    tomorrow_tone = _build_tomorrow_tone(direction, expected_pct, action, confidence,
+                                         sentiment=sentiment)
+    if tomorrow_tone:
+        L.append("")
+        L.append(f"### 🔮 明日基调")
+        L.append(f"_{tomorrow_tone}_")
+    L.append("")
+    L.append("---")
+    # ✨ AI 免责声明(借鉴 TSP「本报告由 AI 基于公开行情数据生成,仅供参考,不构成任何投资建议」)
+    L.append("> ⚠️ 本报告由数智分析 AI 生成,基于公开行情数据与多模型融合预测,**仅供学习研究,不构成任何投资建议**。交易有风险,入市需谨慎。")
     L.append(f"*PanWatch 自动生成 · {datetime.now().strftime('%Y-%m-%d %H:%M')}*")
 
     text = "\n".join(L)
