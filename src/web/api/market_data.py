@@ -88,3 +88,63 @@ async def capital_flow_proxy(
     except Exception as e:
         logger.warning(f"资金流代理失败 [{symbol}]: {e}")
         raise HTTPException(502, f"数据源调用失败: {e}")
+
+
+@router.get("/board-capital-flow")
+async def board_capital_flow_proxy(
+    board_type: str = Query("industry", description="industry 行业 / concept 概念"),
+):
+    """板块资金流向(同花顺行业/概念资金,免登录免费源)。
+
+    返回按净额降序的板块资金列表(流入/流出/净额,单位亿)。
+    """
+    try:
+        from src.core.marketdata_client import get_market_data
+        md = get_market_data()
+        boards = md.board_capital_flow(board_type=board_type)
+        return {
+            "board_type": board_type,
+            "count": len(boards),
+            "items": [
+                {
+                    "board_name": b.board_name,
+                    "board_type": b.board_type,
+                    "index_value": b.index_value,
+                    "change_pct": b.change_pct,
+                    "inflow": b.inflow,
+                    "outflow": b.outflow,
+                    "net_inflow": b.net_inflow,
+                    "stock_count": b.stock_count,
+                    "leader_name": b.leader_name,
+                    "leader_change_pct": b.leader_change_pct,
+                    "leader_price": b.leader_price,
+                    "rank": b.rank,
+                }
+                for b in boards
+            ],
+        }
+    except Exception as e:
+        logger.warning(f"板块资金代理失败: {e}")
+        raise HTTPException(502, f"数据源调用失败: {e}")
+
+
+@router.get("/market-capital-flow")
+async def market_capital_flow_proxy():
+    """大盘资金汇总(全市场行业资金合计,同花顺)。"""
+    try:
+        from src.core.marketdata_client import get_market_data
+        md = get_market_data()
+        mf = md.market_capital_flow()
+        if mf is None:
+            return {"error": "no_data"}
+        return {
+            "total_inflow": mf.total_inflow,
+            "total_outflow": mf.total_outflow,
+            "net_inflow": mf.net_inflow,
+            "board_count": mf.board_count,
+            "source": mf.source,
+            "timestamp": mf.timestamp.isoformat(),
+        }
+    except Exception as e:
+        logger.warning(f"大盘资金代理失败: {e}")
+        raise HTTPException(502, f"数据源调用失败: {e}")

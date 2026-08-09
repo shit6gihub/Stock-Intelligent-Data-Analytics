@@ -14,6 +14,8 @@ def test_package_vendors_by_type_content():
         "quote": frozenset({"alphavantage", "eastmoney", "sina", "tencent", "twelvedata", "yfinance"}),
         "kline": frozenset({"eastmoney", "stooq", "tencent", "yahoo", "zhitu"}),
         "capital_flow": frozenset({"eastmoney", "sina"}),
+        "board_capital_flow": frozenset({"ths_flow"}),
+        "market_capital_flow": frozenset({"ths_market_flow"}),
         "events": frozenset({"eastmoney"}),
         "flash_news": frozenset({"cls", "sina", "eastmoney"}),
         "news": frozenset({"xueqiu", "eastmoney_news", "eastmoney"}),

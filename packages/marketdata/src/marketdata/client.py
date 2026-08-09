@@ -13,6 +13,7 @@ from marketdata.ports import ConfigProvider, MetricsSink
 from marketdata.registry import build_vendors
 from marketdata.symbol import Symbol
 from marketdata.types import (
+    BoardCapitalFlow,
     CapitalFlow,
     DividendItem,
     DragonTigerItem,
@@ -22,6 +23,7 @@ from marketdata.types import (
     HotBoard,
     HotStock,
     MarginItem,
+    MarketCapitalFlow,
     NewsArticle,
     NorthboundItem,
     Quote,
@@ -78,6 +80,19 @@ class MarketData:
             vendors=build_vendors("capital_flow"),
             config=config, metrics=self.metrics,
             cache=TTLCache(default_ttl_sec=0.0), default_ttl=0.0,
+        )
+        # 板块/大盘资金(同花顺,免登录免费源):市场级,日频,沿用 300s TTL。
+        self._board_flow_engine = Engine(
+            datatype="board_capital_flow",
+            vendors=build_vendors("board_capital_flow"),
+            config=config, metrics=self.metrics,
+            cache=TTLCache(default_ttl_sec=300.0), default_ttl=300.0,
+        )
+        self._market_flow_engine = Engine(
+            datatype="market_capital_flow",
+            vendors=build_vendors("market_capital_flow"),
+            config=config, metrics=self.metrics,
+            cache=TTLCache(default_ttl_sec=300.0), default_ttl=300.0,
         )
         self._events_engine = Engine(
             datatype="events",
@@ -196,6 +211,19 @@ class MarketData:
         """单只股票资金流向。不在包内缓存(cache_ttl_sec=0);宿主自行缓存。"""
         req = Request(symbols=(symbol,), market=market)
         resp = self._capital_flow_engine.fetch(req, cache_ttl_sec=0)
+        data = resp.data or []
+        return data[0] if data else None
+
+    def board_capital_flow(self, *, board_type: str = "industry") -> list[BoardCapitalFlow]:
+        """板块资金流向(同花顺行业/概念,免登录免费源)。"""
+        req = Request(symbols=(), market="CN", extra=(("board_type", board_type),))
+        resp = self._board_flow_engine.fetch(req)
+        return resp.data or []
+
+    def market_capital_flow(self) -> MarketCapitalFlow | None:
+        """大盘资金汇总(全市场行业净额合计,同花顺)。"""
+        req = Request(symbols=(), market="CN")
+        resp = self._market_flow_engine.fetch(req)
         data = resp.data or []
         return data[0] if data else None
 

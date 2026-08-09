@@ -76,6 +76,37 @@ class CapitalFlow:
 
 
 @dataclass(frozen=True)
+class BoardCapitalFlow:
+    """板块资金流向(同花顺行业/概念资金,2026-08-09 加入)。"""
+
+    board_name: str                              # 板块名称(行业/概念)
+    board_type: str = "industry"                # industry 行业 / concept 概念
+    index_value: float | None = None            # 板块指数
+    change_pct: float | None = None             # 涨跌幅(%)
+    inflow: float | None = None                 # 流入资金(亿)
+    outflow: float | None = None                # 流出资金(亿)
+    net_inflow: float | None = None             # 净额(亿)
+    stock_count: int | None = None              # 公司家数
+    leader_name: str = ""                       # 领涨股
+    leader_change_pct: float | None = None      # 领涨股涨跌幅
+    leader_price: float | None = None           # 领涨股当前价
+    rank: int = 0                               # 排名
+    timestamp: datetime = field(default_factory=datetime.now)
+
+
+@dataclass(frozen=True)
+class MarketCapitalFlow:
+    """大盘资金流向汇总(全市场行业资金合计,2026-08-09 加入)。"""
+
+    total_inflow: float | None = None           # 全市场总流入(亿)
+    total_outflow: float | None = None          # 全市场总流出(亿)
+    net_inflow: float | None = None             # 全市场净额(亿)
+    board_count: int = 0                        # 参与汇总的板块数
+    source: str = ""                            # 数据源
+    timestamp: datetime = field(default_factory=datetime.now)
+
+
+@dataclass(frozen=True)
 class HotStock:
     """热门/异动股(对齐 PanWatch src/collectors/discovery_collector.HotStock)。"""
 

@@ -12,6 +12,7 @@ discovery/index 是市场级、非 symbol 模型,不进 Engine/不进 DataSource
 from __future__ import annotations
 
 from marketdata.vendors.capital_flow import EastmoneyCapitalFlowVendor, SinaCapitalFlowVendor
+from marketdata.vendors.ths_flow import ThsBoardFlowVendor, ThsMarketFlowVendor
 from marketdata.vendors.eastmoney import EastmoneyQuoteVendor
 from marketdata.vendors.events import EventsVendor
 from marketdata.vendors.fundamentals import EastmoneyFundamentalsVendor, TencentFundamentalsVendor
@@ -73,6 +74,12 @@ VENDOR_CLASSES_BY_TYPE: dict[str, dict[str, type]] = {
     "capital_flow": {
         "eastmoney": EastmoneyCapitalFlowVendor,
         "sina": SinaCapitalFlowVendor,
+    },
+    "board_capital_flow": {
+        "ths_flow": ThsBoardFlowVendor,
+    },
+    "market_capital_flow": {
+        "ths_market_flow": ThsMarketFlowVendor,
     },
     "events": {
         "eastmoney": EventsVendor,
