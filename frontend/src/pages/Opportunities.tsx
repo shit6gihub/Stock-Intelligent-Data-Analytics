@@ -272,36 +272,26 @@ export default function OpportunitiesPage() {
     }
   }, [])
 
-  // 通达信问小达投研精选(市场级自然语言选股/排行)
-  const TDX_QUERIES = useMemo(
-    () => [
-      '今日主力净流入前10的A股',
-      '今日涨幅前10的概念板块',
-      '近3日主力净流入前10的半导体',
-    ],
-    [],
-  )
-  const [tdxData, setTdxData] = useState<Record<string, TdxAskResponse | null>>({})
+  // 通达信问小达投研精选(用户主动按板块查询,避免每次进页面自动消耗 tdx ask 配额)
+  const [tdxQuery, setTdxQuery] = useState('')
+  const [tdxActiveQuery, setTdxActiveQuery] = useState<string | null>(null)
+  const [tdxData, setTdxData] = useState<TdxAskResponse | null>(null)
   const [tdxLoading, setTdxLoading] = useState(false)
 
-  const loadTdx = useCallback(async () => {
+  const loadTdx = useCallback(async (query: string) => {
+    const trimmed = query.trim()
+    if (!trimmed) return
     setTdxLoading(true)
+    setTdxActiveQuery(trimmed)
     try {
-      const entries = await Promise.all(
-        TDX_QUERIES.map(async (q) => {
-          try {
-            const res = await tdxApi.ask(q, 10)
-            return [q, res] as const
-          } catch {
-            return [q, null] as const
-          }
-        }),
-      )
-      setTdxData(Object.fromEntries(entries))
+      const res = await tdxApi.ask(trimmed, 10)
+      setTdxData(res)
+    } catch {
+      setTdxData(null)
     } finally {
       setTdxLoading(false)
     }
-  }, [TDX_QUERIES])
+  }, [])
 
   const loadStats = useCallback(async () => {
     try {
@@ -419,8 +409,7 @@ export default function OpportunitiesPage() {
     loadStats()
     loadCatalog()
     loadWatchlist()
-    loadTdx()
-  }, [load, loadCatalog, loadStats, loadWatchlist, loadTdx])
+  }, [load, loadCatalog, loadStats, loadWatchlist])
 
   const pollRefreshCompletion = useCallback(async () => {
     const maxPolls = 20
@@ -636,126 +625,151 @@ export default function OpportunitiesPage() {
         </div>
       </div>
 
-      {/* 通达信问小达投研精选(市场级自然语言选股/排行) */}
-      <div className="mb-4">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-[14px] font-semibold text-foreground flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-primary" />
-            通达信问小达 · 投研精选
-          </h2>
-          <button
-            type="button"
-            className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1"
-            onClick={() => void loadTdx()}
-            disabled={tdxLoading}
-          >
-            <RefreshCw className={`w-3 h-3 ${tdxLoading ? 'animate-spin' : ''}`} />
-            刷新
-          </button>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {TDX_QUERIES.map((q) => {
-            const res = tdxData[q]
-            const rows = res?.rows || []
-            return (
-              <div key={q} className="card p-3">
-                <div className="text-[12px] font-medium text-foreground mb-2 line-clamp-1" title={q}>
-                  {q}
-                </div>
-                {tdxLoading && !res ? (
-                  <div className="text-[11px] text-muted-foreground py-3">加载中…</div>
-                ) : rows.length === 0 ? (
-                  <div className="text-[11px] text-muted-foreground py-3">暂无数据</div>
-                ) : (
-                  <div className="flex flex-col gap-1.5 max-h-[260px] overflow-y-auto pr-1">
-                    {rows.slice(0, 8).map((r, i) => {
-                      const code = String(r.sec_code ?? r.code ?? '')
-                      const name = String(r.sec_name ?? r.name ?? '')
-                      const chg = String(r.chg ?? r.change_pct ?? '')
-                      const mainNet = Object.entries(r).find(([k]) => k.includes('主力净额') || k.includes('主力净'))?.[1]
-                      const clickable = !!code
-                      return (
-                        <button
-                          key={`${code}-${i}`}
-                          type="button"
-                          disabled={!clickable}
-                          onClick={() => clickable && openInsight({
-                            stock_symbol: code,
-                            stock_market: 'CN',
-                            stock_name: name,
-                            action: 'watch',
-                            action_label: '观望',
-                            is_holding_snapshot: false,
-                            rank_score: 0,
-                            score: 0,
-                            status: 'inactive',
-                            source_pool: 'watchlist',
-                            source_pool_label: '关注池',
-                            risk_level: 'low',
-                            risk_level_label: '低风险',
-                            source_agent: 'market_scan',
-                            strategy_code: 'tdx_wenda',
-                            strategy_name: '通达信问小达',
-                            strategy_version: 'v1',
-                            confidence: null,
-                            signal: '',
-                            reason: `通达信问小达: ${q}`,
-                            evidence: [],
-                            holding_days: 3,
-                            entry_low: null,
-                            entry_high: null,
-                            stop_loss: null,
-                            target_price: null,
-                            invalidation: '',
-                            plan_quality: 0,
-                            source_suggestion_id: null,
-                            source_candidate_id: null,
-                            trace_id: '',
-                            context_quality_score: null,
-                            score_breakdown: { weighted_score: 0, has_entry_plan: false },
-                            market_regime: {},
-                            cross_feature: {},
-                            news_metric: {},
-                            constrained: false,
-                            constraint_reasons: [],
-                            payload: { source_meta: { plan: {} } },
-                            created_at: '',
-                            updated_at: '',
-                          } as unknown as StrategySignalItem)}
-                          className={`text-left text-[11px] rounded px-2 py-1.5 flex items-center justify-between gap-2 ${
-                            clickable ? 'hover:bg-accent cursor-pointer' : 'cursor-default'
-                          }`}
-                        >
-                          <span className="truncate">
-                            <span className="text-muted-foreground mr-1">{code}</span>
-                            <span className="font-medium text-foreground">{name}</span>
-                          </span>
-                          <span className="flex items-center gap-1.5 shrink-0">
-                            {chg && (
-                              <span
-                                className={
-                                  String(chg).startsWith('-')
-                                    ? 'text-emerald-400' // 跌:绿(A股习惯)
-                                    : 'text-rose-400' // 涨:红(A股习惯)
-                                }
-                              >
-                                {chg}%
-                              </span>
-                            )}
-                            {mainNet != null && (
-                              <span className="text-[10px] text-primary">主力{String(mainNet)}</span>
-                            )}
-                          </span>
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
+      {/* 通达信问小达投研精选(用户主动按板块查询,避免每次进页面自动消耗 tdx ask 配额) */}
+            <div className="mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-[14px] font-semibold text-foreground flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-primary" />
+                  通达信问小达 · 投研精选
+                </h2>
               </div>
-            )
-          })}
-        </div>
-      </div>
+              <div className="card p-3">
+                <form
+                  className="flex items-center gap-2"
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    void loadTdx(tdxQuery)
+                  }}
+                >
+                  <Input
+                    value={tdxQuery}
+                    onChange={(e) => setTdxQuery(e.target.value)}
+                    placeholder="输入板块/概念/选股条件,如:半导体、商业航天、今日涨幅前10的医药"
+                    className="flex-1"
+                    disabled={tdxLoading}
+                  />
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={tdxLoading || !tdxQuery.trim()}
+                  >
+                    {tdxLoading ? (
+                      <>
+                        <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+                        查询中…
+                      </>
+                    ) : (
+                      '查询'
+                    )}
+                  </Button>
+                </form>
+                <div className="mt-3">
+                  {!tdxActiveQuery ? (
+                    <div className="text-[11px] text-muted-foreground py-6 text-center">
+                      输入板块或选股条件,点击查询(每次查询消耗 1 次 tdx ask 配额)
+                    </div>
+                  ) : tdxData == null ? (
+                    <div className="text-[11px] text-red-500 py-3">查询失败,请稍后重试</div>
+                  ) : (
+                    <>
+                      <div className="text-[11px] text-muted-foreground mb-2">
+                        查询: <span className="text-foreground font-medium">{tdxActiveQuery}</span>
+                        {' · '}
+                        {tdxData.rows?.length || 0} 条结果
+                      </div>
+                      <div className="flex flex-col gap-1.5 max-h-[400px] overflow-y-auto pr-1">
+                        {(tdxData.rows || []).slice(0, 10).map((r: Record<string, unknown>, i: number) => {
+                          const code = String(r.sec_code ?? r.code ?? '')
+                          const name = String(r.sec_name ?? r.name ?? '')
+                          const chg = String(r.chg ?? r.change_pct ?? '')
+                          const mainNet = Object.entries(r).find(([k]) => k.includes('主力净额') || k.includes('主力净'))?.[1]
+                          const clickable = !!code
+                          return (
+                            <button
+                              key={`${code}-${i}`}
+                              type="button"
+                              disabled={!clickable}
+                              onClick={() => clickable && openInsight({
+                                stock_symbol: code,
+                                stock_market: 'CN',
+                                stock_name: name,
+                                action: 'watch',
+                                action_label: '观望',
+                                is_holding_snapshot: false,
+                                rank_score: 0,
+                                score: 0,
+                                status: 'inactive',
+                                source_pool: 'watchlist',
+                                source_pool_label: '关注池',
+                                risk_level: 'low',
+                                risk_level_label: '低风险',
+                                source_agent: 'market_scan',
+                                strategy_code: 'tdx_wenda',
+                                strategy_name: '通达信问小达',
+                                strategy_version: 'v1',
+                                confidence: null,
+                                signal: '',
+                                reason: `通达信问小达: ${tdxActiveQuery}`,
+                                evidence: [],
+                                holding_days: 3,
+                                entry_low: null,
+                                entry_high: null,
+                                stop_loss: null,
+                                target_price: null,
+                                invalidation: '',
+                                plan_quality: 0,
+                                source_suggestion_id: null,
+                                source_candidate_id: null,
+                                trace_id: '',
+                                context_quality_score: null,
+                                score_breakdown: { weighted_score: 0, has_entry_plan: false },
+                                market_regime: {},
+                                cross_feature: {},
+                                news_metric: {},
+                                constrained: false,
+                                constraint_reasons: [],
+                                payload: { source_meta: { plan: {} } },
+                                created_at: '',
+                                updated_at: '',
+                              } as unknown as StrategySignalItem)}
+                              className={`text-left text-[11px] rounded px-2 py-1.5 flex items-center justify-between gap-2 ${
+                                clickable ? 'hover:bg-accent cursor-pointer' : 'cursor-default'
+                              }`}
+                            >
+                              <span className="truncate">
+                                <span className="text-muted-foreground mr-1">{code}</span>
+                                <span className="font-medium text-foreground">{name}</span>
+                              </span>
+                              <span className="flex items-center gap-1.5 shrink-0">
+                                {chg && (
+                                  <span
+                                    className={
+                                      String(chg).startsWith('-')
+                                        ? 'text-emerald-400'
+                                        : 'text-rose-400'
+                                    }
+                                  >
+                                    {chg}%
+                                  </span>
+                                )}
+                                {mainNet != null && (
+                                  <span className="text-[10px] text-primary">主力{String(mainNet)}</span>
+                                )}
+                              </span>
+                            </button>
+                          )
+                        })}
+                        {(tdxData.rows || []).length === 0 && (
+                          <div className="text-[11px] text-muted-foreground py-3 text-center">
+                            暂无数据(试试简化查询词,如「半导体」)
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
 
       {(factorStats || constraintStats) && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
