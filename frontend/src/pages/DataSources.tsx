@@ -58,6 +58,8 @@ const DATASOURCE_TYPES = {
   shareholders: { label: '股东户数', icon: Users, color: 'text-teal-500' },
   dividend: { label: '分红', icon: Gift, color: 'text-pink-500' },
   northbound: { label: '北向资金', icon: ArrowLeftRight, color: 'text-sky-500' },
+  board_capital_flow: { label: '板块资金', icon: DollarSign, color: 'text-amber-500' },
+  market_capital_flow: { label: '大盘资金', icon: TrendingUp, color: 'text-red-500' },
 }
 
 // 数据源分类分组:仅用于页面展示时的二级归组,不影响数据结构与后端
@@ -65,7 +67,7 @@ const DATASOURCE_CATEGORIES: { key: string; label: string; types: string[] }[] =
   { key: 'quote_kline', label: '行情 & K线', types: ['quote', 'kline'] },
   { key: 'news', label: '资讯 & 快讯', types: ['news', 'flash_news', 'events'] },
   { key: 'fundamentals', label: '基本面 & 财务', types: ['fundamentals'] },
-  { key: 'capital', label: '资金 & 市场面', types: ['capital_flow', 'dragon_tiger', 'margin', 'shareholders', 'northbound', 'dividend'] },
+  { key: 'capital', label: '资金 & 市场面', types: ['capital_flow', 'board_capital_flow', 'market_capital_flow', 'dragon_tiger', 'margin', 'shareholders', 'northbound', 'dividend'] },
   { key: 'chart', label: '图表', types: ['chart'] },
 ]
 
