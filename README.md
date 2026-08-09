@@ -488,6 +488,28 @@ README 旧的「智能 Agent 系统（4 套）」漏列了 4 个：`竞价复盘
 
 实测三场景（002361）：完整数据 → 显示趋势 + 偏多；只有当日 → 显示金额 + ⚠️ 置信度降低；空数据 → ⚠️ 数据缺失，跳过资金面判断。commit `aff32dc`。
 
+### 14. 8 个 A 股可用的 Swarm Preset（借鉴 Vibe-Trading 30k stars，2026-08-09）
+
+借鉴来源：[HKUDS/Vibe-Trading](https://github.com/HKUDS/Vibe-Trading) 30k stars 的 30 个 swarm preset 概念。**过滤非 A 股相关**（衍生品/加密/外汇/可转债等）后保留 8 个 A 股直接可用的：
+
+| # | Preset | agents | 用途 |
+|---|---|---|---|
+| 1 | `investment_committee` 投资委员会 | 看多/看空/风控/PM | 个股深度决策（debate=2 轮） |
+| 2 | `factor_research_committee` 因子研究委员会 | 挖因子/验证/合成/回测 | 量化研究（适配 PanWatch 6 个内置策略） |
+| 3 | `risk_committee` 风险审查 | VaR/集中度/流动性/压力测试 | 组合/个股风控 |
+| 4 | `earnings_research_desk` 业绩研究台 | 利润表/资负表/现金流/AI 解读 | 季报/年报深度 |
+| 5 | `event_driven_task_force` 事件驱动特遣队 | 事件扫描/CAR 检验/交易/风控 | 公告/政策套利 |
+| 6 | `technical_analysis_panel` 技术分析专家组 | 趋势/动量/量价/形态/支撑压力 | K 线五维分析 |
+| 7 | `value_investing_committee` 价值投资委员会 | DCF/Comps/护城河/安全边际 | 长期价值股 |
+| 8 | `sector_rotation_team` 板块轮动团队 | 扫描/政策/资金/个股穿透 | 申万 31 行业轮动 |
+
+**API 端点**（需登录）：
+- `GET /api/agents/presets` 列出 8 个
+- `GET /api/agents/presets/{name}` 查详情（含完整 system_prompt）
+- `POST /api/agents/presets/{name}/run` 跑 preset（走 TradingAgents 4 分析师 + 辩论）
+
+每个 preset 4-5 个 agent + A 股术语化 system_prompt（北向资金/龙虎榜/申万一级/中证全指/PE-TTM/PB 行业百分位/CAR 检验等）。commit `e4584e7`。
+
 ## 🔌 接口与 Key 获取地址
 
 | 数据源 | 用途 | Key 获取地址 |
