@@ -251,10 +251,10 @@ cd frontend && pnpm install && pnpm dev       # 前端 :5183
 
 ## 📦 版本
 
-- **当前版本**：`v0.1.0`（镜像 tag 与 GitHub Release 对齐）
+- **当前版本**：`v0.1.2`（镜像 tag 与 GitHub Release 对齐）
 - **容器镜像**：`ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest`（已公开，匿名可拉）
 - **更新日志**：见 [Releases](https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics/releases)
-- 打 tag（如 `v0.1.1`）触发 GitHub Actions 自动构建并推送镜像到 GHCR
+- 打 tag（如 `v0.1.3`）触发 GitHub Actions 自动构建并推送镜像到 GHCR
 
 ## 贡献
 

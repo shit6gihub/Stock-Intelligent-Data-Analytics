@@ -76,7 +76,7 @@ sudo docker run -d --name panwatch -p 8000:8000 --env-file ~/panwatch/.env -v pa
 ## 镜像版本
 
 - `:latest` - 最新主分支(随仓库 main 滚动更新)
-- `:0.1.0` / `:0.1.1` - 固定版本号(不会变,适合生产)
+- `:0.1.2` - 固定版本号(不会变,适合生产)
 
 ## 故障排查
 
