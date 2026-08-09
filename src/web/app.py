@@ -35,6 +35,7 @@ from src.web.api import (
     calendar,
     market_data,
     tdx,
+    shadow,
 )
 from src.web.api import factors
 from src.web.api import notifications
@@ -225,6 +226,12 @@ app.include_router(
     tdx.router,
     prefix="/api/tdx",
     tags=["tdx"],
+    dependencies=protected,
+)
+app.include_router(
+    shadow.router,
+    prefix="/api/shadow",
+    tags=["shadow"],
     dependencies=protected,
 )
 

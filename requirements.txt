@@ -34,3 +34,8 @@ tradingagents @ git+https://github.com/TauricResearch/TradingAgents.git@v0.3.0
 
 # 本仓内独立行情数据包(editable 本地安装;发 PyPI 前不占外部依赖)
 -e ./packages/marketdata
+
+# Shadow Account 影子账户: 交割单解析 + 行为画像 + 规则提取(聚类)
+pandas>=2.0
+numpy>=1.24
+scikit-learn>=1.3

@@ -510,6 +510,26 @@ README 旧的「智能 Agent 系统（4 套）」漏列了 4 个：`竞价复盘
 
 每个 preset 4-5 个 agent + A 股术语化 system_prompt（北向资金/龙虎榜/申万一级/中证全指/PE-TTM/PB 行业百分位/CAR 检验等）。commit `e4584e7`。
 
+### 15. 影子账户 Shadow Account（从你自己的交易记录提炼盈利模式，2026-08-09）
+
+借鉴来源：[HKUDS/Vibe-Trading](https://github.com/HKUDS/Vibe-Trading) 的 Shadow Account 概念，按 A 股聚焦移植（MIT）。
+
+**不是通用策略模板 —— 从你的交割单出发**：上传券商导出（同花顺/东方财富/富途/generic CSV）→ 智能体总结你的交易行为 → 提炼 3-5 条"你本人的规则" → 回测对比真实交易路径（高亮规则违背/过早离场/错过信号）。
+
+**工作流**：
+1. **解析交割单**：同花顺/东财/富途/generic CSV 四格式自动检测 + 编码回退（utf-8-sig/gbk/gb2312）
+2. **行为画像**：持仓天数、胜率、盈亏比、最大回撤、处置效应（拿亏单更久）、过度交易、追涨、锚定（8 项诊断，带 severity 分级）
+3. **提取你的规则**：盈利回合 FIFO 配对 → KMeans 聚类（k 自动 2-5）→ 每簇一条人话规则（≤30 字，含支撑笔数 + 覆盖率）；盈利回合 < 5 直接报错不编造
+4. **差值归因**：影子 PnL vs 真实 PnL 分解为 5 项 signed 值 —— 情绪单损失 / 过早离场机会成本 / 过晚离场放大损失 / 过度交易拖累 / 错过信号残差 + 反事实交易 Top 5
+5. **交付报告**：HTML（WeasyPrint 可用时同时出 PDF）
+
+**API 端点**（需登录）：
+- `POST /api/shadow/analyze` 上传交割单 → 画像 + 行为 + 规则 + 归因 + 报告（multipart `file` 字段）
+- `GET /api/shadow/report/{shadow_id}` HTML 报告
+- `GET /api/shadow/report/{shadow_id}/pdf` PDF 报告
+
+**红线**：不落单（仅研究输出）；不复制他人策略（只提炼你自己的行为）；样本不足必报错。实现见 `src/core/shadow_account/`（parsers/journal/extractor/backtester/reporter），10 个单测覆盖。
+
 ## 🔌 接口与 Key 获取地址
 
 | 数据源 | 用途 | Key 获取地址 |
