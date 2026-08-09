@@ -581,14 +581,14 @@ def forecast_models():
             {"name": "XGBoost", "module": "投票模型", "model_id": "XGBRegressor(n_estimators=100, depth=3)",
              "location": "pip 包", "configurable": "参数在代码内"},
             {"name": "LLM情绪打分", "module": "公告/新闻语义判断", "model_id": cfg.get("model", "agnes-2.5-flash"),
-             "location": cfg.get("base_url", ""), "configurable": "PanWatch 设置→AI 模型(默认模型),或 ~/.panwatch_forecast.env 的 LLM_MODEL",
+             "location": cfg.get("base_url", ""), "configurable": "PanWatch 设置→预测引擎 LLM（Compose 自动生效）",
              "api_key_set": bool(cfg.get("api_key"))},
             {"name": "PanWatch AI", "module": "AI对话/Agent 分析", "model_id": "AIModel 表默认",
              "location": "PanWatch 设置→AI 服务商", "configurable": "PanWatch 设置页(已有)"},
         ],
         "config_file": env_path,
         "config_file_exists": os.path.exists(env_path),
-        "note": "修改 LLM 情绪打分模型: ① PanWatch 设置→AI 模型 改默认模型 ② 或编辑配置文件",
+        "note": "修改 LLM 情绪打分模型：PanWatch 设置→预测引擎 LLM，Compose 部署下保存后自动生效",
     }
 
 

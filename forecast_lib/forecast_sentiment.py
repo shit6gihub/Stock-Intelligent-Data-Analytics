@@ -74,8 +74,8 @@ print(f'[forecast] PanWatch 地址: {PANWATCH_URL}')
 def _db_llm_config() -> dict | None:
     """从 PanWatch 设置页 DB(app_settings.forecast_llm_*)读 LLM 配置。
 
-    设置页"接口 Key"区块维护,DB 优先于本地 env 文件。主机侧通过
-    docker 数据卷路径直读容器 DB(sudo);非 root 环境返回 None 走 env。
+    设置页"接口 Key"区块维护,DB 优先于本地 env 文件。Docker
+    Compose 通过 PANWATCH_DB 指向共享数据卷，配置保存后下次调用即生效。
     返回 {base_url, model, api_key} 或 None(未配置/不可读)。
     """
     import os as _os
@@ -90,7 +90,8 @@ def _db_llm_config() -> dict | None:
         if not p or not _os.path.exists(p):
             continue
         try:
-            conn = _sqlite.connect(p, timeout=3)
+            # 以只读 URI 打开，避免预测引擎误写 PanWatch 主数据库。
+            conn = _sqlite.connect(f"file:{p}?mode=ro", uri=True, timeout=3)
             try:
                 rows = dict(
                     conn.execute(

@@ -60,11 +60,15 @@ services:
     environment:
       # 预测引擎经 8000 拿资金面/龙虎榜数据(fork 镜像里 /api/market-data/* 已就绪)
       - PANWATCH_URL=http://panwatch:8000
+      # 直接读取设置页的 forecast_llm_* 配置，保存后无需脚本或重启
+      - PANWATCH_DB=/app/panwatch-data/panwatch.db
       - TZ=Asia/Shanghai
       - PYTHONUNBUFFERED=1
     volumes:
       # 预测历史 SQLite(回测报告/预测记录/资金面 LLM 情绪记录)
       - panwatch_forecast_data:/app/data
+      # 预测引擎只读查询 PanWatch 设置；SQLite 需要目录可写以维护锁文件
+      - panwatch_data:/app/panwatch-data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=5).read()"]
       interval: 30s

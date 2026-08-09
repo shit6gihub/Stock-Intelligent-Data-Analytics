@@ -467,18 +467,6 @@ export default function SettingsPage() {
     }
   }
 
-  // 同步预测引擎 LLM 配置: 提示用户在服务器执行 sync 脚本(容器内无法直接调主机命令)
-  const syncForecastLlm = async () => {
-    try {
-      const res = await fetchAPI<{ command: string }>('/settings/forecast-llm-sync-guide')
-      const cmd = res?.command || 'bash ~/.hermes/scripts/sync_forecast_llm.sh && sudo systemctl restart panwatch-forecast'
-      toast(`请在服务器执行: ${cmd}`, 'info')
-    } catch {
-      toast('请在服务器执行: bash ~/.hermes/scripts/sync_forecast_llm.sh && sudo systemctl restart panwatch-forecast', 'info')
-    }
-  }
-
-
   // Service CRUD
   const openServiceDialog = (svc?: AIService) => {
     if (svc) {
@@ -1101,7 +1089,7 @@ export default function SettingsPage() {
 
               {/* 预测引擎 LLM 配置组 */}
               <div className="text-[11px] font-medium text-muted-foreground pt-2">预测引擎 LLM（情绪打分）</div>
-              <p className="text-[10px] text-muted-foreground -mt-1">保存后点击下方「同步到预测引擎」生效（写入主机 env 并重启引擎）。</p>
+              <p className="text-[10px] text-muted-foreground -mt-1">Docker Compose 模式下保存后自动生效，无需执行主机脚本或重启预测引擎。</p>
               {settings.filter(s => FORECAST_LLM_KEYS.has(s.key)).map(setting => {
                 const isChanged = setting.key in edited
                 const isSecret = setting.key === 'forecast_llm_api_key'
@@ -1144,13 +1132,6 @@ export default function SettingsPage() {
                   </div>
                 )
               })}
-              <div className="pt-1">
-                <Button size="sm" variant="secondary" className="h-8 text-[12px]" onClick={syncForecastLlm}>
-                  <RefreshCw className="w-3.5 h-3.5 mr-1" />
-                  同步到预测引擎
-                </Button>
-                <span className="ml-2 text-[10px] text-muted-foreground">调用主机 sync_forecast_llm.sh 写入 env 并重启引擎</span>
-              </div>
             </div>
           </section>
           {/* 同花顺登录区块 */}
