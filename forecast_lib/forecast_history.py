@@ -1,8 +1,13 @@
 # 历史预测存储(SQLite)
-import os, json
+import json
 import sqlite3 as _sqlite3
 
-_HISTORY_DB = os.path.expanduser('~/.panwatch_forecast.db')
+try:
+    from .forecast_paths import FORECAST_DB_PATH
+except ImportError:  # forecast_server.py 将 forecast_lib 直接加入 sys.path
+    from forecast_paths import FORECAST_DB_PATH
+
+_HISTORY_DB = FORECAST_DB_PATH
 
 
 

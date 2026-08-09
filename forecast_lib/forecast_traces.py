@@ -32,15 +32,19 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import sqlite3 as _sqlite3
 import time
 from contextlib import contextmanager
 from typing import Any
 
+try:
+    from .forecast_paths import FORECAST_DB_PATH
+except ImportError:  # forecast_server.py 将 forecast_lib 直接加入 sys.path
+    from forecast_paths import FORECAST_DB_PATH
+
 logger = logging.getLogger(__name__)
 
-_HISTORY_DB = os.path.expanduser("~/.panwatch_forecast.db")
+_HISTORY_DB = FORECAST_DB_PATH
 
 
 def _ensure_tables() -> None:

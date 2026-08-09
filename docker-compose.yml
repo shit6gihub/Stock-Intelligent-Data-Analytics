@@ -62,6 +62,8 @@ services:
       - PANWATCH_URL=http://panwatch:8000
       # 直接读取设置页的 forecast_llm_* 配置，保存后无需脚本或重启
       - PANWATCH_DB=/app/panwatch-data/panwatch.db
+      # 预测历史必须落到 panwatch_forecast_data 命名卷
+      - FORECAST_DB_PATH=/app/data/panwatch_forecast.db
       - TZ=Asia/Shanghai
       - PYTHONUNBUFFERED=1
     volumes:

@@ -11,53 +11,25 @@
   见 https://www.tdx.com.cn/skillhub/ §21。skill 模板是问小达经过训练的固定 prompt,
   MCP 层仍走 tdx_screener,只是 message 用更精准的 skill 触发句。
 
-依赖: 8000 健康且可访问(http://127.0.0.1:8000)
+依赖: `PANWATCH_URL` 指向健康可访问的 PanWatch 主后端。
 """
 from __future__ import annotations
 
-import json
 import logging
-import urllib.request
 from typing import Optional
 
+try:
+    from .panwatch_client import request_json
+except ImportError:  # forecast_server.py 将 forecast_lib 直接加入 sys.path
+    from panwatch_client import request_json
+
 logger = logging.getLogger(__name__)
-
-_PANWATCH_BASE = "http://127.0.0.1:8000"
-_TOKEN_CACHE: dict = {}
-
-
-def _get_token() -> str:
-    """登录 8000 拿 admin token(缓存)。"""
-    if _TOKEN_CACHE.get("token"):
-        return _TOKEN_CACHE["token"]
-    try:
-        req = urllib.request.Request(
-            f"{_PANWATCH_BASE}/api/auth/login",
-            data=json.dumps({"username": "admin", "password": "admin123"}).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
-        tok = data.get("data", {}).get("token", "")
-        if tok:
-            _TOKEN_CACHE["token"] = tok
-        return tok
-    except Exception as e:
-        logger.warning(f"获取 8000 token 失败: {e}")
-        return ""
 
 
 def _tdx_ask(query: str) -> Optional[dict]:
     """调 8000 tdx ask, 返回结构化 rows/headers 或 None。"""
-    tok = _get_token()
-    if not tok:
-        return None
     try:
-        url = f"{_PANWATCH_BASE}/api/tdx/ask?q={urllib.parse.quote(query)}"
-        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {tok}"})
-        with urllib.request.urlopen(req, timeout=25) as resp:
-            data = json.loads(resp.read().decode())
+        data = request_json(f"/api/tdx/ask?q={urllib.parse.quote(query)}", timeout=25)
         return data.get("data")
     except Exception as e:
         logger.warning(f"tdx ask 失败 [{query}]: {e}")

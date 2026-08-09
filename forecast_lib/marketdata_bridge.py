@@ -7,62 +7,26 @@
   data_sources 表读「设置→接口Key」配置的 key(改了立即生效, 无需重启)
 - 这样 8010 永远拿到 UI 维护的最新 key, 国内外服务器只要 UI 配好源即可
 
-认证: 8000 端点带 protected 依赖(需 Bearer token), 用 admin 账号登录拿 token。
+认证: 8000 端点带 protected 依赖(需 Bearer token)，Compose 模式使用
+PanWatch 共享数据库签发的短时 Token，不保存用户密码。
 """
 from __future__ import annotations
 
 import logging
-import sys
-import time
+
+try:
+    from .panwatch_client import request_json
+except ImportError:  # forecast_server.py 将 forecast_lib 直接加入 sys.path
+    from panwatch_client import request_json
 
 logger = logging.getLogger(__name__)
-
-# 8000 主后端地址(容器内/本机)
-PANWATCH_BASE = "http://127.0.0.1:8000"
-# 缓存 token(登录一次, 5 分钟有效)
-_TOKEN: str | None = None
-_TOKEN_TS: float = 0.0
-_TOKEN_TTL = 300.0
 
 # 进程内缓存(龙虎榜日频, 避免重复请求)
 _DT_CACHE: dict = {}
 
 
-def _get_token() -> str | None:
-    """用 admin 账号登录 8000 拿 Bearer token(缓存 5 分钟)。"""
-    global _TOKEN, _TOKEN_TS
-    now = time.time()
-    if _TOKEN and now - _TOKEN_TS < _TOKEN_TTL:
-        return _TOKEN
-    try:
-        import urllib.request, json
-        req = urllib.request.Request(
-            f"{PANWATCH_BASE}/api/auth/login",
-            data=json.dumps({"username": "admin", "password": "admin123"}).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as r:
-            data = json.loads(r.read())
-        _TOKEN = data.get("data", {}).get("token")
-        _TOKEN_TS = now
-        return _TOKEN
-    except Exception as e:
-        logger.warning(f"8000 登录失败: {e}")
-        return None
-
-
 def _http_get(path: str) -> dict | None:
-    import urllib.request, json
-    token = _get_token()
-    if not token:
-        return None
-    req = urllib.request.Request(
-        f"{PANWATCH_BASE}{path}",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read())
+    return request_json(path, timeout=30)
 
 
 def get_dragon_tiger(date: str | None = None, symbol: str | None = None) -> list:

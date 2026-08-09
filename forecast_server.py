@@ -31,6 +31,7 @@ from forecast_models import (
 from forecast_history import (
     get_stock_name, save_forecast, list_forecasts,
 )
+from forecast_paths import FORECAST_DB_PATH
 from forecast_sentiment import (
     fetch_sentiment, _load_llm_config,
 )
@@ -324,7 +325,7 @@ def predict(symbol: str, days: int = 5, task_id: str = "", target_date: str = ""
         # 顺手把 target_date 也补上 (start_run 时还未知)
         import sqlite3 as _sq
         try:
-            _c = _sq.connect(os.path.expanduser("~/.panwatch_forecast.db"))
+            _c = _sq.connect(FORECAST_DB_PATH)
             _c.execute(
                 "UPDATE prediction_runs SET target_date=? WHERE id=? AND target_date=?",
                 (target_date_str, run_id, ""),
