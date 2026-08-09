@@ -13,6 +13,12 @@ from __future__ import annotations
 
 from marketdata.vendors.capital_flow import EastmoneyCapitalFlowVendor, SinaCapitalFlowVendor
 from marketdata.vendors.ths_flow import ThsBoardFlowVendor, ThsMarketFlowVendor
+from marketdata.vendors.ths_web import (
+    ThsFlashNewsVendor,
+    ThsFundamentalsVendor,
+    ThsKlineVendor,
+    ThsQuoteVendor,
+)
 from marketdata.vendors.eastmoney import EastmoneyQuoteVendor
 from marketdata.vendors.events import EventsVendor
 from marketdata.vendors.fundamentals import EastmoneyFundamentalsVendor, TencentFundamentalsVendor
@@ -63,6 +69,7 @@ VENDOR_CLASSES_BY_TYPE: dict[str, dict[str, type]] = {
         "yfinance": YFinanceQuoteVendor,
         "alphavantage": AlphaVantageQuoteVendor,
         "twelvedata": TwelveDataQuoteVendor,
+        "ths": ThsQuoteVendor,
     },
     "kline": {
         "zhitu": ZhituKlineVendor,
@@ -70,6 +77,7 @@ VENDOR_CLASSES_BY_TYPE: dict[str, dict[str, type]] = {
         "stooq": StooqKlineVendor,
         "eastmoney": EastmoneyKlineVendor,
         "yahoo": YahooKlineVendor,
+        "ths": ThsKlineVendor,
     },
     "capital_flow": {
         "eastmoney": EastmoneyCapitalFlowVendor,
@@ -88,11 +96,13 @@ VENDOR_CLASSES_BY_TYPE: dict[str, dict[str, type]] = {
         "zhitu": ZhituFundamentalsVendor,
         "tencent": TencentFundamentalsVendor,
         "eastmoney": EastmoneyFundamentalsVendor,
+        "ths_f10": ThsFundamentalsVendor,
     },
     "flash_news": {
         "cls": ClsFlashNewsVendor,
         "sina": SinaFlashNewsVendor,
         "eastmoney": EastmoneyFlashNewsVendor,
+        "ths": ThsFlashNewsVendor,
     },
     "news": {
         "xueqiu": XueqiuNewsVendor,
