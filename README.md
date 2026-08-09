@@ -468,6 +468,17 @@ YAML 配置 + alphasift 因子（资金热度/量比突破/动量质量/低波�
 
 README 旧的「智能 Agent 系统（4 套）」漏列了 4 个：`竞价复盘 / 题材启动识别 / 短线归因 / 技术分析`，已补全到 8 套（BaseAgent 子类）+ 另有按需触发的 TradingAgents 9-Agent 团队。数据源全部走原生 MarketData（东财/腾讯/wudao/ftshare）+ 方法论移植自 a-share-expert / wudao skill 框架（5W 证据、情绪定性、三拆解等）。
 
+### 12. 企微版预测报告 narrative 化（借鉴 TSP AI 复盘，2026-08-09）
+
+借鉴来源：[shy3130/tickflow-stock-panel](https://github.com/shy3130/tickflow-stock-panel) 推送飞书-自动复盘的排版思路。改造 4 处：
+
+- **一句话定调**（开头）：基于「方向 + 四模型一致率 + 预期幅度 + 情绪温度 + 操作建议」合成 narrative（≤ 60 字）
+- **明日基调**（结尾）：高置信给明确基调，中低置信给「等待确认」（借鉴 TSP「明日基调:均衡」风格）
+- **情绪温度量化**（中间数据面）：把 `adjustment_pct + market_sentiment` 量化到 0-100，五档标签（🔥火热 / 😊偏暖 / 😐中性 / 😟偏冷 / 🥶极冷）+ 借鉴 TSP「指数强弱排序」思路加四模型一致率
+- **AI 免责声明**（合规）：blockquote 声明「仅供学习研究，不构成任何投资建议」
+
+实测样例（神剑股份 002361）~1750 字节，在企微安全阈值 3800 内。commit `5919e11`。
+
 ## 🔌 接口与 Key 获取地址
 
 | 数据源 | 用途 | Key 获取地址 |
