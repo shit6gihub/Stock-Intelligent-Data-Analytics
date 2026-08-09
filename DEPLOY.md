@@ -1,6 +1,6 @@
 # PanWatch 部署文档(同事版)
 
-镜像地址:**ghcr.io/xiaoze-hub/panwatch:latest**
+镜像地址:**ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest**
 
 > 包含所有定制(题材前瞻/事件驱动/简介标签/盘口扩展/zhitu/iTick 集成/实时指数等 51 个 commit)
 > 数据源全在容器内自启,**只要给登录账号就能用**
@@ -9,7 +9,7 @@
 
 ### 1. 拉取镜像
 ```bash
-sudo docker pull ghcr.io/xiaoze-hub/panwatch:latest
+sudo docker pull ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest
 ```
 
 ### 2. 创建配置(账号/token 可选)
@@ -33,7 +33,7 @@ sudo docker run -d \
   -p 8000:8000 \
   --env-file ~/panwatch/.env \
   -v panwatch_data:/app/data \
-  ghcr.io/xiaoze-hub/panwatch:latest
+  ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest
 ```
 
 打开浏览器 **http://localhost:8000** ,用 `.env` 里的账号密码登录。
@@ -48,7 +48,7 @@ sudo docker run -d \
   --restart unless-stopped \
   -v panwatch_data:/app/data \
   --env-file ~/panwatch/.env \
-  ghcr.io/xiaoze-hub/panwatch:latest
+  ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest
 # 注意: 容器只监听 127.0.0.1:8000,需要 Caddy 反代并加 iptables 挡公网 8000
 ```
 
@@ -68,9 +68,9 @@ https://your-domain.com {
 所有数据(自选股/历史报告/AI 分析)存在 Docker 命名卷 `panwatch_data` 里。
 **升级镜像** = 拉新镜像 + 重建容器(数据卷不动),**数据全在**:
 ```bash
-sudo docker pull ghcr.io/xiaoze-hub/panwatch:latest
+sudo docker pull ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest
 sudo docker stop panwatch && sudo docker rm panwatch
-sudo docker run -d --name panwatch -p 8000:8000 --env-file ~/panwatch/.env -v panwatch_data:/app/data ghcr.io/xiaoze-hub/panwatch:latest
+sudo docker run -d --name panwatch -p 8000:8000 --env-file ~/panwatch/.env -v panwatch_data:/app/data ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest
 ```
 
 ## 镜像版本

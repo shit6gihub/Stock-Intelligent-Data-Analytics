@@ -1,8 +1,8 @@
 # build-and-push-image.yml · PanWatch Docker 镜像构建+推送到 GHCR
 #
 # 触发: 推 git tag(v*.*.*)或手动 dispatch
-# 产出: ghcr.io/xiaoze-hub/panwatch:latest(及对应版本号)
-# 用途: 同事部署 `docker pull ghcr.io/xiaoze-hub/panwatch:latest`
+# 产出: ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest(及对应版本号)
+# 用途: 同事部署 `docker pull ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest`
 
 name: build-and-push-image
 
@@ -53,7 +53,7 @@ jobs:
             TAG="latest"
           fi
           echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "image=ghcr.io/xiaoze-hub/panwatch" >> $GITHUB_OUTPUT
+          echo "image=ghcr.io/xiaoze-hub/stock-intelligent-data-analytics" >> $GITHUB_OUTPUT
 
       - name: Build and push
         uses: docker/build-push-action@v5
@@ -63,8 +63,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/xiaoze-hub/panwatch:latest
-            ghcr.io/xiaoze-hub/panwatch:${{ steps.meta.outputs.tag }}
+            ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest
+            ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:${{ steps.meta.outputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: false

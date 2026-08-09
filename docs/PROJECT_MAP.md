@@ -1,7 +1,7 @@
 # PanWatch 项目结构地图（2026-08-08 实测）
 
 ## 部署拓扑
-- **8000** = FastAPI 主后端，跑在 **Docker 容器**内（镜像 `sunxiao0721/panwatch:latest`）
+- **8000** = FastAPI 主后端，跑在 **Docker 容器**内（镜像 `ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest`）
   - 容器挂载：`/home/ubuntu/.hermes:/hermes`(ro)、`panwatch_data:/app/data`
   - **没有挂载 `/tmp/PanWatch:/app`** → 改 8000 代码需 `docker cp` 进容器 + 重启，或重建镜像。直接改 `/tmp/PanWatch` 副本**不生效**
   - 容器内装了 `marketdata` 包（数据源抽象层），宿主机没有

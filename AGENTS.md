@@ -17,7 +17,7 @@
 - Frontend (dev): `make dev-web`（自动 pnpm install+dev，served on `http://localhost:5183`）。
 - Frontend (build): `cd frontend && pnpm install --frozen-lockfile && pnpm build`.
 - Docker image: `./build.sh <version>` (copies `frontend/dist` to `./static` and builds image).
-- Run via Docker: `docker run -d -p 8000:8000 -v panwatch_data:/app/data sunxiao0721/panwatch:latest`.
+- Run via Docker: `docker run -d -p 8000:8000 -v panwatch_data:/app/data xiaoze-hub/stock-intelligent-data-analytics:latest`.
 - Tests (backend): add pytest tests under `tests/` then run `pytest`.
 
 ## Coding Style & Naming Conventions

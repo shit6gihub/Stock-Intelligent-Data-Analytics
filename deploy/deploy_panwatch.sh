@@ -18,7 +18,7 @@ set -euo pipefail
 
 REPO_DIR="${PANWATCH_REPO:-/tmp/PanWatch}"
 CONTAINER="panwatch"
-IMAGE="sunxiao0721/panwatch:latest"
+IMAGE="ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest"
 TOKEN="${WUDAO_MCP_TOKEN:-}"
 DOCKER="${SUDO:-sudo} docker"
 
