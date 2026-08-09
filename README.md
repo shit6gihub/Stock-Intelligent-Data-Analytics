@@ -261,6 +261,16 @@ docker compose up -d
 
 数据持久化: 命名卷 `panwatch_data`(主后端 DB + Playwright 浏览器) + `panwatch_forecast_data`(预测历史 SQLite + 回测报告)。
 
+**可选挂载**(报告中心 Obsidian vault 同步用):
+
+```yaml
+volumes:
+  - ~/.hermes:/hermes:ro                    # Hermes cron 输出只读
+  - ~/Obsidian/FinanceVault:/obsidian-vault:rw  # Obsidian vault 双向同步
+```
+
+不挂载时 `报告中心` 页面会显示「Obsidian vault 不存在」,但不影响主功能(预测/持仓/策略库等都能用)。**已写在 `docker-compose.yml` 里**,朋友改路径即可。
+
 **无需宿主机 systemd、不需要手动起 forecast_server.py**。compose 网络内主后端通过 `FORECAST_ENGINE_URL=http://forecast:8010` 自动互联。
 
 故障排查:
