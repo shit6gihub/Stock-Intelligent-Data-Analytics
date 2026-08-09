@@ -38,7 +38,11 @@ def direction_label(direction: str) -> str:
     return {"up": "看多", "down": "看空", "flat": "横盘"}.get(direction, direction)
 
 
-def calc_capital_score(capital_flow: list, last_close: float = 0) -> float:
+def calc_capital_score(
+    capital_flow: list,
+    last_close: float = 0,
+    return_data_status: bool = False,
+):
     """量化资金面信号 → 评分(-1~+1)。
 
     兼容两种结构:
@@ -50,24 +54,34 @@ def calc_capital_score(capital_flow: list, last_close: float = 0) -> float:
     - 近5日合计 → 趋势方向(+)
     - 两者皆正 → 偏多(接近 +1); 背离 → 打折
     返回: -1(强烈净流出) ~ +1(强烈净流入)
+
+    ✨ 借鉴 Vibe-Trading「估算不了就声明」原则:
+    - return_data_status=False (默认, 向后兼容): 返回 float score, 数据缺失时返回 0.0
+    - return_data_status=True (新增): 返回 (score, data_status), data_status ∈
+        'complete' (当日+近N日都有) / 'partial' (只有其中之一) / 'missing' (空数据)
+      调用方可据此决定是「展示 0.0 中性」还是「展示 ⚠️ 资金面数据缺失」
     """
     if not capital_flow:
-        return 0.0
+        return (0.0, "missing") if return_data_status else 0.0
     items = [r for r in capital_flow if isinstance(r, dict)]
     if not items:
-        return 0.0
+        return (0.0, "missing") if return_data_status else 0.0
 
     # 找"当日"和"近N日"两条
     today = None
     period = None
+    today_found = False
+    period_found = False
     for r in items:
         label = str(r.get("date", ""))
         if "当日" in label or "近" not in label:
             # 优先精确"当日", 否则取非"近X日"的那条
             if today is None or label == "当日":
                 today = r.get("main_net", 0)
+                today_found = True
         if "近" in label and "日" in label:
             period = r.get("main_net", 0)
+            period_found = True
 
     # 兜底: 若没有"近X日"标签, 用全部合计
     if period is None:
@@ -92,7 +106,19 @@ def calc_capital_score(capital_flow: list, last_close: float = 0) -> float:
     if today_dir and period_dir and today_dir != period_dir:
         score *= 0.6
 
-    return round(max(-1.0, min(1.0, score)), 3)
+    final_score = round(max(-1.0, min(1.0, score)), 3)
+
+    # 数据完整度评估(借鉴 Vibe-Trading「估算不了就声明」)
+    if today_found and period_found:
+        data_status = "complete"
+    elif today_found or period_found:
+        data_status = "partial"
+    else:
+        data_status = "missing"
+
+    if return_data_status:
+        return final_score, data_status
+    return final_score
 
 
 def build_recommendation(symbol: str, last_close: float, final: np.ndarray,

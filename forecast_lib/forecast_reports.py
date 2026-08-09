@@ -720,34 +720,53 @@ def generate_wecom_report(result: dict, backtest_data: dict | None = None) -> st
     L.append("---")
     # 资金面(东财口径主力净流入, 经 PanWatch tdx)
     cf = result.get("capital_flow") or []
+    # ✨ 借鉴 Vibe-Trading「估算不了就声明」: 即使 cf 非空也可能缺关键日期
+    # 用 return_data_status=True 拿到数据完整度,据此显式标注
+    from forecast_utils import calc_capital_score
+    _cap = calc_capital_score(
+        cf, last_close=result.get("last_close", 0), return_data_status=True
+    )
+    # type: ignore[union-attr] -- return_data_status=True 保证返回 tuple
+    cap_score: float = _cap[0]  # type: ignore[assignment]
+    cap_status: str = _cap[1]  # type: ignore[assignment]
     if isinstance(cf, list) and cf:
-        from forecast_utils import calc_capital_score
-        cap_score = calc_capital_score(cf, last_close=result.get("last_close", 0))
-        L.append("## 💰 资金面（主力净流入·东财口径）")
-        for r in cf:
-            d = r.get("date", "")
-            net = r.get("main_net", 0)
-            arrow = "🟢" if net > 0 else ("🔴" if net < 0 else "⚪")
-            unit = f"{net/1e8:+.2f}亿" if abs(net) >= 1e8 else f"{net/1e4:+.0f}万"
-            L.append(f"- {d} {arrow} {unit}")
-        # 趋势判断(近N日合计)
-        period_item = next((r for r in cf if "近" in str(r.get("date","")) and "日" in str(r.get("date",""))), None)
-        if period_item:
-            pnet = period_item.get("main_net", 0)
-            if pnet > 0:
-                trend = f"近5日主力净流入合 {pnet/1e8:+.2f}亿，持续吸筹 💪"
-            elif pnet < 0:
-                trend = f"近5日主力净流出合 {pnet/1e8:+.2f}亿，主力撤退 ⚠️"
-            else:
-                trend = "近5日资金面中性"
-            L.append(f"- **趋势**：{trend}")
-        # 资金面联动策略结论
-        if cap_score > 0.15:
-            L.append(f"- **对策略影响**：资金面偏多(评分 {cap_score:+.2f})，确认看多方向，置信度上调 ✅")
-        elif cap_score < -0.15:
-            L.append(f"- **对策略影响**：资金面偏空(评分 {cap_score:+.2f})，与价格方向背离需警惕 ⚠️")
+        # 数据缺失/部分缺失时显式标注(借鉴 Vibe-Trading「估算不了就声明」)
+        if cap_status == "missing":
+            L.append("## 💰 资金面（主力净流入·东财口径）")
+            L.append("- ⚠️ 资金面数据缺失(无任何主力资金记录),跳过资金面判断(借鉴 Vibe-Trading「估算不了就声明」原则)")
         else:
-            L.append(f"- **对策略影响**：资金面中性(评分 {cap_score:+.2f})")
+            L.append("## 💰 资金面（主力净流入·东财口径）")
+            for r in cf:
+                d = r.get("date", "")
+                net = r.get("main_net", 0)
+                arrow = "🟢" if net > 0 else ("🔴" if net < 0 else "⚪")
+                unit = f"{net/1e8:+.2f}亿" if abs(net) >= 1e8 else f"{net/1e4:+.0f}万"
+                L.append(f"- {d} {arrow} {unit}")
+            # 趋势判断(近N日合计)—— 仅在 partial/complete 时有意义
+            period_item = next((r for r in cf if "近" in str(r.get("date","")) and "日" in str(r.get("date",""))), None)
+            if period_item:
+                pnet = period_item.get("main_net", 0)
+                if pnet > 0:
+                    trend = f"近5日主力净流入合 {pnet/1e8:+.2f}亿，持续吸筹 💪"
+                elif pnet < 0:
+                    trend = f"近5日主力净流出合 {pnet/1e8:+.2f}亿，主力撤退 ⚠️"
+                else:
+                    trend = "近5日资金面中性"
+                L.append(f"- **趋势**：{trend}")
+            # 部分数据时显式提示(借鉴 Vibe-Trading「估算不了就声明」)
+            if cap_status == "partial":
+                L.append("- ⚠️ 部分数据缺失(只拿到当日/近N日中的一项),评分置信度降低")
+            # 资金面联动策略结论
+            if cap_score > 0.15:
+                L.append(f"- **对策略影响**：资金面偏多(评分 {cap_score:+.2f})，确认看多方向，置信度上调 ✅")
+            elif cap_score < -0.15:
+                L.append(f"- **对策略影响**：资金面偏空(评分 {cap_score:+.2f})，与价格方向背离需警惕 ⚠️")
+            else:
+                L.append(f"- **对策略影响**：资金面中性(评分 {cap_score:+.2f})")
+    else:
+        # 资金面数据完全缺失 —— 借鉴 Vibe-Trading「估算不了就声明」
+        L.append("## 💰 资金面（主力净流入·东财口径）")
+        L.append("- ⚠️ 资金面数据缺失(无任何主力资金记录),跳过资金面判断")
     # 龙虎榜(游资信号, 经 marketdata ftshare)
     dt = result.get("dragon_tiger") or []
     if isinstance(dt, list) and dt:
