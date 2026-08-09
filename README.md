@@ -564,8 +564,8 @@ README 旧的「智能 Agent 系统（4 套）」漏列了 4 个：`竞价复盘
 
 ## 📦 版本
 
-- **当前版本**：`v0.1.7`（镜像 tag 与 GitHub Release 对齐；新增同花顺板块/大盘资金 + DB 数据源初始化 11 条可达源）
-- **容器镜像**：`ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest`（已公开，匿名可拉，digest `sha256:77c230987d01`）
+- **当前版本**：`v0.1.8`（镜像 tag 与 GitHub Release 对齐；新增同花顺扫码登录 session 自动续期 + 板块/大盘资金）
+- **容器镜像**：`ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest`（已公开，匿名可拉，digest `sha256:1b74a0de2c7c`）
 - **预测引擎**：`ghcr.io/xiaoze-hub/stock-intelligent-data-analytics-forecast:latest`（独立镜像，digest `sha256:9d6192f9d237`）
 - **更新日志**：见 [Releases](https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics/releases)
 - 打 tag（如 `v0.1.5`）触发 GitHub Actions 自动构建并推送镜像到 GHCR
