@@ -33,8 +33,15 @@
 - Fixtures: use factory helpers for DB models; avoid network calls (mock collectors and AI clients).
 
 ## Commit & Pull Request Guidelines
-- Commit format: `<type>: <subject>` where type ∈ `{feat, fix, docs, refactor, style, test}`.
-  Example: `feat: add intraday monitor agent`.
+- Commit format: `<type>: <subject>` where type ∈ `{fix, feature, update, doc}`.
+  Example: `feature: add intraday monitor agent`.
+- Keep one logical, reviewable change per commit. Once a change is ready to record, commit it instead of accumulating unrelated work.
+- Every commit must update `CHANGELOG.md` in the same commit. Add a concise entry under the current date and one of these headings:
+  - `fix` — bug fixes and regression corrections.
+  - `feature` — new user-facing or developer-facing capabilities.
+  - `update` — changes to existing behavior, dependencies, configuration, refactors, tests, or operations.
+  - `doc` — documentation and development-process changes.
+- Do not create a code-only commit followed by a separate changelog commit; the change and its changelog entry are one atomic commit.
 - Pull Requests: include a clear description, linked issues, and screenshots/GIFs for UI changes. Update docs/prompts when applicable.
 - CI hygiene: ensure backend runs (`python server.py`) and frontend builds (`pnpm build`). No secrets in commits; use `.env` or UI settings.
 
