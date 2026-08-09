@@ -1,8 +1,11 @@
 # PanWatch Dockerfile
 # 多阶段构建，减小最终镜像大小
 
+ARG NODE_IMAGE=node:20-alpine
+ARG PYTHON_IMAGE=python:3.11-slim
+
 # ===== Stage 1: 前端构建 =====
-FROM node:20-alpine AS frontend-builder
+FROM ${NODE_IMAGE} AS frontend-builder
 
 WORKDIR /app/frontend
 
@@ -21,7 +24,7 @@ RUN npx vite build
 
 
 # ===== Stage 2: Python 运行环境 =====
-FROM python:3.11-slim
+FROM ${PYTHON_IMAGE}
 
 # 版本号（构建时传入）
 ARG VERSION=dev
