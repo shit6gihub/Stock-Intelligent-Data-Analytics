@@ -4,13 +4,16 @@
 不可用。改走同花顺 hexin 私有接口 `data.hexin.cn/market/hsgtApi/method/dayChart/`,
 返回当日分钟级累计净买入序列,`hgt`(沪股通)/`sgt`(深股通),单位均为"亿元"。
 
-**待实抓校准**:沙箱代理会拦截 hexin,无法实抓验证真实响应结构。以下解析按背景描述
-("响应含当日分钟序列,每点有时间 + hgt/sgt 累计值")尽力构造 + 逐层防御 `.get()`,
-拿不到就返回 []。真实结构上线前需用真实响应复核。
+响应结构(2026-08-09 实抓海外节点 43.128.140.167):root level 三个键
+  `time` str[] 时间序列(09:10..15:00 共 262 个,含午休跳点)
+  `hgt`  float[] 沪股通累计净买入(亿元),长度 = len(time) = 262
+  `sgt`  float[] 深股通累计净买入(亿元),长度 < len(time)(本会话实测 35,断在 09:44)
+响应里**没有 date 字段**——date 走 config['date'] 或今天。
 
-已知坑(SKILL 标注):`sgt`(深股通)近期数据不可靠,可能是 NaN 或量级异常(远超合理的
-"亿元"范围),必须容错——异常时 sgt_net=None,不参与 total_net 计算,也不让异常值污染
-hgt_net。绝不用无参 now()/time()/random 填充缺失的 date/time。
+已知坑(SKILL 标注):`sgt`(深股通)近期数据不可靠,实测 35 个值就断在 09:44,且末值 379.75
+亿元量级明显异常(正常单日深股通净买入 |x|<100 亿)。必须容错:
+- `sgt` 长度 < 0.25 * len(time) 视为断流 → sgt_net=None,不参与 total_net
+- 单值 abs>2000 一律视为脏值丢弃
 """
 from __future__ import annotations
 
@@ -63,11 +66,14 @@ def _sgt_valid(value) -> float | None:
 
 
 def _unwrap_payload(resp) -> dict:
-    """防御性剥离外层包裹:hexin 响应可能是 {"data": {...}} 或再套一层
-    {"data": {"data": {...}}}——具体结构待实抓校准,逐层 .get() 兜底,拿不到就 {}。
+    """实抓响应是 root-level {time, hgt, sgt},但保留对 {data:{...}} 包裹结构的兼容。
+    识别规则:root dict 里只要含 'time'+'hgt'(或 'sgt')任一,就视为扁平结构直接返回 root;
+    否则剥一层 `data` 再试一次;再剥不出就空 dict。
     """
     if not isinstance(resp, dict):
         return {}
+    if "time" in resp and ("hgt" in resp or "sgt" in resp):
+        return resp
     layer = resp.get("data")
     if not isinstance(layer, dict):
         return {}
@@ -77,20 +83,13 @@ def _unwrap_payload(resp) -> dict:
     return layer
 
 
-def _last_point(series) -> tuple[object, object]:
-    """从分钟序列取末值(当日最新累计净买入)。序列元素可能是 [time, value] 或
-    {"time":.., "value":..}(键名待实抓校准,防御多种常见键名)。取不到返回 (None, None)。
+def _series_last(series) -> float | None:
+    """hexin 实抓响应中 hgt/sgt 是裸 float 数组(不是 [{time,value},...] 对象序列)。
+    取末值,自动转 float + 量级容错(_sgt_valid 在外层做)。
     """
     if not isinstance(series, (list, tuple)) or not series:
-        return None, None
-    last = series[-1]
-    if isinstance(last, (list, tuple)) and len(last) >= 2:
-        return last[0], last[1]
-    if isinstance(last, dict):
-        t = last.get("time") or last.get("t") or last.get("x")
-        v = last.get("value") or last.get("v") or last.get("y") or last.get("net")
-        return t, v
-    return None, None
+        return None
+    return _to_float(series[-1])
 
 
 class HexinNorthboundVendor(_NorthboundVendorBase):
@@ -116,22 +115,33 @@ class HexinNorthboundVendor(_NorthboundVendorBase):
         if not payload:
             return []
 
-        hgt_time, hgt_raw = _last_point(payload.get("hgt"))
-        sgt_time, sgt_raw = _last_point(payload.get("sgt"))
-        hgt_net = _to_float(hgt_raw)
-        sgt_net = _sgt_valid(sgt_raw)
+        time_series = payload.get("time") or []
+        hgt_series = payload.get("hgt") or []
+        sgt_series = payload.get("sgt") or []
+
+        # hgt 末值(全天 262 个点是稳定的,直接用)
+        hgt_net = _to_float(hgt_series[-1]) if hgt_series else None
+
+        # sgt 容错:长度 < 0.25 * len(time) 视为断流(实测断在 09:44,长度 35)→ sgt_net=None
+        # 单值 abs>2000 视为脏值
+        sgt_net = None
+        if sgt_series and time_series and len(sgt_series) >= 0.25 * len(time_series):
+            candidate = _to_float(sgt_series[-1])
+            if candidate is not None and abs(candidate) <= _SGT_MAX_ABS:
+                sgt_net = candidate
+
         if hgt_net is None and sgt_net is None:
             return []
 
-        total_net = hgt_net + sgt_net if (hgt_net is not None and sgt_net is not None) else None
-        date = str(
-            (data.get("date") if isinstance(data, dict) else None)
-            or payload.get("date")
-            or (config or {}).get("date")
-            or ""
-        )
-        time_point = hgt_time if hgt_time is not None else sgt_time
-        time_str = str(time_point) if time_point is not None else ""
+        # total_net:两端都有才求和(缺一端时 None,避免误导)
+        total_net = None
+        if hgt_net is not None and sgt_net is not None:
+            total_net = hgt_net + sgt_net
+
+        # date:响应里没有 date 字段,走 config['date'] 或今天
+        from datetime import datetime
+        date = str((config or {}).get("date") or datetime.now().strftime("%Y-%m-%d"))
+        time_str = str(time_series[-1]) if time_series else ""
 
         return [
             NorthboundItem(
