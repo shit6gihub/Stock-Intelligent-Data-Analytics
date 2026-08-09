@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Check, Eye, EyeOff, Plus, Pencil, Trash2, Star, Send, Cpu, Play, Download, Upload, FileJson, BarChart3, User, Radar, RefreshCw, QrCode } from 'lucide-react'
+import { Check, Eye, EyeOff, Plus, Pencil, Trash2, Star, Send, Cpu, Play, Download, Upload, FileJson, BarChart3, User, Radar, RefreshCw, QrCode, MonitorUp } from 'lucide-react'
 import { fetchAPI, type AIService, type AIModel, type NotifyChannel } from '@panwatch/api'
 import { useAvatar, saveAvatar, fileToAvatarDataUrl } from '@/hooks/use-avatar'
 import { Input } from '@panwatch/base-ui/components/ui/input'
@@ -9,6 +9,13 @@ import { Switch } from '@panwatch/base-ui/components/ui/switch'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@panwatch/base-ui/components/ui/dialog'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@panwatch/base-ui/components/ui/select'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
+import {
+  browserNotificationsEnabled,
+  browserNotificationsSupported,
+  requestBrowserNotificationPermission,
+  setBrowserNotificationsEnabled,
+  showBrowserNotification,
+} from '@/lib/browser-notifications'
 
 interface Setting {
   key: string
@@ -200,6 +207,8 @@ export default function SettingsPage() {
   const [channelKeyVisible, setChannelKeyVisible] = useState(false)
   const [testing, setTesting] = useState<number | null>(null)
   const [testingModel, setTestingModel] = useState<number | null>(null)
+  const [browserPushEnabled, setBrowserPushEnabled] = useState(browserNotificationsEnabled)
+  const [browserPushTesting, setBrowserPushTesting] = useState(false)
 
   // 头像
   const avatar = useAvatar()
@@ -737,6 +746,58 @@ export default function SettingsPage() {
     }
   }
 
+  const toggleBrowserPush = async (enabled: boolean) => {
+    if (!enabled) {
+      setBrowserNotificationsEnabled(false)
+      setBrowserPushEnabled(false)
+      toast('电脑 Web 推送已关闭', 'info')
+      return
+    }
+    if (!browserNotificationsSupported()) {
+      toast('当前浏览器或访问地址不支持系统通知，请使用 HTTPS 或 localhost', 'error')
+      return
+    }
+    const permission = await requestBrowserNotificationPermission()
+    if (permission !== 'granted') {
+      setBrowserNotificationsEnabled(false)
+      setBrowserPushEnabled(false)
+      toast('浏览器未授予通知权限，请在网站权限中允许通知', 'error')
+      return
+    }
+    try {
+      const latest = await fetchAPI<{ items: Array<{ id: number }> }>('/notifications?limit=1')
+      const baselineId = latest?.items?.[0]?.id || 0
+      setBrowserNotificationsEnabled(true, baselineId)
+      setBrowserPushEnabled(true)
+      await showBrowserNotification({
+        id: Date.now(),
+        title: 'PanWatch 电脑推送已开启',
+        body: '页面打开或在后台运行时，新消息会直接显示为电脑系统通知。',
+        link: '/settings',
+      })
+      toast('电脑 Web 推送已开启', 'success')
+    } catch (e) {
+      setBrowserNotificationsEnabled(false)
+      setBrowserPushEnabled(false)
+      toast(e instanceof Error ? e.message : '电脑 Web 推送开启失败', 'error')
+    }
+  }
+
+  const testBrowserPush = async () => {
+    setBrowserPushTesting(true)
+    try {
+      const shown = await showBrowserNotification({
+        id: Date.now(),
+        title: 'PanWatch 电脑推送测试',
+        body: '如果你看到这条系统通知，说明 Web 推送已正常工作。',
+        link: '/settings',
+      })
+      toast(shown ? '电脑测试通知已发送' : '浏览器通知权限不可用', shown ? 'success' : 'error')
+    } finally {
+      setBrowserPushTesting(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -983,6 +1044,34 @@ export default function SettingsPage() {
               <Plus className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">添加</span>
             </Button>
+          </div>
+          <div className="mb-3 rounded-xl border border-border/50 bg-accent/20 p-3.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-2.5">
+                <MonitorUp className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
+                <div>
+                  <div className="text-[12px] font-medium text-foreground">电脑 Web 推送</div>
+                  <p className="mt-0.5 text-[10.5px] text-muted-foreground">页面打开或在后台运行时，新消息直接弹出电脑系统通知。需要 HTTPS 或 localhost。</p>
+                </div>
+              </div>
+              <Switch
+                checked={browserPushEnabled}
+                disabled={!browserNotificationsSupported()}
+                onCheckedChange={value => void toggleBrowserPush(value)}
+              />
+            </div>
+            {browserPushEnabled && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-2 h-7 px-2 text-[11px]"
+                disabled={browserPushTesting}
+                onClick={() => void testBrowserPush()}
+              >
+                <Send className="h-3.5 w-3.5" />
+                {browserPushTesting ? '测试中…' : '测试电脑通知'}
+              </Button>
+            )}
           </div>
           {channels.length === 0 ? (
             <p className="text-[13px] text-muted-foreground text-center py-6">暂无通知渠道，点击"添加"创建</p>

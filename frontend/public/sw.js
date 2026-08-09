@@ -1,5 +1,5 @@
 // PanWatch Service Worker
-const CACHE_NAME = 'panwatch-v2';
+const CACHE_NAME = 'panwatch-v3';
 
 // 需要缓存的静态资源
 const STATIC_ASSETS = [
@@ -63,5 +63,22 @@ self.addEventListener('fetch', (event) => {
         // 网络失败，尝试从缓存获取
         return caches.match(event.request);
       })
+  );
+});
+
+// 点击电脑系统通知时，聚焦已打开的 PanWatch 窗口或打开新窗口。
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = new URL(event.notification.data?.url || '/', self.location.origin).href;
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (clients) => {
+      for (const client of clients) {
+        if ('focus' in client) {
+          if ('navigate' in client) await client.navigate(targetUrl);
+          return client.focus();
+        }
+      }
+      return self.clients.openWindow ? self.clients.openWindow(targetUrl) : undefined;
+    })
   );
 });

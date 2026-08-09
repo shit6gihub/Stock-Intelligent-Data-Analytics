@@ -22,6 +22,7 @@ import LogsModal from '@panwatch/biz-ui/components/logs-modal'
 import AmbientBackground from '@panwatch/biz-ui/components/AmbientBackground'
 import NotificationBell from '@panwatch/biz-ui/components/notification-bell'
 import ChatWidget from '@/components/ChatWidget'
+import BrowserNotificationBridge from '@/components/BrowserNotificationBridge'
 import AccountMenu from '@/components/AccountMenu'
 import SelfCheckModal from '@/components/SelfCheckModal'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@panwatch/base-ui/components/ui/dialog'
@@ -126,6 +127,7 @@ function App() {
   return (
     <RequireAuth>
     <div className="min-h-screen pb-16 md:pb-0 relative overflow-x-clip bg-background">
+      <BrowserNotificationBridge />
       <AmbientBackground />
       {/* Desktop Floating Nav */}
       <div className="sticky top-0 z-50 px-4 md:px-6 pt-3 md:pt-4 pb-2 hidden md:block">
