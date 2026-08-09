@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.web.api import (
     stocks,
     agents,
+    presets,
     settings,
     logs,
     providers,
@@ -80,6 +81,9 @@ app.include_router(
 )
 app.include_router(
     agents.router, prefix="/api/agents", tags=["agents"], dependencies=protected
+)
+app.include_router(
+    presets.router, prefix="/api/agents/presets", tags=["presets"], dependencies=protected
 )
 app.include_router(
     providers.router,
