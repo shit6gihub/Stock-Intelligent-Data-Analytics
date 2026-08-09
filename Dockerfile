@@ -92,6 +92,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ ./src/
 COPY server.py ./
 COPY prompts/ ./prompts/
+COPY strategies/ ./strategies/
 
 # 写入版本号
 RUN echo "${VERSION}" > VERSION
