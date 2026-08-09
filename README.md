@@ -233,7 +233,42 @@ docker run -d \
 如果不需要截图等浏览器能力，可以在启动容器时设置 `PLAYWRIGHT_SKIP_BROWSER_INSTALL=1` 跳过首次 Chromium 下载/安装。
 
 <details>
-<summary>Docker Compose</summary>
+<summary><b>Docker Compose（含预测引擎 · 推荐）</b></summary>
+
+一行启动**主后端 8000 + 预测引擎 8010**(Kronos/XGBoost/Lag-Llama/LinearReg 四模型融合预测 + 回测)。
+
+仓库根目录已带 `docker-compose.yml`,只需:
+
+```bash
+# 1. 拉两个公开镜像(匿名可拉,无需 PAT)
+docker compose pull
+
+# 2. 一键启动
+docker compose up -d
+
+# 3. 等 60 秒(预测引擎加载 Kronos 慢),访问 http://localhost:8000
+```
+
+镜像源(已公开):
+- `ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest` — 主后端 8000
+- `ghcr.io/xiaoze-hub/stock-intelligent-data-analytics-forecast:latest` — 预测引擎 8010
+
+数据持久化: 命名卷 `panwatch_data`(主后端 DB + Playwright 浏览器) + `panwatch_forecast_data`(预测历史 SQLite + 回测报告)。
+
+**无需宿主机 systemd、不需要手动起 forecast_server.py**。compose 网络内主后端通过 `FORECAST_ENGINE_URL=http://forecast:8010` 自动互联。
+
+故障排查:
+```bash
+docker compose logs -f panwatch        # 主后端日志
+docker compose logs -f forecast        # 预测引擎日志
+docker compose ps                       # 看 health 状态
+docker compose down && docker compose up -d  # 重启
+```
+
+</details>
+
+<details>
+<summary>Docker Compose（仅主后端 · 轻量）</summary>
 
 ```yaml
 version: '3.8'
@@ -359,6 +394,7 @@ cd frontend && pnpm install && pnpm dev       # 前端 :5183
 - **LLM 情绪总结**：基于公告/板块/资金面，输出自然语言点评（如「连续发布异常波动公告 → 监管风险」）
 - **企微推送美化**：专用 `generate_wecom_report()`，emoji 分段 + 分隔线 + 四模型逐行 + 去 JSON，手机友好
 - **预测中间数据埋点**：6 张表完整记录每只票每次预测的模型输入/输出/LLM 评分，企微和 dashboard 双格式可对比
+- **一键部署** 🆕：独立公开镜像 `ghcr.io/xiaoze-hub/stock-intelligent-data-analytics-forecast:latest`，仓库根目录 `docker-compose.yml` 一行起主后端 + 预测引擎，无需宿主机 systemd
 
 ### 2. 主力资金面融合（关键特征）
 
