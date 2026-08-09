@@ -1,6 +1,13 @@
+from datetime import datetime, timedelta
+
 import marketdata.vendors.events as ev
 from marketdata.symbol import Symbol
 from marketdata.types import EventItem
+
+
+def _notice_date(days_ago: int) -> str:
+    """动态生成 notice_date,避免写死日期随时间漂移出 since_days 窗口导致非确定性失败。"""
+    return (datetime.now() - timedelta(days=days_ago)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def test_events_parses_and_filters(monkeypatch):
@@ -14,7 +21,7 @@ def test_events_parses_and_filters(monkeypatch):
                 {
                     "art_code": "AN202607120002",
                     "title": "贵州茅台股份有限公司关于回购股份的公告",
-                    "notice_date": "2026-07-12 10:00:00",
+                    "notice_date": _notice_date(days_ago=2),
                     "columns": [{"column_name": "临时公告"}],
                     "codes": [{"stock_code": "600519"}],
                 },
@@ -22,7 +29,7 @@ def test_events_parses_and_filters(monkeypatch):
                 {
                     "art_code": "AN202607100001",
                     "title": "贵州茅台股份有限公司关于重大资产重组的公告",
-                    "notice_date": "2026-07-10 09:00:00",
+                    "notice_date": _notice_date(days_ago=5),
                     "columns": [{"column_name": "重大事项"}],
                     "codes": [{"stock_code": "600519"}],
                 },
@@ -30,7 +37,7 @@ def test_events_parses_and_filters(monkeypatch):
                 {
                     "art_code": "AN202607120002",
                     "title": "贵州茅台股份有限公司关于回购股份的公告(重复)",
-                    "notice_date": "2026-07-12 10:00:00",
+                    "notice_date": _notice_date(days_ago=2),
                     "columns": [{"column_name": "临时公告"}],
                     "codes": [{"stock_code": "600519"}],
                 },
@@ -47,7 +54,7 @@ def test_events_parses_and_filters(monkeypatch):
     # 去重生效:3 条输入 -> 2 条唯一 (source, external_id)
     assert len(out) == 2
 
-    # 排序:按 (publish_time, importance) 降序 -> 07-12 的回购公告排第一
+    # 排序:按 (publish_time, importance) 降序 -> 较新的回购公告排第一
     assert out[0].external_id == "AN202607120002"
     assert out[0].event_type == "repurchase"
     assert out[0].importance == 2

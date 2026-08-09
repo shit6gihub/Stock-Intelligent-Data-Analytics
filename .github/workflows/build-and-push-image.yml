@@ -3,6 +3,9 @@
 # 触发: 推 git tag(v*.*.*)或手动 dispatch
 # 产出: ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest(及对应版本号)
 # 用途: 同事部署 `docker pull ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest`
+#
+# 门禁(2026-08-09 加入,对齐研究 P0「任何一步失败都不推送」):
+#   test job = 前端 tsc typecheck + 后端 pytest,任一失败 → build job 不执行。
 
 name: build-and-push-image
 
@@ -22,7 +25,48 @@ permissions:
   packages: write          # 推 GHCR 需要
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm install
+
+      - name: Frontend typecheck (门禁 · tsc -b)
+        working-directory: frontend
+        run: npx tsc -b
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system libs for WeasyPrint (PDF export tests)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \
+            libcairo2 libcairo-gobject2 libgdk-pixbuf-2.0-0 \
+            libffi-dev libfontconfig1 fonts-noto-cjk
+
+      - name: Install Python deps
+        run: pip install -r requirements.txt
+
+      - name: Backend tests (门禁 · pytest)
+        run: |
+          python -m pytest tests/ -x -q
+          python -m pytest packages/marketdata/tests -q
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -73,7 +117,6 @@ jobs:
             org.opencontainers.image.description=数智分析 · 自托管 AI 盯盘助手
             org.opencontainers.image.source=https://github.com/xiaoze-hub/PanWatch
             org.opencontainers.image.licenses=MIT
-        continue-on-error: true
 
       - name: Debug failure
         if: failure()

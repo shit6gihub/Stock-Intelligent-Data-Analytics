@@ -1,7 +1,9 @@
 """北向资金(同花顺 hexin)vendor + client 方法测试。
 
 离线 monkeypatch marketdata.vendors.northbound.market_get,不实抓(沙箱代理拦截 hexin)。
-真实响应结构未经实抓校验,构造样例按背景描述(当日分钟序列,hgt/sgt 累计值)搭建。
+响应结构按 2026-08-09 海外节点 43.128.140.167 实抓校准:
+root-level 扁平 {time: str[], hgt: float[], sgt: float[]},不是 {data: {hgt: [[time,val],...]}}。
+hgt/sgt 是裸 float 数组(取末值用 _series_last),响应里没有 date 字段(date 走 config 或今天)。
 """
 from __future__ import annotations
 
@@ -12,11 +14,12 @@ from marketdata.ports import SourceConfig
 from marketdata.types import NorthboundItem
 
 
-def _hexin_payload(hgt: list, sgt: list, *, date: str | None = None) -> dict:
-    inner = {"hgt": hgt, "sgt": sgt}
-    if date is not None:
-        inner["date"] = date
-    return {"data": inner}
+def _hexin_payload(hgt: list, sgt: list, *, time: list | None = None) -> dict:
+    """构造实抓结构(root-level {time, hgt, sgt})的响应;不传 time 时用索引占位。"""
+    payload = {"hgt": hgt, "sgt": sgt}
+    if time is not None:
+        payload["time"] = time
+    return payload
 
 
 class TestUnwrapPayload:
@@ -26,27 +29,31 @@ class TestUnwrapPayload:
     def test_double_layer(self):
         assert nb._unwrap_payload({"data": {"data": {"hgt": [], "sgt": []}}}) == {"hgt": [], "sgt": []}
 
+    def test_flat_root_passes_through(self):
+        # 实抓结构:root 含 time+hgt 直接透传,不剥 data
+        assert nb._unwrap_payload({"time": ["09:30"], "hgt": [1.0], "sgt": [0.5]}) == {
+            "time": ["09:30"],
+            "hgt": [1.0],
+            "sgt": [0.5],
+        }
+
     def test_not_a_dict_returns_empty(self):
         assert nb._unwrap_payload(None) == {}
         assert nb._unwrap_payload("not a dict") == {}
         assert nb._unwrap_payload({"no_data_key": 1}) == {}
 
 
-class TestLastPoint:
-    def test_list_pairs(self):
-        series = [["09:30", 1.1], ["09:31", 1.5], ["09:32", 2.3]]
-        t, v = nb._last_point(series)
-        assert t == "09:32" and v == 2.3
+class TestSeriesLast:
+    def test_list_of_floats_returns_last(self):
+        assert nb._series_last([1.1, 1.5, 2.3]) == 2.3
 
-    def test_dict_points(self):
-        series = [{"time": "09:30", "value": 1.1}, {"time": "09:31", "value": 1.5}]
-        t, v = nb._last_point(series)
-        assert t == "09:31" and v == 1.5
+    def test_list_of_numeric_strings(self):
+        assert nb._series_last(["1.1", "2.3"]) == 2.3
 
-    def test_empty_or_invalid_returns_none_none(self):
-        assert nb._last_point([]) == (None, None)
-        assert nb._last_point(None) == (None, None)
-        assert nb._last_point("not a series") == (None, None)
+    def test_empty_or_invalid_returns_none(self):
+        assert nb._series_last([]) is None
+        assert nb._series_last(None) is None
+        assert nb._series_last("not a series") is None
 
 
 class TestToFloatAndSgtValid:
@@ -71,15 +78,15 @@ class TestToFloatAndSgtValid:
 # ---------------------------------------------------------------------------
 
 class TestHexinNorthboundVendor:
-    def test_takes_last_value_of_minute_series(self, monkeypatch):
+    def test_takes_last_value_of_flat_series(self, monkeypatch):
         payload = _hexin_payload(
-            hgt=[["09:30", 1.2], ["09:31", 3.4], ["10:15", 8.76]],
-            sgt=[["09:30", 0.5], ["09:31", 1.1], ["10:15", 2.34]],
-            date="2026-07-16",
+            time=["09:30", "09:31", "10:15"],
+            hgt=[1.2, 3.4, 8.76],
+            sgt=[0.5, 1.1, 2.34],
         )
         monkeypatch.setattr(nb, "market_get", lambda *a, **k: payload)
 
-        out = nb.HexinNorthboundVendor().fetch([], {})
+        out = nb.HexinNorthboundVendor().fetch([], {"date": "2026-07-16"})
         assert len(out) == 1 and isinstance(out[0], NorthboundItem)
         item = out[0]
         assert item.date == "2026-07-16"
@@ -90,13 +97,13 @@ class TestHexinNorthboundVendor:
 
     def test_sgt_nan_falls_back_to_none_and_total_none(self, monkeypatch):
         payload = _hexin_payload(
-            hgt=[["09:30", 1.2], ["10:15", 8.76]],
-            sgt=[["09:30", 0.5], ["10:15", float("nan")]],
-            date="2026-07-16",
+            time=["09:30", "10:15"],
+            hgt=[1.2, 8.76],
+            sgt=[0.5, float("nan")],
         )
         monkeypatch.setattr(nb, "market_get", lambda *a, **k: payload)
 
-        out = nb.HexinNorthboundVendor().fetch([], {})
+        out = nb.HexinNorthboundVendor().fetch([], {"date": "2026-07-16"})
         assert len(out) == 1
         item = out[0]
         assert item.hgt_net == 8.76
@@ -105,17 +112,31 @@ class TestHexinNorthboundVendor:
 
     def test_sgt_extreme_magnitude_treated_as_invalid(self, monkeypatch):
         payload = _hexin_payload(
-            hgt=[["10:15", 8.76]],
-            sgt=[["10:15", 123456789.0]],  # 明显超出"亿元"合理范围的脏值
-            date="2026-07-16",
+            time=["10:15"],
+            hgt=[8.76],
+            sgt=[123456789.0],  # 明显超出"亿元"合理范围的脏值
         )
         monkeypatch.setattr(nb, "market_get", lambda *a, **k: payload)
 
-        out = nb.HexinNorthboundVendor().fetch([], {})
+        out = nb.HexinNorthboundVendor().fetch([], {"date": "2026-07-16"})
         item = out[0]
         assert item.sgt_net is None
         assert item.total_net is None
         assert item.hgt_net == 8.76  # hgt 不受 sgt 异常污染
+
+    def test_sgt_truncated_series_treated_as_invalid(self, monkeypatch):
+        # sgt 长度 < 0.25 * len(time) = 断流(实抓 35/262)→ sgt_net=None
+        payload = _hexin_payload(
+            time=["09:30"] * 10,
+            hgt=[1.0] * 10,
+            sgt=[0.5],
+        )
+        monkeypatch.setattr(nb, "market_get", lambda *a, **k: payload)
+
+        out = nb.HexinNorthboundVendor().fetch([], {"date": "2026-07-16"})
+        item = out[0]
+        assert item.sgt_net is None
+        assert item.total_net is None
 
     def test_none_response_returns_empty(self, monkeypatch):
         monkeypatch.setattr(nb, "market_get", lambda *a, **k: None)
@@ -134,22 +155,24 @@ class TestHexinNorthboundVendor:
         assert nb.HexinNorthboundVendor().fetch([], {}) == []
 
     def test_both_series_empty_returns_empty(self, monkeypatch):
-        monkeypatch.setattr(nb, "market_get", lambda *a, **k: _hexin_payload(hgt=[], sgt=[]))
+        monkeypatch.setattr(nb, "market_get", lambda *a, **k: _hexin_payload(hgt=[], sgt=[], time=[]))
         assert nb.HexinNorthboundVendor().fetch([], {}) == []
 
     def test_date_falls_back_to_config_when_missing_in_response(self, monkeypatch):
-        payload = _hexin_payload(hgt=[["10:15", 8.76]], sgt=[["10:15", 2.34]])  # 无 date 字段
+        payload = _hexin_payload(time=["10:15"], hgt=[8.76], sgt=[2.34])  # 无 date 字段
         monkeypatch.setattr(nb, "market_get", lambda *a, **k: payload)
 
         out = nb.HexinNorthboundVendor().fetch([], {"date": "2026-07-16"})
         assert out[0].date == "2026-07-16"
 
-    def test_date_empty_string_when_unavailable_anywhere(self, monkeypatch):
-        payload = _hexin_payload(hgt=[["10:15", 8.76]], sgt=[["10:15", 2.34]])
+    def test_date_falls_back_to_today_when_unavailable_anywhere(self, monkeypatch):
+        from datetime import datetime
+
+        payload = _hexin_payload(time=["10:15"], hgt=[8.76], sgt=[2.34])
         monkeypatch.setattr(nb, "market_get", lambda *a, **k: payload)
 
         out = nb.HexinNorthboundVendor().fetch([], {})
-        assert out[0].date == ""
+        assert out[0].date == datetime.now().strftime("%Y-%m-%d")
 
     def test_forwards_expected_request_shape(self, monkeypatch):
         captured = {}
@@ -158,7 +181,7 @@ class TestHexinNorthboundVendor:
             captured["url"] = url
             captured["host_key"] = host_key
             captured["headers"] = headers
-            return _hexin_payload(hgt=[["10:15", 1.0]], sgt=[["10:15", 1.0]])
+            return _hexin_payload(time=["10:15"], hgt=[1.0], sgt=[1.0])
 
         monkeypatch.setattr(nb, "market_get", fake_market_get)
         nb.HexinNorthboundVendor().fetch([], {})
@@ -175,9 +198,9 @@ class TestHexinNorthboundVendor:
 class TestClientMethod:
     def test_northbound_via_single_source_engine(self, monkeypatch):
         payload = _hexin_payload(
-            hgt=[["09:30", 1.2], ["10:15", 8.76]],
-            sgt=[["09:30", 0.5], ["10:15", 2.34]],
-            date="2026-07-16",
+            time=["09:30", "10:15"],
+            hgt=[1.2, 8.76],
+            sgt=[0.5, 2.34],
         )
         monkeypatch.setattr(nb, "market_get", lambda *a, **k: payload)
 

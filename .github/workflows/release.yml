@@ -37,6 +37,19 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm install
+
+      - name: Frontend typecheck (门禁 · tsc -b)
+        working-directory: frontend
+        run: npx tsc -b
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:

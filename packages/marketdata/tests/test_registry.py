@@ -9,19 +9,19 @@ from marketdata.registry import VENDOR_CLASSES_BY_TYPE, build_vendors
 
 
 def test_package_vendors_by_type_content():
-    """内容必须与 client.py 现状(quote/kline/capital_flow/events 各 vendor)完全一致。"""
+    """内容必须与 marketdata 包当前注册的 vendor 完全一致(2026-08-09 实抓 registry 校准)。"""
     assert PACKAGE_VENDORS_BY_TYPE == {
-        "quote": frozenset({"tencent", "sina", "eastmoney", "yfinance"}),
-        "kline": frozenset({"tencent", "stooq", "eastmoney", "yahoo"}),
+        "quote": frozenset({"alphavantage", "eastmoney", "sina", "tencent", "twelvedata", "yfinance"}),
+        "kline": frozenset({"eastmoney", "stooq", "tencent", "yahoo", "zhitu"}),
         "capital_flow": frozenset({"eastmoney", "sina"}),
         "events": frozenset({"eastmoney"}),
         "flash_news": frozenset({"cls", "sina", "eastmoney"}),
         "news": frozenset({"xueqiu", "eastmoney_news", "eastmoney"}),
-        "fundamentals": frozenset({"tencent", "eastmoney"}),
-        "dragon_tiger": frozenset({"eastmoney"}),
-        "margin": frozenset({"eastmoney"}),
-        "shareholders": frozenset({"eastmoney"}),
-        "dividend": frozenset({"eastmoney"}),
+        "fundamentals": frozenset({"tencent", "eastmoney", "zhitu"}),
+        "dragon_tiger": frozenset({"eastmoney", "ftshare"}),
+        "margin": frozenset({"eastmoney", "ftshare"}),
+        "shareholders": frozenset({"eastmoney", "zhitu"}),
+        "dividend": frozenset({"eastmoney", "zhitu"}),
         "northbound": frozenset({"ths"}),
     }
 
