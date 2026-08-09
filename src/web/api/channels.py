@@ -9,6 +9,15 @@ from src.core.notifier import NotifierManager, CHANNEL_TYPES
 router = APIRouter()
 
 
+def _validate_channel(channel_type: str, config: dict) -> None:
+    if channel_type not in CHANNEL_TYPES:
+        raise HTTPException(400, f"不支持的通知渠道: {channel_type}")
+    try:
+        NotifierManager().add_channel(channel_type, config or {})
+    except ValueError as exc:
+        raise HTTPException(400, f"渠道配置无效: {exc}") from exc
+
+
 class ChannelCreate(BaseModel):
     name: str
     type: str = "telegram"
@@ -50,6 +59,7 @@ def list_channel_types():
 
 @router.post("", response_model=ChannelResponse)
 def create_channel(body: ChannelCreate, db: Session = Depends(get_db)):
+    _validate_channel(body.type, body.config)
     if body.is_default:
         db.query(NotifyChannel).update({"is_default": False})
     channel = NotifyChannel(**body.model_dump())
@@ -66,6 +76,9 @@ def update_channel(channel_id: int, body: ChannelUpdate, db: Session = Depends(g
         raise HTTPException(404, "通知渠道不存在")
 
     data = body.model_dump(exclude_unset=True)
+    next_type = data.get("type", channel.type)
+    next_config = data.get("config", channel.config or {})
+    _validate_channel(next_type, next_config)
     if data.get("is_default"):
         db.query(NotifyChannel).update({"is_default": False})
 
@@ -107,6 +120,17 @@ async def test_channel(channel_id: int, db: Session = Depends(get_db)):
     )
 
     if result.get("success"):
+        channel_result = next(
+            (item for item in result.get("channels", []) if item.get("type") == channel.type),
+            {},
+        )
+        receipt = channel_result.get("receipt") or {}
+        if channel.type == "pushplus":
+            return {
+                "ok": True,
+                "message": "PushPlus API 已接收测试消息",
+                "message_id": receipt.get("message_id", ""),
+            }
         return {"ok": True, "message": "测试通知发送成功"}
     else:
         raise HTTPException(500, f"通知发送失败: {result.get('error', '未知错误')}")

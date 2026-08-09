@@ -663,10 +663,23 @@ export default function SettingsPage() {
       config: channelForm.config,
     }
     try {
+      let savedChannel: NotifyChannel
       if (editChannelId) {
-        await fetchAPI(`/channels/${editChannelId}`, { method: 'PUT', body: JSON.stringify(payload) })
+        savedChannel = await fetchAPI<NotifyChannel>(`/channels/${editChannelId}`, { method: 'PUT', body: JSON.stringify(payload) })
       } else {
-        await fetchAPI('/channels', { method: 'POST', body: JSON.stringify(payload) })
+        savedChannel = await fetchAPI<NotifyChannel>('/channels', { method: 'POST', body: JSON.stringify(payload) })
+      }
+      setTesting(savedChannel.id)
+      try {
+        const result = await fetchAPI<{ message?: string }>(`/channels/${savedChannel.id}/test`, { method: 'POST' })
+        toast(result?.message || '渠道已保存并通过测试', 'success')
+      } catch (e) {
+        setEditChannelId(savedChannel.id)
+        load()
+        toast(`渠道已保存，但测试失败：${e instanceof Error ? e.message : '未知错误'}`, 'error')
+        return
+      } finally {
+        setTesting(null)
       }
       setChannelDialogOpen(false)
       load()
@@ -715,8 +728,8 @@ export default function SettingsPage() {
   const testChannel = async (id: number) => {
     setTesting(id)
     try {
-      await fetchAPI(`/channels/${id}/test`, { method: 'POST' })
-      toast('测试通知已发送', 'success')
+      const result = await fetchAPI<{ message?: string }>(`/channels/${id}/test`, { method: 'POST' })
+      toast(result?.message || '测试通知已发送', 'success')
     } catch (e) {
       toast(e instanceof Error ? e.message : '测试失败', 'error')
     } finally {
@@ -986,7 +999,7 @@ export default function SettingsPage() {
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">
                     <Button
-                      variant="ghost" size="icon" className="h-7 w-7"
+                      variant="ghost" size="sm" className="h-7 px-2 text-[11px]"
                       onClick={() => testChannel(ch.id)}
                       disabled={testing === ch.id || !ch.enabled}
                       title="发送测试"
@@ -994,7 +1007,7 @@ export default function SettingsPage() {
                       {testing === ch.id ? (
                         <span className="w-3 h-3 border-2 border-current/30 border-t-current rounded-full animate-spin" />
                       ) : (
-                        <Send className="w-3.5 h-3.5" />
+                        <><Send className="w-3.5 h-3.5" />测试</>
                       )}
                     </Button>
                     {!ch.is_default && (
@@ -1635,8 +1648,8 @@ export default function SettingsPage() {
             ))}
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="ghost" onClick={() => setChannelDialogOpen(false)}>取消</Button>
-              <Button onClick={saveChannel} disabled={!isChannelFormValid()}>
-                {editChannelId ? '保存' : '创建'}
+              <Button onClick={saveChannel} disabled={!isChannelFormValid() || testing !== null}>
+                {testing !== null ? '测试中…' : (editChannelId ? '保存并测试' : '创建并测试')}
               </Button>
             </div>
           </div>

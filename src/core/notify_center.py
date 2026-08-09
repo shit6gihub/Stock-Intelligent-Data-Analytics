@@ -16,8 +16,8 @@ from src.web.models import Notification, NotifyChannel
 
 logger = logging.getLogger(__name__)
 
-# 哪些级别需要同时外发推送(info 只留站内, 避免手机被刷屏)
-_PUSH_LEVELS = {"success", "warning", "error"}
+# 已启用外发渠道时，站内通知同步外发，避免 info 只出现在右上角。
+_PUSH_LEVELS = {"info", "success", "warning", "error"}
 
 
 def _build_notifier():
@@ -33,8 +33,8 @@ def _build_notifier():
         ok = 0
         for ch in channels:
             try:
-                mgr.add_channel(ch.type, ch.config or {})
-                ok += 1
+                if mgr.add_channel(ch.type, ch.config or {}):
+                    ok += 1
             except Exception as e:
                 logger.warning("[通知中心] 渠道 %s 初始化失败: %s", ch.type, e)
         return mgr if ok else None

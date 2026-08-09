@@ -123,6 +123,13 @@ _APPRISE_TYPES = {"telegram", "bark", "dingtalk", "lark", "discord", "pushover"}
 # 自定义实现的渠道类型（带代理或特殊需求）
 _CUSTOM_IMPL_TYPES = {"wecom", "serverchan", "pushplus", "hermes"}
 
+_CUSTOM_REQUIRED_FIELDS = {
+    "wecom": ("webhook_key",),
+    "serverchan": ("sendkey",),
+    "pushplus": ("token",),
+    "hermes": ("webhook_url",),
+}
+
 # 支持 Markdown 的渠道（不需要 sanitize）
 _MARKDOWN_CHANNELS = {"wecom", "serverchan", "pushplus", "dingtalk", "lark", "discord"}
 
@@ -215,8 +222,8 @@ class NotifierManager:
         self._dingtalk_keywords: set[str] = set()
         self.policy = policy
 
-    def add_channel(self, channel_type: str, config: dict):
-        """添加通知渠道"""
+    def add_channel(self, channel_type: str, config: dict) -> bool:
+        """添加通知渠道，配置无效时显式报错。"""
         try:
             if channel_type in _APPRISE_TYPES:
                 url = build_apprise_url(channel_type, config)
@@ -229,17 +236,27 @@ class NotifierManager:
                     self._channel_count += 1
                     logger.info(f"注册通知渠道: {channel_type}")
                 else:
-                    logger.error(f"注册通知渠道失败: {channel_type} (URL 无效)")
+                    raise ValueError(f"{channel_type} 渠道 URL 无效")
                 if channel_type == "dingtalk":
                     kw = (config.get("keyword") or "").strip()
                     if kw:
                         self._dingtalk_keywords.add(kw)
-            else:
+            elif channel_type in _CUSTOM_IMPL_TYPES:
+                missing = [
+                    key for key in _CUSTOM_REQUIRED_FIELDS[channel_type]
+                    if not str(config.get(key, "")).strip()
+                ]
+                if missing:
+                    raise ValueError(f"{channel_type} 缺少必填配置: {', '.join(missing)}")
                 self._custom_channels.append((channel_type, config))
                 self._channel_count += 1
                 logger.info(f"注册自定义通知渠道: {channel_type}")
+            else:
+                raise ValueError(f"不支持的通知渠道: {channel_type}")
         except ValueError as e:
             logger.error(f"注册通知渠道失败: {e}")
+            raise
+        return True
 
     async def notify(self, title: str, content: str, images: list[str] | None = None):
         """向所有已注册渠道发送通知（忽略错误）"""
@@ -280,6 +297,7 @@ class NotifierManager:
                     attachments.add(img_path)
 
         errors = []
+        channel_results: list[dict] = []
 
         # 若配置了钉钉关键字，自动追加在内容末尾以通过“关键字”校验
         if self._dingtalk_keywords:
@@ -318,6 +336,7 @@ class NotifierManager:
                     )
                     if success:
                         apprise_ok = True
+                        channel_results.append({"type": "apprise", "success": True})
                         logger.info(f"Apprise 通知发送成功: {title}")
                         break
                     last_err = "Apprise 通知发送失败（可能是网络问题或配置错误）"
@@ -328,6 +347,7 @@ class NotifierManager:
                 if attempt < retry_attempts:
                     await _sleep_retry(attempt + 1)
             if not apprise_ok:
+                channel_results.append({"type": "apprise", "success": False, "error": last_err})
                 errors.append(last_err or "Apprise 通知发送失败")
 
         # 自定义渠道（根据渠道类型自动选择格式）
@@ -340,8 +360,12 @@ class NotifierManager:
                     ch_content = (
                         content if ch_type in _MARKDOWN_CHANNELS else plain_content
                     )
-                    await self._send_custom(ch_type, config, title, ch_content)
+                    receipt = await self._send_custom(ch_type, config, title, ch_content)
                     ch_ok = True
+                    result_item = {"type": ch_type, "success": True}
+                    if receipt:
+                        result_item["receipt"] = receipt
+                    channel_results.append(result_item)
                     break
                 except Exception as e:
                     last_err = f"{ch_type} 发送失败: {e}"
@@ -349,11 +373,12 @@ class NotifierManager:
                 if attempt < retry_attempts:
                     await _sleep_retry(attempt + 1)
             if not ch_ok:
+                channel_results.append({"type": ch_type, "success": False, "error": last_err})
                 errors.append(last_err or f"{ch_type} 发送失败")
 
         if errors:
-            return {"success": False, "error": "; ".join(errors)}
-        return {"success": True}
+            return {"success": False, "error": "; ".join(errors), "channels": channel_results}
+        return {"success": True, "channels": channel_results}
 
     async def _send_custom(self, ch_type: str, config: dict, title: str, content: str):
         """发送自定义渠道通知"""
@@ -362,9 +387,9 @@ class NotifierManager:
         elif ch_type == "wecom":
             await self._send_wecom(config, title, content)
         elif ch_type == "serverchan":
-            await self._send_serverchan(config, title, content)
+            return await self._send_serverchan(config, title, content)
         elif ch_type == "pushplus":
-            await self._send_pushplus(config, title, content)
+            return await self._send_pushplus(config, title, content)
         elif ch_type == "hermes":
             await self._send_hermes(config, title, content)
         else:
@@ -507,7 +532,7 @@ class NotifierManager:
 
     async def _send_pushplus(self, config: dict, title: str, content: str):
         """PushPlus 推送"""
-        token = config.get("token", "")
+        token = str(config.get("token", "")).strip()
         if not token:
             raise ValueError("PushPlus 需要 token")
 
@@ -518,13 +543,21 @@ class NotifierManager:
             "content": content,
             "template": "markdown",
         }
-        topic = config.get("topic", "")
+        topic = str(config.get("topic", "")).strip()
         if topic:
             payload["topic"] = topic
 
-        async with httpx.AsyncClient() as client:
+        proxy = get_global_proxy()
+        transport = httpx.AsyncHTTPTransport(proxy=proxy) if proxy else None
+        async with httpx.AsyncClient(transport=transport) as client:
             resp = await client.post(url, json=payload, timeout=30)
-            data = resp.json()
-            if data.get("code") != 200:
+            resp.raise_for_status()
+            try:
+                data = resp.json()
+            except Exception as exc:
+                raise RuntimeError("PushPlus 返回了无效 JSON") from exc
+            if str(data.get("code")) != "200":
                 raise RuntimeError(f"PushPlus 发送失败: {data.get('msg')}")
             logger.info(f"PushPlus 通知发送成功: {title}")
+            # data 为 PushPlus 消息流水号，可用于设置页确认 API 已接收。
+            return {"accepted": True, "message_id": str(data.get("data") or "")[:128]}
