@@ -479,6 +479,15 @@ README 旧的「智能 Agent 系统（4 套）」漏列了 4 个：`竞价复盘
 
 实测样例（神剑股份 002361）~1750 字节，在企微安全阈值 3800 内。commit `5919e11`。
 
+### 13. 资金面数据完整度显式标注（借鉴 Vibe-Trading，2026-08-09）
+
+借鉴来源：[HKUDS/Vibe-Trading](https://github.com/HKUDS/Vibe-Trading) 30k stars 的「估算不了就声明」原则：**估值不了就如实声明，绝不静默填默认值**。改造 2 处：
+
+- `calc_capital_score` 加 `return_data_status` 参数（向后兼容，默认 False 仍返回 float）。True 时返回 `(score, status)`，status ∈ `complete / partial / missing`。
+- `generate_wecom_report` 资金面段根据 status 显式标注：complete 显示具体金额 + 趋势；partial 显示金额 + ⚠️「部分数据缺失,评分置信度降低」；missing 显示 ⚠️「资金面数据缺失(无任何主力资金记录),跳过资金面判断」。
+
+实测三场景（002361）：完整数据 → 显示趋势 + 偏多；只有当日 → 显示金额 + ⚠️ 置信度降低；空数据 → ⚠️ 数据缺失，跳过资金面判断。commit `aff32dc`。
+
 ## 🔌 接口与 Key 获取地址
 
 | 数据源 | 用途 | Key 获取地址 |
