@@ -36,6 +36,7 @@ from src.web.api import (
     market_data,
     tdx,
     shadow,
+    ths,
 )
 from src.web.api import factors
 from src.web.api import notifications
@@ -232,6 +233,12 @@ app.include_router(
     shadow.router,
     prefix="/api/shadow",
     tags=["shadow"],
+    dependencies=protected,
+)
+app.include_router(
+    ths.router,
+    prefix="/api/ths",
+    tags=["ths"],
     dependencies=protected,
 )
 

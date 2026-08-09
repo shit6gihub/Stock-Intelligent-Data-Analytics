@@ -510,6 +510,22 @@ README 旧的「智能 Agent 系统（4 套）」漏列了 4 个：`竞价复盘
 
 每个 preset 4-5 个 agent + A 股术语化 system_prompt（北向资金/龙虎榜/申万一级/中证全指/PE-TTM/PB 行业百分位/CAR 检验等）。commit `e4584e7`。
 
+### 15.5 同花顺扫码登录 session（登录态数据源，2026-08-09）
+
+通过扫码登录获取同花顺登录态（`src/core/ths_auth.py`），自动续期。认证链复刻自客户端反编译（Normandy.Identity.Client）：`do_rsa` 公钥 → `unified_login`（RSA 加密，GBK）→ sessionid → `verify` passport 签发。
+
+**API 端点**（需登录）：
+- `POST /api/ths/qrcode` 生成扫码二维码（返回 base64 图 + qrid）
+- `GET /api/ths/qrcode/{qrid}` 轮询扫码状态，成功自动登录 + 持久化
+- `GET /api/ths/session` 当前登录态（自动续期：凭证有效则自动重新登录）
+
+**关键坑**（2026-08-09 香港节点实测）：
+1. RSA 密文已 urlencode，拼 query 禁止二次 urlencode（否则 `%`→`%25` 报"账号为空"）
+2. 扫码返回的 `password` 字段是登录凭证（非用户密码），直接当密码用
+3. `mx_` 前缀账号是妙想体系，不走 salt 协议（verify3/gs 返回空 result），走 MD5 unified_login
+4. 凭证持久化在 `app_settings` 表（ths_account/ths_password/ths_expires/ths_userid）
+5. `data.10jqka.com.cn` 的 ajax/1 接口 401 是 Chameleon 反爬 JS（非登录问题）；页面版接口不受影响
+
 ### 15. 影子账户 Shadow Account（从你自己的交易记录提炼盈利模式，2026-08-09）
 
 借鉴来源：[HKUDS/Vibe-Trading](https://github.com/HKUDS/Vibe-Trading) 的 Shadow Account 概念，按 A 股聚焦移植（MIT）。
