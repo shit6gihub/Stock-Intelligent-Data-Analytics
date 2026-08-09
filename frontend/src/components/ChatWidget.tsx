@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { MessageCircle, X, Plus, Trash2, Send, ChevronLeft, XCircle } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { chatApi, type ChatConversation, type ChatMessage } from '@panwatch/api'
 
 interface StockContext {
@@ -315,15 +316,41 @@ export default function ChatWidget() {
                 className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div
-                  className={`max-w-[85%] rounded-xl px-3 py-2 text-[13px] leading-relaxed ${
+                  className={`min-w-0 max-w-[85%] rounded-xl px-3 py-2 text-[13px] leading-relaxed ${
                     msg.role === 'user'
                       ? 'bg-primary text-primary-foreground'
                       : 'bg-accent/60 text-foreground'
                   }`}
                 >
                   {msg.role === 'assistant' ? (
-                    <div className="prose prose-sm dark:prose-invert max-w-none [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5 [&_h1]:text-[15px] [&_h2]:text-[14px] [&_h3]:text-[13px]">
-                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    <div className="prose prose-sm dark:prose-invert max-w-none min-w-0 break-words [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5 [&_h1]:text-[15px] [&_h2]:text-[14px] [&_h3]:text-[13px] [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:text-[11px] [&_code]:break-words">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          table: ({ children }) => (
+                            <div className="my-2 max-w-full overflow-x-auto rounded-lg border border-border/60">
+                              <table className="m-0 w-max min-w-full border-collapse text-[11px]">{children}</table>
+                            </div>
+                          ),
+                          th: ({ children }) => (
+                            <th className="whitespace-nowrap border-b border-r border-border/60 bg-background/60 px-2 py-1.5 text-left font-semibold last:border-r-0">
+                              {children}
+                            </th>
+                          ),
+                          td: ({ children }) => (
+                            <td className="min-w-[88px] border-b border-r border-border/40 px-2 py-1.5 align-top last:border-r-0">
+                              {children}
+                            </td>
+                          ),
+                          a: ({ children, href }) => (
+                            <a href={href} target="_blank" rel="noopener noreferrer" className="break-all text-primary underline underline-offset-2">
+                              {children}
+                            </a>
+                          ),
+                        }}
+                      >
+                        {msg.content}
+                      </ReactMarkdown>
                     </div>
                   ) : (
                     msg.content
