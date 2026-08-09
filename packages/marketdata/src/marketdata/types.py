@@ -86,6 +86,15 @@ class HotStock:
     change_pct: float | None
     turnover: float | None
     volume: float | None
+    # --- 扩展字段(同花顺热点/热榜专用,2026-08-09 加入)---
+    reason: str = ""                          # 题材归因/AI 分析
+    rank: int = 0                             # 同花顺热榜序号
+    heat: float | None = None                 # 人气值
+    rank_chg: int = 0                         # 排名变化
+    concepts: tuple[str, ...] = ()            # 概念标签
+    change_amount: float | None = None        # 涨跌额
+    source: str = ""                          # 数据源标识
+    timestamp: datetime = field(default_factory=datetime.now)
 
 
 @dataclass(frozen=True)
