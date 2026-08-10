@@ -53,6 +53,11 @@ app = FastAPI(
     redirect_slashes=False,  # 避免重定向丢失 Authorization header
 )
 
+# GZip 压缩(2026-08-10): 静态 JS 2.3MB 未压缩, 跨境弱网加载慢 → 压缩后 ~600KB
+# 注意: 必须在 ResponseWrapperMiddleware 之前(响应包装会拦截流)
+from starlette.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 app.add_middleware(ResponseWrapperMiddleware)
 _cors_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:8000").split(",") if origin.strip()]
 app.add_middleware(
