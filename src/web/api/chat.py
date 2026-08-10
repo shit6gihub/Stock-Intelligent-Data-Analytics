@@ -472,21 +472,26 @@ async def _fetch_realtime_context(symbol: str, market: str) -> str:
 async def _fetch_technical_context(symbol: str, market: str) -> str:
     """获取技术面摘要。"""
     try:
-        from src.core.data_collector import DataCollector
+        from src.collectors.kline_collector import KlineCollector
+        from src.models.market import MarketCode
 
-        collector = DataCollector()
+        mc = MarketCode(market) if market in ("CN", "HK", "US") else MarketCode.CN
+        collector = KlineCollector(mc)
         summary = await asyncio.to_thread(
-            collector.get_kline_summary, symbol, market
+            collector.get_kline_summary, symbol
         )
         if not summary or summary.get("error"):
             return ""
-        s = summary.get("summary", {})
+        # get_kline_summary 直接返回 summary 内容(无嵌套);兼容 API 层包装
+        s = summary.get("summary", {}) if "summary" in summary else summary
         trend = s.get("trend", "--")
         macd = s.get("macd_status", "--")
-        rsi = s.get("rsi_14", "--")
-        support = s.get("support_level", "--")
-        resistance = s.get("resistance_level", "--")
-        return f"技术面：趋势 {trend}，MACD {macd}，RSI {rsi}，支撑位 {support}，压力位 {resistance}"
+        rsi = s.get("rsi_status") or (f"{s.get('rsi6')}" if s.get('rsi6') is not None else "--")
+        support = s.get("support", "--")
+        resistance = s.get("resistance", "--")
+        # 形态
+        pattern = s.get("kline_pattern") or "--"
+        return f"技术面：趋势 {trend}，MACD {macd}，RSI {rsi}，支撑位 {support}，压力位 {resistance}，K线形态 {pattern}"
     except Exception as e:
         logger.debug(f"获取技术面失败: {e}")
         return ""
