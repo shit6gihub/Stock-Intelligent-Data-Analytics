@@ -34,6 +34,7 @@ type MinuteResponse = {
   market: string
   points: MinutePoint[]
   prev_close?: number | null
+  is_index?: boolean
 }
 
 type HoverTipRow = {
@@ -184,6 +185,7 @@ export default function InteractiveKline(props: {
   const [mode, setMode] = useState<'minute' | 'kline'>('kline')
   const [minutePoints, setMinutePoints] = useState<MinutePoint[]>([])
   const [minutePrevClose, setMinutePrevClose] = useState<number | null>(null)
+  const [minuteIsIndex, setMinuteIsIndex] = useState(false)
   const [minuteLoading, setMinuteLoading] = useState(false)
   const [minuteError, setMinuteError] = useState<string>('')
   const minuteRef = useRef<{ pts: MinutePoint[]; prev: number | null }>({ pts: [], prev: null })
@@ -199,10 +201,12 @@ export default function InteractiveKline(props: {
       )
       setMinutePoints(res.points || [])
       setMinutePrevClose(res.prev_close ?? null)
+      setMinuteIsIndex(!!res.is_index)
     } catch (e) {
       setMinuteError(e instanceof Error ? e.message : '加载分时失败')
       setMinutePoints([])
       setMinutePrevClose(null)
+      setMinuteIsIndex(false)
     } finally {
       setMinuteLoading(false)
     }
@@ -663,7 +667,9 @@ export default function InteractiveKline(props: {
           // ±分界线: 昨收作为零轴基准(2026-08-10 修复), y 轴以昨收为对称中心
           const prevC = minutePrevClose ?? pts[0]?.price ?? 0
           if (pts.length > 1) {
-            const vals = pts.flatMap(p => [p.price, p.avg])
+            // y 轴范围: 指数只用价格(无均价), 个股含价格+均价
+            const priceVals = pts.map(p => p.price)
+            const vals = minuteIsIndex ? priceVals : pts.flatMap(p => [p.price, p.avg])
             const dayLo = Math.min(...vals)
             const dayHi = Math.max(...vals)
             // 以昨收为中心, 上下各取 max(今日常规范围, 昨收±2.5%) 对称
@@ -686,7 +692,7 @@ export default function InteractiveKline(props: {
                 })
                 .join(' ')
             pricePath = build(p => p.price)
-            avgPath = build(p => p.avg)
+            avgPath = minuteIsIndex ? '' : build(p => p.avg)
           }
           // 昨收基准线 y 坐标
           const prevY = prevC
@@ -715,7 +721,9 @@ export default function InteractiveKline(props: {
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3">
                     <div className="rounded-lg bg-accent/20 px-2.5 py-2 text-[11px]"><span className="text-muted-foreground">现价</span> <span className={`font-mono ml-1 ${up ? 'text-rose-500' : 'text-emerald-500'}`}>{last?.price.toFixed(2)}</span></div>
                     <div className="rounded-lg bg-accent/20 px-2.5 py-2 text-[11px]"><span className="text-muted-foreground">较开盘</span> <span className={`font-mono ml-1 ${changePct >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>{changePct >= 0 ? '+' : ''}{changePct.toFixed(2)}%</span></div>
-                    <div className="rounded-lg bg-accent/20 px-2.5 py-2 text-[11px]"><span className="text-muted-foreground">均价</span> <span className="font-mono ml-1">{last?.avg.toFixed(2)}</span></div>
+                    {!minuteIsIndex && (
+                      <div className="rounded-lg bg-accent/20 px-2.5 py-2 text-[11px]"><span className="text-muted-foreground">均价</span> <span className="font-mono ml-1">{last?.avg.toFixed(2)}</span></div>
+                    )}
                     <div className="rounded-lg bg-accent/20 px-2.5 py-2 text-[11px]"><span className="text-muted-foreground">区间</span> <span className="font-mono ml-1">{hi.toFixed(2)}/{lo.toFixed(2)}</span></div>
                     <div className="rounded-lg bg-accent/20 px-2.5 py-2 text-[11px]"><span className="text-muted-foreground">成交量</span> <span className="font-mono ml-1">{(totalVol / 10000).toFixed(1)}万手</span></div>
                   </div>
@@ -732,12 +740,16 @@ export default function InteractiveKline(props: {
                         <text x={W - PAD - 4} y={prevY - 5} className="fill-slate-500" fontSize="10" textAnchor="end">昨收 {prevC.toFixed(2)}</text>
                       </>
                     )}
-                    <path d={avgPath} fill="none" stroke="#f59e0b" strokeWidth={1.2} opacity={0.85} />
+                    {!minuteIsIndex && avgPath && (
+                      <path d={avgPath} fill="none" stroke="#f59e0b" strokeWidth={1.2} opacity={0.85} />
+                    )}
                     <path d={pricePath} fill="none" stroke={up ? '#f43f5e' : '#10b981'} strokeWidth={1.6} />
                   </svg>
                   <div className="mt-2 flex gap-4 text-[11px] text-muted-foreground">
                     <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-rose-400" /> 价格</span>
-                    <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-amber-400" /> 均价(成交额/成交股数)</span>
+                    {!minuteIsIndex && (
+                      <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-amber-400" /> 均价(成交额/成交股数)</span>
+                    )}
                     <span>腾讯实时分时 · 每30秒自动刷新 · {pts.length} 个点</span>
                   </div>
                 </>

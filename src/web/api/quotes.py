@@ -244,6 +244,11 @@ def _tencent_minute(symbol: str, market: str) -> tuple[list[dict] | None, float 
         # 字段: "0930 1308.66 173 22639818.00" = 时间 价格 累计量(手) 累计额(元)
         # ⚠️ 第3/4列本身已经是"当日累计"值, 不可再累加(旧版 cum_vol += vol 是 bug,
         #    会把累计量当增量二次累加, 导致均价分母膨胀、均价线整体失真)
+        # 指数识别(avg 无意义: 腾讯对指数成交额字段语义不同, 不计算均价)
+        is_index = market == "CN" and (
+            symbol in ("000001", "000300", "000016", "000905", "000852")
+            or symbol.startswith("399")
+        )
         points = []
         prev_cum_vol = 0.0
         for row in data:
@@ -252,8 +257,12 @@ def _tencent_minute(symbol: str, market: str) -> tuple[list[dict] | None, float 
                 continue
             t, price = parts[0], float(parts[1])
             cum_vol, cum_amt = float(parts[2]), float(parts[3])  # 累计量(手) / 累计额(元)
-            # 均价 = 累计成交额 / 累计成交股数 (1手=100股)
-            avg = (cum_amt / (cum_vol * 100.0)) if cum_vol > 0 else price
+            if is_index:
+                # 指数: 均价=昨收(用昨收当基准线, 前端不再画均价线)
+                avg = prev_close if prev_close else price
+            else:
+                # 均价 = 累计成交额 / 累计成交股数 (1手=100股)
+                avg = (cum_amt / (cum_vol * 100.0)) if cum_vol > 0 else price
             bar_vol = max(cum_vol - prev_cum_vol, 0.0)  # 本分钟增量成交量(手)
             prev_cum_vol = cum_vol
             points.append({"t": t, "price": price, "avg": round(avg, 2), "volume": int(bar_vol)})
@@ -266,12 +275,18 @@ def _tencent_minute(symbol: str, market: str) -> tuple[list[dict] | None, float 
 @router.get("/minute/{symbol}")
 async def get_minute(symbol: str, market: str = "CN"):
     """分时走势(盘中实时)。腾讯优先, 失败返回空。含昨收(±分界线)。"""
+    is_index = market == "CN" and (
+        symbol in ("000001", "000300", "000016", "000905", "000852")
+        or symbol.startswith("399")
+    )
     cache_key = f"{market}:{symbol}"
     cached = _MINUTE_CACHE.get(cache_key)
     if cached and (_time.time() - cached[0]) < _MINUTE_TTL:
-        return {"symbol": symbol, "market": market, "points": cached[1], "prev_close": cached[2]}
+        return {"symbol": symbol, "market": market, "points": cached[1],
+                "prev_close": cached[2], "is_index": is_index}
     points, prev_close = _tencent_minute(symbol, market)
     if points is None:
         points = []
     _MINUTE_CACHE[cache_key] = (_time.time(), points, prev_close)
-    return {"symbol": symbol, "market": market, "points": points, "prev_close": prev_close}
+    return {"symbol": symbol, "market": market, "points": points,
+            "prev_close": prev_close, "is_index": is_index}
