@@ -67,6 +67,7 @@
 - 资金流双模式接入（大陆/海外）：`CN_FLOW_MODE=direct` 大陆本地直连东财 push2delay（不依赖网关）；`gateway` 海外走国内网关代理；`auto`（默认）先直连失败走网关自动检测；生产在韩国首尔节点，auto 模式实测直连 push2delay 可用、网关作兜底。
 - 预测引擎隔夜事件源接入同花顺快讯（免key 7×24 新闻流）：根因是 wudao API 免费额度 50/50 用完 → `official_announcements` 拉取失败 → FCC 禁令类隔夜新闻没进模型 → 预测方向失准；新增同花顺快讯源按股票名/代码匹配（东财行情 f58 拿名称），覆盖公告源不含的财经新闻（FCC 禁令/行业政策/涨价）；兜底链 wudao公告→同花顺快讯→东财公告；验证克明食品增持利好 → 修正 +1.25%。
 - TradingAgents 资金流接入今日实时（双模式网关）：之前 `md.capital_flow`（东财/新浪 T-1）与今日实时网关是两条独立路径；新增 `_fetch_ta_capital_flow` 优先走 CapitalFlowCollector 今日实时（direct/gateway/auto 双模式）失败回退引擎；TradingAgents 多 Agent 分析资金面不再用 T-1 数据；验证神剑股份主力 5781 万/超大单 4615 万。
+- 修复分时K线不显示 + IndexDetail 大盘资金流：①分时路由 `/quotes/minute` 被 `/{symbol}` 抢占（404 行情不存在）→ 改 `/minute/{symbol}` 明确路径；②补 `import time as _time`（容器内 NameError 500）；③IndexDetail 页新增大盘资金流卡片（同花顺源，总流入/流出/净流入/板块数），替代"东财502成交额趋势替代"的空白提示；生产验证分时 267 点 + 大盘资金净流入 109.8 亿。
 
 ### update
 
