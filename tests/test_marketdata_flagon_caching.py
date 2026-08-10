@@ -80,6 +80,8 @@ class _FakeMarketDataCF:
 
 def test_flagon_capital_flow_cache_within_ttl(monkeypatch):
     """走 marketdata 包下,TTL 内第二次取数仍应命中 _FLOW_CACHE,不重复调用包。"""
+    # 禁用国内网关(测试环境无网关依赖)
+    monkeypatch.setattr(cfc, "_CN_GATEWAY_DISABLED", True)
     fixed = MDCapitalFlow(
         symbol="600519",
         name="贵州茅台",
