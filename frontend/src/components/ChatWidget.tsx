@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { MessageCircle, X, Plus, Trash2, Send, ChevronLeft, XCircle, Settings2, Check } from 'lucide-react'
+import { MessageCircle, X, Plus, Trash2, Send, ChevronLeft, XCircle, Settings2, Check, GripHorizontal } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { chatApi, type ChatConversation, type ChatMessage } from '@panwatch/api'
@@ -14,8 +14,21 @@ interface StockContext {
 type DesktopChatSize = 'compact' | 'standard' | 'large' | 'wide'
 type DesktopChatPosition = 'left' | 'center' | 'right'
 
+interface DesktopChatCoordinates {
+  x: number
+  y: number
+}
+
+interface DesktopChatDragState {
+  pointerId: number
+  offsetX: number
+  offsetY: number
+}
+
 const CHAT_SIZE_STORAGE_KEY = 'panwatch_chat_desktop_size'
 const CHAT_POSITION_STORAGE_KEY = 'panwatch_chat_desktop_position'
+const CHAT_FREE_POSITION_STORAGE_KEY = 'panwatch_chat_desktop_free_position'
+const CHAT_VIEWPORT_MARGIN = 12
 
 const DESKTOP_SIZE_OPTIONS: Array<{ value: DesktopChatSize; label: string; detail: string }> = [
   { value: 'compact', label: '紧凑', detail: '360 × 480' },
@@ -43,6 +56,8 @@ const DESKTOP_POSITION_CLASSES: Record<DesktopChatPosition, string> = {
   right: 'md:left-auto md:right-5 md:translate-x-0',
 }
 
+const DESKTOP_FREE_POSITION_CLASSES = 'md:left-[var(--chat-x)] md:top-[var(--chat-y)] md:right-auto md:bottom-auto md:translate-x-0'
+
 function readDesktopChatSize(): DesktopChatSize {
   if (typeof window === 'undefined') return 'standard'
   try {
@@ -65,6 +80,25 @@ function readDesktopChatPosition(): DesktopChatPosition {
   return 'right'
 }
 
+function readDesktopChatFreePosition(): DesktopChatCoordinates | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const rawValue = window.localStorage.getItem(CHAT_FREE_POSITION_STORAGE_KEY)
+    if (!rawValue) return null
+    const value = JSON.parse(rawValue) as Partial<DesktopChatCoordinates>
+    if (Number.isFinite(value.x) && Number.isFinite(value.y)) {
+      return { x: Number(value.x), y: Number(value.y) }
+    }
+  } catch {
+    // Ignore invalid or unavailable persisted window coordinates.
+  }
+  return null
+}
+
+function clampCoordinate(value: number, minimum: number, maximum: number) {
+  return Math.min(Math.max(value, minimum), maximum)
+}
+
 export default function ChatWidget() {
   const [open, setOpen] = useState(false)
   const [conversations, setConversations] = useState<ChatConversation[]>([])
@@ -77,9 +111,13 @@ export default function ChatWidget() {
   const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([])
   const [desktopSize, setDesktopSize] = useState<DesktopChatSize>(readDesktopChatSize)
   const [desktopPosition, setDesktopPosition] = useState<DesktopChatPosition>(readDesktopChatPosition)
+  const [desktopDragPosition, setDesktopDragPosition] = useState<DesktopChatCoordinates | null>(readDesktopChatFreePosition)
+  const [dragging, setDragging] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const endRef = useRef<HTMLDivElement>(null)
   const settingsRef = useRef<HTMLDivElement>(null)
+  const chatWindowRef = useRef<HTMLDivElement>(null)
+  const dragStateRef = useRef<DesktopChatDragState | null>(null)
 
   const loadConversations = useCallback(async () => {
     try {
@@ -164,6 +202,51 @@ export default function ChatWidget() {
   }, [desktopPosition])
 
   useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      try {
+        if (desktopDragPosition) {
+          window.localStorage.setItem(CHAT_FREE_POSITION_STORAGE_KEY, JSON.stringify(desktopDragPosition))
+        } else {
+          window.localStorage.removeItem(CHAT_FREE_POSITION_STORAGE_KEY)
+        }
+      } catch {
+        // Keep the current session position when persistence is unavailable.
+      }
+    }, 150)
+    return () => window.clearTimeout(timeoutId)
+  }, [desktopDragPosition])
+
+  const hasDesktopDragPosition = desktopDragPosition !== null
+
+  useEffect(() => {
+    if (!open || !hasDesktopDragPosition) return
+
+    const constrainToViewport = () => {
+      if (window.innerWidth < 768) return
+      const rect = chatWindowRef.current?.getBoundingClientRect()
+      if (!rect) return
+
+      setDesktopDragPosition((current) => {
+        if (!current) return current
+        const maximumX = Math.max(CHAT_VIEWPORT_MARGIN, window.innerWidth - rect.width - CHAT_VIEWPORT_MARGIN)
+        const maximumY = Math.max(CHAT_VIEWPORT_MARGIN, window.innerHeight - rect.height - CHAT_VIEWPORT_MARGIN)
+        const nextPosition = {
+          x: clampCoordinate(current.x, CHAT_VIEWPORT_MARGIN, maximumX),
+          y: clampCoordinate(current.y, CHAT_VIEWPORT_MARGIN, maximumY),
+        }
+        return nextPosition.x === current.x && nextPosition.y === current.y ? current : nextPosition
+      })
+    }
+
+    const animationFrame = window.requestAnimationFrame(constrainToViewport)
+    window.addEventListener('resize', constrainToViewport)
+    return () => {
+      window.cancelAnimationFrame(animationFrame)
+      window.removeEventListener('resize', constrainToViewport)
+    }
+  }, [desktopSize, open, hasDesktopDragPosition])
+
+  useEffect(() => {
     if (!settingsOpen) return
 
     const handlePointerDown = (event: MouseEvent) => {
@@ -180,6 +263,49 @@ export default function ChatWidget() {
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [settingsOpen])
+
+  const handleDragStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (window.innerWidth < 768 || event.button !== 0) return
+    if ((event.target as HTMLElement).closest('button, a, input, textarea, select, [role="button"]')) return
+
+    const rect = chatWindowRef.current?.getBoundingClientRect()
+    if (!rect) return
+
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+    }
+    setDesktopDragPosition({ x: rect.left, y: rect.top })
+    setDragging(true)
+    event.currentTarget.setPointerCapture(event.pointerId)
+    event.preventDefault()
+  }, [])
+
+  const handleDragMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const dragState = dragStateRef.current
+    if (!dragState || dragState.pointerId !== event.pointerId) return
+
+    const rect = chatWindowRef.current?.getBoundingClientRect()
+    if (!rect) return
+
+    const maximumX = Math.max(CHAT_VIEWPORT_MARGIN, window.innerWidth - rect.width - CHAT_VIEWPORT_MARGIN)
+    const maximumY = Math.max(CHAT_VIEWPORT_MARGIN, window.innerHeight - rect.height - CHAT_VIEWPORT_MARGIN)
+    setDesktopDragPosition({
+      x: clampCoordinate(event.clientX - dragState.offsetX, CHAT_VIEWPORT_MARGIN, maximumX),
+      y: clampCoordinate(event.clientY - dragState.offsetY, CHAT_VIEWPORT_MARGIN, maximumY),
+    })
+    event.preventDefault()
+  }, [])
+
+  const handleDragEnd = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (dragStateRef.current?.pointerId !== event.pointerId) return
+    dragStateRef.current = null
+    setDragging(false)
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }, [])
 
   const openConversation = useCallback(async (conv: ChatConversation) => {
     setActiveConvId(conv.id)
@@ -275,6 +401,16 @@ export default function ChatWidget() {
     }
   }, [input, sending, activeConvId, stockContext])
 
+  const desktopWindowPositionClasses = desktopDragPosition
+    ? DESKTOP_FREE_POSITION_CLASSES
+    : `md:bottom-5 ${DESKTOP_POSITION_CLASSES[desktopPosition]}`
+  const desktopWindowStyle = desktopDragPosition
+    ? ({
+        '--chat-x': `${desktopDragPosition.x}px`,
+        '--chat-y': `${desktopDragPosition.y}px`,
+      } as React.CSSProperties)
+    : undefined
+
   if (!open) {
     return (
       <button
@@ -289,17 +425,22 @@ export default function ChatWidget() {
   }
 
   return (
-    <>
-      <button
-        type="button"
-        onClick={() => { setSettingsOpen(false); setOpen(false) }}
-        className="fixed inset-0 z-[55] hidden bg-black/25 backdrop-blur-[2px] md:block dark:bg-black/45"
-        aria-label="关闭 AI 助手背景遮罩"
-      />
-      <div className={`fixed bottom-0 right-0 z-[60] w-full h-full md:bottom-5 md:max-w-[calc(100vw-2.5rem)] md:max-h-[calc(100vh-2.5rem)] md:rounded-xl bg-background border border-border/60 shadow-2xl md:border-primary/30 md:ring-1 md:ring-white/10 md:shadow-[0_24px_90px_rgba(0,0,0,0.75)] flex flex-col overflow-hidden ${DESKTOP_SIZE_CLASSES[desktopSize]} ${DESKTOP_POSITION_CLASSES[desktopPosition]}`}>
+      <div
+        ref={chatWindowRef}
+        style={desktopWindowStyle}
+        className={`fixed bottom-0 right-0 z-[60] w-full h-full md:max-w-[calc(100vw-1.5rem)] md:max-h-[calc(100vh-1.5rem)] md:rounded-xl bg-background border border-border/60 shadow-2xl md:border-primary/30 md:ring-1 md:ring-white/10 md:shadow-[0_24px_72px_rgba(0,0,0,0.58),0_0_30px_rgba(79,70,229,0.16)] flex flex-col overflow-hidden ${DESKTOP_SIZE_CLASSES[desktopSize]} ${desktopWindowPositionClasses}`}
+      >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border/40 bg-accent/20">
+      <div
+        onPointerDown={handleDragStart}
+        onPointerMove={handleDragMove}
+        onPointerUp={handleDragEnd}
+        onPointerCancel={handleDragEnd}
+        className={`flex items-center justify-between px-4 py-3 border-b border-border/40 bg-accent/20 md:touch-none ${dragging ? 'md:cursor-grabbing md:select-none' : 'md:cursor-grab'}`}
+        title="拖动标题栏移动窗口"
+      >
         <div className="flex items-center gap-2">
+          <GripHorizontal className="hidden h-4 w-4 shrink-0 text-muted-foreground/50 md:block" aria-hidden="true" />
           {view === 'chat' && (
             <button
               onClick={() => { setView('list'); setStockContext(null); setSuggestedQuestions([]); loadConversations() }}
@@ -364,14 +505,17 @@ export default function ChatWidget() {
                   })}
                 </div>
 
-                <div className="mb-2 mt-3 text-[11px] font-medium text-muted-foreground">停靠位置</div>
+                <div className="mb-2 mt-3 flex items-center justify-between text-[11px] font-medium text-muted-foreground">
+                  <span>停靠位置</span>
+                  {desktopDragPosition && <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] text-primary">自由位置</span>}
+                </div>
                 <div className="grid grid-cols-3 gap-1.5">
                   {DESKTOP_POSITION_OPTIONS.map((option) => {
-                    const active = desktopPosition === option.value
+                    const active = !desktopDragPosition && desktopPosition === option.value
                     return (
                       <button
                         key={option.value}
-                        onClick={() => setDesktopPosition(option.value)}
+                        onClick={() => { setDesktopPosition(option.value); setDesktopDragPosition(null) }}
                         className={`flex items-center justify-center gap-1 rounded-lg border px-2 py-2 text-[11px] transition-colors ${active ? 'border-primary/60 bg-primary/10 text-primary' : 'border-border/50 bg-accent/20 text-foreground hover:bg-accent/50'}`}
                       >
                         {active && <Check className="h-3 w-3 shrink-0" />}
@@ -380,7 +524,7 @@ export default function ChatWidget() {
                     )
                   })}
                 </div>
-                <p className="mt-2.5 text-[10px] leading-relaxed text-muted-foreground">设置保存在当前浏览器，悬浮按钮会同步移动。</p>
+                <p className="mt-2.5 text-[10px] leading-relaxed text-muted-foreground">拖动标题栏可自由定位；选择停靠位置可复位。设置会保存在当前浏览器。</p>
               </div>
             )}
           </div>
@@ -550,6 +694,5 @@ export default function ChatWidget() {
         </>
       )}
       </div>
-    </>
   )
 }

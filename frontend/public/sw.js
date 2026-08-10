@@ -1,5 +1,5 @@
 // PanWatch Service Worker
-const CACHE_NAME = 'panwatch-v12';
+const CACHE_NAME = 'panwatch-v13';
 
 // 需要缓存的静态资源
 const STATIC_ASSETS = [
