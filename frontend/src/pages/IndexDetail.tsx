@@ -5,6 +5,15 @@ import { fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import InteractiveKline from '@panwatch/biz-ui/components/InteractiveKline'
 
+interface MarketFlow {
+  total_inflow: number
+  total_outflow: number
+  net_inflow: number
+  board_count: number
+  source?: string
+  timestamp?: string
+}
+
 interface IndexDetail {
   symbol: string
   name: string
@@ -57,6 +66,8 @@ export default function IndexDetailPage() {
   const [data, setData] = useState<IndexDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  // 大盘资金流(同花顺源, 东财502替代)
+  const [marketFlow, setMarketFlow] = useState<MarketFlow | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -70,6 +81,8 @@ export default function IndexDetailPage() {
     } finally {
       setLoading(false)
     }
+    // 大盘资金流(独立加载, 失败静默)
+    fetchAPI<MarketFlow>('/market-data/market-capital-flow').then(setMarketFlow).catch(() => {})
   }
 
   useEffect(() => { load() }, [symbol])
@@ -130,6 +143,29 @@ export default function IndexDetailPage() {
             </div>
             <InteractiveKline symbol={symbol || ''} market={data.market || 'CN'} initialInterval="1d" initialDays="120" />
           </div>
+
+          {/* 大盘资金流(同花顺源, 东财502替代) */}
+          {marketFlow && (
+            <div className="card-subtle p-3 mb-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="h-4 w-4 text-primary" />
+                <span className="text-[12px] font-semibold">大盘资金流</span>
+                <span className="text-[10px] text-muted-foreground">同花顺 · {marketFlow.board_count ?? '--'}板块</span>
+              </div>
+              <div className="flex items-center gap-4 text-[12px]">
+                <span className="text-muted-foreground">总流入 <b className="text-red-500 font-mono">{(marketFlow.total_inflow ?? 0).toFixed(1)}亿</b></span>
+                <span className="text-muted-foreground">总流出 <b className="text-green-500 font-mono">{(marketFlow.total_outflow ?? 0).toFixed(1)}亿</b></span>
+                <span className="text-muted-foreground">净流入
+                  <b className={`font-mono ${(marketFlow.net_inflow ?? 0) >= 0 ? 'text-red-500' : 'text-green-500'}`}>
+                    {(marketFlow.net_inflow ?? 0) >= 0 ? '+' : ''}{(marketFlow.net_inflow ?? 0).toFixed(1)}亿
+                  </b>
+                </span>
+              </div>
+              {marketFlow.timestamp && (
+                <span className="ml-auto text-[10px] text-muted-foreground">更新 {marketFlow.timestamp?.slice(11, 16)}</span>
+              )}
+            </div>
+          )}
 
           {/* 成交额趋势(大盘资金流替代) */}
           <div className="card p-4">

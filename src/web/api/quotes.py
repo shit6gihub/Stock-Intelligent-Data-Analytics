@@ -244,7 +244,7 @@ def _tencent_minute(symbol: str, market: str) -> list[dict] | None:
         return None
 
 
-@router.get("/minute")
+@router.get("/minute/{symbol}")
 async def get_minute(symbol: str, market: str = "CN"):
     """分时走势(盘中实时)。腾讯优先, 失败返回空。"""
     cache_key = f"{market}:{symbol}"

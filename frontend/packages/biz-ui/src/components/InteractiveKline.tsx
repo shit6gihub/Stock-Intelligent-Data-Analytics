@@ -191,7 +191,7 @@ export default function InteractiveKline(props: {
     setMinuteError('')
     try {
       const res = await fetchAPI<MinuteResponse>(
-        `/quotes/minute?symbol=${encodeURIComponent(props.symbol)}&market=${encodeURIComponent(props.market)}`
+        `/quotes/minute/${encodeURIComponent(props.symbol)}?market=${encodeURIComponent(props.market)}`
       )
       setMinutePoints(res.points || [])
     } catch (e) {
