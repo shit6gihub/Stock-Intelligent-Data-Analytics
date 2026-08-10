@@ -152,6 +152,21 @@ CHAT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_kline_patterns",
+            "description": "识别某只股票的K线组合形态（金针探底/双针探底/红三兵/涨停双响炮/揭竿而起/上升三法/小步上扬/放量突破等）。基于同花顺K线形态教学体系。用于回答「XX股票K线什么形态」「有没有金针探底/红三兵」「技术形态怎么样」等问题。返回形态名称+信号方向+特征描述。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "股票代码，如 600519"},
+                    "market": {"type": "string", "description": "市场：CN(默认)/HK/US", "default": "CN"},
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
 ]
 
 
@@ -278,6 +293,10 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
             except Exception as e:
                 logger.error(f"get_market_news 工具失败: {e}")
                 return f"资讯获取失败: {e}"
+        elif name == "get_kline_patterns":
+            symbol = args.get("symbol", "")
+            market = args.get("market", "CN")
+            return await _fetch_kline_pattern_context(symbol, market)
         else:
             return f"未知工具: {name}"
     except Exception as e:
@@ -477,6 +496,27 @@ async def _fetch_capital_flow_context(symbol: str, market: str) -> str:
     except Exception as e:
         logger.debug(f"获取资金流失败: {e}")
         return ""
+
+
+async def _fetch_kline_pattern_context(symbol: str, market: str) -> str:
+    """识别 K 线组合形态(同花顺形态教学体系)。"""
+    try:
+        from src.core.marketdata_client import get_market_data
+        from src.core.kline_pattern import detect_patterns, format_patterns
+
+        md = get_market_data()
+        bars = await asyncio.to_thread(md.klines, symbol, market="CN" if market == "CN" else market, days=60)
+        if not bars:
+            return f"未能获取 {market}:{symbol} 的K线数据。"
+        hits = detect_patterns(bars)
+        text = format_patterns(hits)
+        # 附带最近价格信息
+        last = bars[-1]
+        head = f"{market}:{symbol} 最近K线({last.date}): 开{last.open} 高{last.high} 低{last.low} 收{last.close}\n"
+        return head + text
+    except Exception as e:
+        logger.debug(f"获取K线形态失败: {e}")
+        return f"K线形态识别失败: {e}"
 
 
 @router.get("/suggested-questions")

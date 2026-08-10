@@ -371,7 +371,29 @@ def _detect_kline_pattern(klines: list[KlineData]) -> str | None:
         elif change_pct < -3:
             return "大阴线"
 
+    # 组合形态(同花顺教学体系): 单根形态未命中时,识别多K线组合
+    combined = _detect_combined_patterns(klines)
+    if combined:
+        return combined
+
     return None
+
+
+def _detect_combined_patterns(klines: list[KlineData]) -> str | None:
+    """组合 K 线形态(同花顺教学文: 金针探底/双针探底/红三兵/涨停双响炮/揭竿而起/上升三法/小步上扬/放量突破)。
+
+    复用 src.core.kline_pattern 的启发式识别,返回最重要的形态名。
+    """
+    try:
+        from src.core.kline_pattern import detect_patterns
+
+        hits = detect_patterns(list(klines))
+        if not hits:
+            return None
+        # 按信号强度排序: 看涨形态按出现顺序返回第一个(金针/双针=强底部信号优先)
+        return hits[0].name
+    except Exception:
+        return None
 
 
 def _find_cross_days(
