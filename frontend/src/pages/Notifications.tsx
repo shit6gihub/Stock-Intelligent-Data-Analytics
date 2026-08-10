@@ -253,20 +253,29 @@ export default function NotificationsPage() {
             ) : filtered.map(item => {
               const meta = LEVEL_META[item.level] || LEVEL_META.info
               const Icon = meta.icon
+              const isSelected = selectedId === item.id
               return (
                 <button
                   key={item.id}
                   type="button"
                   onClick={() => void selectItem(item)}
-                  className={`flex w-full gap-3 border-b border-border/30 px-4 py-3.5 text-left transition-colors last:border-0 ${selectedId === item.id ? 'bg-primary/8' : 'hover:bg-accent/35'}`}
+                  aria-pressed={isSelected}
+                  className={`group relative flex w-full gap-3 border-b border-l-[3px] px-4 py-3.5 text-left transition-all last:border-b-0 ${
+                    isSelected
+                      ? 'border-b-primary/20 border-l-primary bg-primary/12 shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.18)]'
+                      : 'border-b-border/30 border-l-transparent hover:border-l-primary/35 hover:bg-accent/35'
+                  }`}
                 >
-                  <span className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${meta.className}`}>
+                  <span className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all ${meta.className} ${isSelected ? 'ring-2 ring-primary/30 ring-offset-2 ring-offset-card' : ''}`}>
                     <Icon className="h-4 w-4" />
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-2">
                       {!item.read && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-rose-500" />}
-                      <span className="truncate text-[12.5px] font-medium text-foreground">{item.title || '未命名通知'}</span>
+                      <span className={`truncate text-[12.5px] font-medium ${isSelected ? 'text-primary' : 'text-foreground'}`}>{item.title || '未命名通知'}</span>
+                      {isSelected && (
+                        <span className="shrink-0 rounded-full bg-primary px-1.5 py-0.5 text-[9px] font-medium text-primary-foreground">正在查看</span>
+                      )}
                     </span>
                     <span className="mt-1 block line-clamp-2 text-[11px] leading-5 text-muted-foreground">{item.body || '无正文'}</span>
                     <span className="mt-1.5 flex items-center gap-2 text-[10px] text-muted-foreground/70">
@@ -274,7 +283,9 @@ export default function NotificationsPage() {
                       {item.push_status && <span className={item.push_status === 'failed' ? 'text-rose-500' : item.push_status === 'sent' ? 'text-emerald-500' : ''}>{PUSH_META[item.push_status]?.label || item.push_status}</span>}
                     </span>
                   </span>
-                  <ChevronRight className="mt-2 h-4 w-4 shrink-0 text-muted-foreground/50" />
+                  <span className={`mt-1.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors ${isSelected ? 'bg-primary text-primary-foreground' : 'text-muted-foreground/50 group-hover:bg-accent group-hover:text-foreground'}`}>
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </span>
                 </button>
               )
             })}
