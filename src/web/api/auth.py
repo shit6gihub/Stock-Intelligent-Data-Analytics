@@ -108,6 +108,15 @@ def verify_password(password: str, stored: str) -> bool:
 
 # ── 用户管理(多用户核心) ──────────────────────────────────────────────
 
+def init_auth_from_env(db: Session) -> bool:
+    """兼容旧接口(server.py 引用): 从环境变量初始化认证。
+
+    多用户下由 get_or_create_owner 统一处理, 此函数仅确保 owner 存在。
+    """
+    owner = get_or_create_owner(db)
+    return owner is not None
+
+
 def get_or_create_owner(db: Session) -> User:
     """确保存在 owner 用户。
 
