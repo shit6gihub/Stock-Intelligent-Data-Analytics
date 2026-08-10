@@ -49,6 +49,52 @@ def get_market_data():
     return _g()
 
 
+def _fetch_ta_capital_flow(symbol: str, market: str = "CN"):
+    """TradingAgents 资金流: 优先今日实时(CapitalFlowCollector 网关/双模式), 失败回退 marketdata 引擎。
+
+    返回 marketdata 的 CapitalFlow 对象(TradingAgents 下游结构不变)。
+    """
+    try:
+        # 1. 今日实时(国内网关 push2delay / 大陆直连, 双模式)
+        from src.collectors.capital_flow_collector import (
+            _fetch_cn_gateway_flow,
+            _fetch_direct_flow,
+            _CN_FLOW_MODE,
+        )
+        from src.models.market import MarketCode as _MC
+
+        mc = _MC(market) if market in ("CN", "HK", "US") else _MC.CN
+        cf = None
+        if _CN_FLOW_MODE == "direct":
+            cf = _fetch_direct_flow(symbol)
+        elif _CN_FLOW_MODE == "gateway":
+            cf = _fetch_cn_gateway_flow(symbol)
+        else:  # auto
+            cf = _fetch_direct_flow(symbol)
+            if cf is None:
+                cf = _fetch_cn_gateway_flow(symbol)
+        if cf is not None:
+            # 转 marketdata.CapitalFlow(TradingAgents 下游用同名字段)
+            from marketdata.types import CapitalFlow as _MDFlow
+            return _MDFlow(
+                symbol=symbol, name=cf.name or "",
+                main_net_inflow=cf.main_net_inflow,
+                main_net_inflow_pct=cf.main_net_inflow_pct,
+                super_net_inflow=cf.super_net_inflow,
+                big_net_inflow=cf.big_net_inflow,
+                mid_net_inflow=cf.mid_net_inflow,
+                small_net_inflow=cf.small_net_inflow,
+                main_net_5d=cf.main_net_5d,
+            )
+    except Exception as e:
+        logger.debug(f"[TA] 今日实时资金流失败, 回退引擎: {e}")
+    # 2. 回退 marketdata 引擎(T-1)
+    try:
+        return get_market_data().capital_flow(symbol, market=market)
+    except Exception:
+        return None
+
+
 def _eastmoney_secid(symbol: str) -> str:
     """股票代码 → 东财 secid(6开头=沪市1.,否则0.)。"""
     return f"1.{symbol}" if symbol.startswith(("6", "9")) else f"0.{symbol}"
@@ -207,7 +253,7 @@ class TradingAgentsAgent(BaseAgent):
             quotes, klines_list, cf, events_list = await asyncio.gather(
                 asyncio.to_thread(md.quotes, [sym], market=mkt),
                 asyncio.to_thread(md.klines, sym, market=mkt, days=120),
-                asyncio.to_thread(md.capital_flow, sym, market=mkt),
+                asyncio.to_thread(_fetch_ta_capital_flow, sym, mkt),
                 asyncio.to_thread(md.events, [sym], market=mkt, since_days=30),
             )
         except Exception as e:
