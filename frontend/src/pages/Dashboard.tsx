@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { RefreshCw, AlertTriangle, Sparkles, Activity, ShieldAlert, Newspaper, Share2, Plus } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Sparkles, Activity, ShieldAlert, Newspaper, Share2, Plus, TrendingUp } from 'lucide-react'
 import {
   dashboardApi,
   portfolioApi,
@@ -10,6 +10,7 @@ import {
   homeApi,
   stocksApi,
   type DashboardMarketIndex,
+  type DashboardMarketCapitalFlow,
   type DashboardMarketStatus,
   type DashboardMonitorStock,
   type DashboardOverviewResponse,
@@ -122,6 +123,8 @@ export default function DashboardPage() {
   const [watchSymbols, setWatchSymbols] = useState<Set<string>>(new Set())
   const [portfolioSummary, setPortfolioSummary] = useState<DashboardPortfolioSummary | null>(null)
   const [marketStatus, setMarketStatus] = useState<DashboardMarketStatus[]>([])
+  // 大盘资金流(同花顺源,东财 502 替代)
+  const [marketFlow, setMarketFlow] = useState<DashboardMarketCapitalFlow | null>(null)
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null)
   // 分享卡开关:成绩单(基准)/ 组合体检 / 每日 digest
   const [shareBench, setShareBench] = useState(false)
@@ -154,6 +157,8 @@ export default function DashboardPage() {
     setLoading(true)
     // 指数 pills:独立加载不阻塞首屏(spark 冷启动可能 ~1s,数据到了自然浮现)
     dashboardApi.indices().then(setIndices).catch(() => {})
+    // 大盘资金流(同花顺源):独立加载,失败静默
+    dashboardApi.marketCapitalFlow().then(setMarketFlow).catch(() => {})
     // 快车道:DB/轻量查询,先让首屏(要紧事/体检分布/组合速览)尽快出来
     const [sc, ov, dg, ht, td, ps, ms] = await Promise.allSettled([
       dashboardApi.intradayScan(),
@@ -451,6 +456,29 @@ export default function DashboardPage() {
           </button>
         ))}
       </div>
+
+      {/* 大盘资金流(同花顺源,东财 502 替代) */}
+      {marketFlow && (
+        <div className="card-subtle mt-3 flex flex-wrap items-center gap-x-6 gap-y-2 p-3">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-primary" />
+            <span className="text-[12px] font-semibold">大盘资金流</span>
+            <span className="text-[10px] text-muted-foreground">同花顺 · {marketFlow.board_count ?? '--'}板块</span>
+          </div>
+          <div className="flex items-center gap-4 text-[12px]">
+            <span className="text-muted-foreground">总流入 <b className="text-red-500 font-mono">{(marketFlow.total_inflow ?? 0).toFixed(1)}亿</b></span>
+            <span className="text-muted-foreground">总流出 <b className="text-green-500 font-mono">{(marketFlow.total_outflow ?? 0).toFixed(1)}亿</b></span>
+            <span className="text-muted-foreground">净流入
+              <b className={`font-mono ${(marketFlow.net_inflow ?? 0) >= 0 ? 'text-red-500' : 'text-green-500'}`}>
+                {(marketFlow.net_inflow ?? 0) >= 0 ? '+' : ''}{(marketFlow.net_inflow ?? 0).toFixed(1)}亿
+              </b>
+            </span>
+          </div>
+          {marketFlow.timestamp && (
+            <span className="ml-auto text-[10px] text-muted-foreground">更新 {marketFlow.timestamp?.slice(11, 16)}</span>
+          )}
+        </div>
+      )}
 
       {/* 主体:要紧事(7) | 体检(5);机会(5) | 简报(7) */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">

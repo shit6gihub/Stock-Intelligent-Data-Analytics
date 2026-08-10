@@ -27,6 +27,15 @@ export interface DashboardMarketIndex {
   spark?: number[]
 }
 
+export interface DashboardMarketCapitalFlow {
+  total_inflow: number
+  total_outflow: number
+  net_inflow: number
+  board_count: number
+  source?: string
+  timestamp?: string
+}
+
 export interface DashboardMarketStatus {
   code: string
   name: string
@@ -232,6 +241,8 @@ export interface DashboardOverviewResponse {
 
 export const dashboardApi = {
   indices: () => fetchAPI<DashboardMarketIndex[]>('/market/indices'),
+
+  marketCapitalFlow: () => fetchAPI<DashboardMarketCapitalFlow>('/market-data/market-capital-flow'),
 
   marketStatus: () => fetchAPI<DashboardMarketStatus[]>('/stocks/markets/status'),
 
