@@ -318,11 +318,8 @@ class SignalPackBuilder:
                             last_err = None
                             for provider, cfg in flow_providers:
                                 try:
-                                    if provider != "eastmoney":
-                                        logger.info(
-                                            f"SignalPack capital_flow 未支持 provider={provider}，跳过"
-                                        )
-                                        continue
+                                    # collector.get_capital_flow_summary 内部自选最优源
+                                    # (wudao 盘中实时 → Engine 四档兜底),不依赖 provider 名
                                     self._flow_cache[key] = (
                                         collector.get_capital_flow_summary(sym)
                                     )
