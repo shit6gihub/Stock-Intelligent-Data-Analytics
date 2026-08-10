@@ -1563,6 +1563,16 @@ def _m119_notifications_table(conn: Connection) -> None:
     )
 
 
+def _m120_notification_push_channels(conn: Connection) -> None:
+    """通知记录保存当次实际尝试的外发渠道，不回填历史数据。"""
+    _add_column_if_missing(
+        conn,
+        "notifications",
+        "push_channels",
+        "ALTER TABLE notifications ADD COLUMN push_channels TEXT DEFAULT '[]'",
+    )
+
+
 def _m118_paper_trading_market_allocations(conn: Connection) -> None:
     """模拟盘账户新增 market_allocations（各市场投资比例），并由 excluded_markets 回填。"""
     _add_column_if_missing(
@@ -1635,6 +1645,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(117, "chat_initial_context", _m117_chat_initial_context),
     Migration(118, "paper_trading_market_allocations", _m118_paper_trading_market_allocations),
     Migration(119, "notifications_table", _m119_notifications_table),
+    Migration(120, "notification_push_channels", _m120_notification_push_channels),
 )
 
 

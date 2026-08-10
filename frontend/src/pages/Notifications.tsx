@@ -30,6 +30,7 @@ interface NotificationItem {
   trace_id: string
   push_status: string
   push_error: string
+  push_channels: Array<{ id: number; name: string; type: string; status: string; error?: string }>
   read: boolean
   created_at: string
 }
@@ -46,6 +47,12 @@ interface AgentRunDetail {
 
 interface NotificationDetail extends NotificationItem {
   task: AgentRunDetail | null
+}
+
+interface ConfiguredChannel {
+  id: number
+  name: string
+  type: string
 }
 
 type FilterKey = 'all' | 'unread' | 'failed'
@@ -70,6 +77,30 @@ const PUSH_META: Record<string, { label: string; className: string }> = {
   failed: { label: '外部推送失败', className: 'text-rose-500 bg-rose-500/10' },
   skipped: { label: '仅站内通知', className: 'text-muted-foreground bg-accent/60' },
   pending: { label: '正在推送', className: 'text-amber-500 bg-amber-500/10' },
+}
+
+const CHANNEL_TYPE_LABELS: Record<string, string> = {
+  pushplus: 'PushPlus',
+  telegram: 'Telegram',
+  bark: 'Bark',
+  dingtalk: '钉钉',
+  wecom: '企业微信',
+  hermes: 'Hermes',
+  lark: '飞书',
+  serverchan: 'Server酱',
+  discord: 'Discord',
+  pushover: 'Pushover',
+}
+
+function channelName(channel: NotificationItem['push_channels'][number]): string {
+  return channel.name || CHANNEL_TYPE_LABELS[channel.type] || channel.type || '未命名渠道'
+}
+
+function channelSummary(item: NotificationItem): string {
+  const names = (item.push_channels || []).map(channelName)
+  if (names.length > 0) return `${names.join('、')} · ${PUSH_META[item.push_status]?.label || item.push_status}`
+  if (item.push_status === 'sent' || item.push_status === 'failed') return '历史记录未记录渠道'
+  return PUSH_META[item.push_status]?.label || item.push_status
 }
 
 function formatDateTime(iso: string): string {
@@ -136,14 +167,16 @@ export default function NotificationsPage() {
   const [detail, setDetail] = useState<NotificationDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailError, setDetailError] = useState('')
+  const [configuredChannels, setConfiguredChannels] = useState<ConfiguredChannel[]>([])
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const result = await fetchAPI<{ items: NotificationItem[]; unread: number }>('/notifications?limit=200')
+      const result = await fetchAPI<{ items: NotificationItem[]; unread: number; configured_channels: ConfiguredChannel[] }>('/notifications?limit=200')
       const next = result?.items || []
       setItems(next)
+      setConfiguredChannels(result?.configured_channels || [])
       const requested = Number(searchParams.get('id'))
       setSelectedId(current => {
         if (Number.isFinite(requested) && next.some(item => item.id === requested)) return requested
@@ -346,7 +379,7 @@ export default function NotificationsPage() {
                     <span className="mt-1 block line-clamp-2 text-[11px] leading-5 text-muted-foreground">{item.body || '无正文'}</span>
                     <span className="mt-1.5 flex items-center gap-2 text-[10px] text-muted-foreground/70">
                       <span>{formatDateTime(item.created_at)}</span>
-                      {item.push_status && <span className={item.push_status === 'failed' ? 'text-rose-500' : item.push_status === 'sent' ? 'text-emerald-500' : ''}>{PUSH_META[item.push_status]?.label || item.push_status}</span>}
+                      {item.push_status && <span className={item.push_status === 'failed' ? 'text-rose-500' : item.push_status === 'sent' ? 'text-emerald-500' : ''}>{channelSummary(item)}</span>}
                     </span>
                   </span>
                   <span className={`mt-1.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors ${isSelected ? 'bg-primary text-primary-foreground' : 'text-muted-foreground/50 group-hover:bg-accent group-hover:text-foreground'}`}>
@@ -391,10 +424,40 @@ export default function NotificationsPage() {
                   <div className="mt-1 flex items-center gap-1.5 text-[12px] font-medium text-foreground"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />已送达消息中心</div>
                 </div>
                 <div className="rounded-xl bg-accent/30 p-3">
-                  <div className="text-[10px] text-muted-foreground">外部推送</div>
-                  <div className={`mt-1 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${selectedPush?.className || 'bg-accent text-muted-foreground'}`}>
-                    <Send className="h-3 w-3" />{selectedPush?.label || '未记录'}
-                  </div>
+                  <div className="text-[10px] text-muted-foreground">推送渠道</div>
+                  {(selected.push_channels || []).length > 0 ? (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {selected.push_channels.map((channel, index) => (
+                        <span
+                          key={`${channel.id || channel.type}-${index}`}
+                          title={channel.error || ''}
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                            channel.status === 'sent'
+                              ? 'bg-emerald-500/10 text-emerald-500'
+                              : channel.status === 'failed'
+                                ? 'bg-rose-500/10 text-rose-500'
+                                : 'bg-amber-500/10 text-amber-500'
+                          }`}
+                        >
+                          <Send className="h-3 w-3" />
+                          {channelName(channel)}
+                          <span>· {channel.status === 'sent' ? '已发送' : channel.status === 'failed' ? '失败' : '发送中'}</span>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="mt-1.5 space-y-1.5">
+                      <div className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium ${selectedPush?.className || 'bg-accent text-muted-foreground'}`}>
+                        <Send className="h-3 w-3" />
+                        {selected.push_status === 'sent' || selected.push_status === 'failed' ? '历史记录未记录渠道' : selectedPush?.label || '未记录'}
+                      </div>
+                      {(selected.push_status === 'sent' || selected.push_status === 'failed') && configuredChannels.length > 0 && (
+                        <div className="text-[9px] leading-4 text-muted-foreground" title="当前配置不代表该条历史通知当时实际使用的渠道">
+                          当前启用：{configuredChannels.map(channel => channel.name || CHANNEL_TYPE_LABELS[channel.type] || channel.type).join('、')}（仅供参考）
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="rounded-xl bg-accent/30 p-3">
                   <div className="text-[10px] text-muted-foreground">来源</div>

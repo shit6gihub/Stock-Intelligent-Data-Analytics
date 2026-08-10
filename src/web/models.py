@@ -1111,5 +1111,7 @@ class Notification(Base):
     # 外发结果: pending / sent / failed / skipped(无渠道)
     push_status = Column(String, default="")
     push_error = Column(String, default="")
+    # 当次实际尝试的渠道回执（仅 ID/名称/类型/状态/错误，不保存密钥）
+    push_channels = Column(JSON, default=list)
     read_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())

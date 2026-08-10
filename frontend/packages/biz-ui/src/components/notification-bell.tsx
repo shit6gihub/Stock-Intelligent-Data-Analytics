@@ -14,8 +14,15 @@ export interface NotificationItem {
   trace_id: string
   push_status: string
   push_error: string
+  push_channels: Array<{ id: number; name: string; type: string; status: string; error?: string }>
   read: boolean
   created_at: string
+}
+
+function pushSummary(item: NotificationItem): string {
+  const names = (item.push_channels || []).map(channel => channel.name || channel.type).filter(Boolean)
+  if (names.length > 0) return `${names.join('、')} · ${PUSH_LABEL[item.push_status] || item.push_status}`
+  return PUSH_LABEL[item.push_status] || item.push_status
 }
 
 const LEVEL_ICON: Record<string, React.ReactNode> = {
@@ -197,7 +204,7 @@ export function NotificationBell({ size = 'md' }: { size?: 'sm' | 'md' }) {
                           }
                           title={n.push_error || ''}
                         >
-                          · {PUSH_LABEL[n.push_status] || n.push_status}
+                          · {pushSummary(n)}
                         </span>
                       )}
                     </span>

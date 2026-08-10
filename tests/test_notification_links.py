@@ -1,5 +1,5 @@
 from src.web.api.notifications import _normalize_link, _run_status, _to_out
-from src.core.notify_center import notify_task_done
+from src.core.notify_center import _finalize_channel_records, _push_result_status, notify_task_done
 from src.web.models import AgentRun, Notification
 
 
@@ -58,3 +58,26 @@ def test_notify_task_done_supports_skipped_status(monkeypatch):
     assert captured["title"] == "⏭️ 盘中监测 已跳过（耗时 0.1s）"
     assert captured["level"] == "warning"
     assert captured["body"] == "当前非交易时段"
+
+
+def test_channel_receipts_keep_safe_names_and_per_channel_status():
+    records = [
+        {"id": 1, "name": "手机 PushPlus", "type": "pushplus", "status": "pending", "error": ""},
+        {"id": 2, "name": "交易 Telegram", "type": "telegram", "status": "pending", "error": ""},
+    ]
+    result = {
+        "success": False,
+        "error": "Telegram 发送失败",
+        "channels": [
+            {"type": "pushplus", "success": True, "receipt": {"message_id": "secret-receipt"}},
+            {"type": "apprise", "success": False, "error": "Telegram 发送失败"},
+        ],
+    }
+
+    finalized = _finalize_channel_records(records, result)
+
+    assert finalized == [
+        {"id": 1, "name": "手机 PushPlus", "type": "pushplus", "status": "sent", "error": ""},
+        {"id": 2, "name": "交易 Telegram", "type": "telegram", "status": "failed", "error": "Telegram 发送失败"},
+    ]
+    assert _push_result_status(result, finalized) == ("failed", "Telegram 发送失败")

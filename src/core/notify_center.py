@@ -21,26 +21,37 @@ _PUSH_LEVELS = {"info", "success", "warning", "error"}
 
 
 def _build_notifier():
-    """从 DB 启用渠道构建 NotifierManager, 无渠道返回 None。"""
+    """从 DB 启用渠道构建 NotifierManager，并返回不含密钥的渠道快照。"""
     from src.core.notifier import NotifierManager
 
     db = SessionLocal()
     try:
         channels = db.query(NotifyChannel).filter(NotifyChannel.enabled.is_(True)).all()
         if not channels:
-            return None
+            return None, []
         mgr = NotifierManager()
         ok = 0
+        records: list[dict] = []
         for ch in channels:
+            record = {
+                "id": int(ch.id),
+                "name": str(ch.name or ch.type or "未命名渠道"),
+                "type": str(ch.type or ""),
+                "status": "pending",
+                "error": "",
+            }
             try:
                 if mgr.add_channel(ch.type, ch.config or {}):
                     ok += 1
             except Exception as e:
+                record["status"] = "failed"
+                record["error"] = str(e)[:400]
                 logger.warning("[通知中心] 渠道 %s 初始化失败: %s", ch.type, e)
-        return mgr if ok else None
+            records.append(record)
+        return (mgr if ok else None), records
     except Exception as e:
         logger.warning("[通知中心] 读取渠道失败: %s", e)
-        return None
+        return None, []
     finally:
         db.close()
 
@@ -93,29 +104,37 @@ def push_notification(
         _set_push_status(nid, "skipped", "级别不外发")
         return nid
 
-    mgr = _build_notifier()
+    mgr, channel_records = _build_notifier()
     if mgr is None:
-        # 显式状态, 不静默 —— 前端能看到"站内已记录, 未配置外发渠道"
-        _set_push_status(nid, "skipped", "未配置通知渠道")
+        init_errors = [str(item.get("error") or "") for item in channel_records if item.get("status") == "failed"]
+        if channel_records:
+            _set_push_status(
+                nid,
+                "failed",
+                "; ".join(err for err in init_errors if err)[:400] or "通知渠道初始化失败",
+                channels=channel_records,
+            )
+        else:
+            # 显式状态, 不静默 —— 前端能看到"站内已记录, 未配置外发渠道"
+            _set_push_status(nid, "skipped", "未配置通知渠道", channels=[])
         return nid
 
     try:
         result = asyncio.run(mgr.notify_with_result(title, body or title))
-        if result.get("success"):
-            _set_push_status(nid, "sent", "")
-        else:
-            _set_push_status(nid, "failed", str(result.get("error") or result.get("skipped") or "")[:400])
+        final_channels = _finalize_channel_records(channel_records, result)
+        final_status, final_error = _push_result_status(result, final_channels)
+        _set_push_status(nid, final_status, final_error, channels=final_channels)
     except RuntimeError:
         # 已在事件循环里(异步上下文) → 交给调用方的 loop
         try:
             loop = asyncio.get_event_loop()
-            loop.create_task(_async_push(nid, mgr, title, body or title))
-            _set_push_status(nid, "pending", "异步发送中")
+            loop.create_task(_async_push(nid, mgr, title, body or title, channel_records))
+            _set_push_status(nid, "pending", "异步发送中", channels=channel_records)
         except Exception as e:
-            _set_push_status(nid, "failed", str(e)[:400])
+            _set_push_status(nid, "failed", str(e)[:400], channels=_finalize_channel_records(channel_records, {"success": False, "error": str(e)}))
     except Exception as e:
         logger.warning("[通知中心] 外发失败: %s", e)
-        _set_push_status(nid, "failed", str(e)[:400])
+        _set_push_status(nid, "failed", str(e)[:400], channels=_finalize_channel_records(channel_records, {"success": False, "error": str(e)}))
     return nid
 
 
@@ -124,16 +143,70 @@ async def push_notification_async(title: str, body: str = "", **kw) -> int | Non
     return await asyncio.to_thread(push_notification, title, body, **kw)
 
 
-async def _async_push(nid: int, mgr, title: str, body: str) -> None:
+async def _async_push(nid: int, mgr, title: str, body: str, channel_records: list[dict]) -> None:
     try:
         result = await mgr.notify_with_result(title, body)
-        _set_push_status(nid, "sent" if result.get("success") else "failed",
-                         str(result.get("error") or "")[:400])
+        final_channels = _finalize_channel_records(channel_records, result)
+        final_status, final_error = _push_result_status(result, final_channels)
+        _set_push_status(nid, final_status, final_error, channels=final_channels)
     except Exception as e:
-        _set_push_status(nid, "failed", str(e)[:400])
+        _set_push_status(
+            nid,
+            "failed",
+            str(e)[:400],
+            channels=_finalize_channel_records(channel_records, {"success": False, "error": str(e)}),
+        )
 
 
-def _set_push_status(nid: int, status: str, err: str = "") -> None:
+def _finalize_channel_records(records: list[dict], result: dict) -> list[dict]:
+    """将 NotifierManager 回执映射到配置渠道，只保留可展示字段。"""
+    result_items = list(result.get("channels") or [])
+    exact: dict[str, list[dict]] = {}
+    apprise_result = None
+    for item in result_items:
+        item_type = str(item.get("type") or "")
+        if item_type == "apprise":
+            apprise_result = item
+        else:
+            exact.setdefault(item_type, []).append(item)
+
+    finalized: list[dict] = []
+    for original in records:
+        record = {
+            "id": int(original.get("id") or 0),
+            "name": str(original.get("name") or original.get("type") or "未命名渠道"),
+            "type": str(original.get("type") or ""),
+            "status": str(original.get("status") or "pending"),
+            "error": str(original.get("error") or "")[:400],
+        }
+        if record["status"] == "failed":
+            finalized.append(record)
+            continue
+
+        queue = exact.get(record["type"], [])
+        receipt = queue.pop(0) if queue else apprise_result
+        if receipt is not None:
+            record["status"] = "sent" if receipt.get("success") else "failed"
+            record["error"] = str(receipt.get("error") or "")[:400]
+        else:
+            record["status"] = "sent" if result.get("success") else "failed"
+            record["error"] = str(result.get("error") or result.get("skipped") or "")[:400]
+        finalized.append(record)
+    return finalized
+
+
+def _push_result_status(result: dict, channels: list[dict]) -> tuple[str, str]:
+    """任一配置渠道失败时，整体状态应进入“推送失败”筛选。"""
+    failed = [item for item in channels if item.get("status") == "failed"]
+    if result.get("success") and not failed:
+        return "sent", ""
+    error = str(result.get("error") or result.get("skipped") or "")
+    if not error and failed:
+        error = "; ".join(str(item.get("error") or f"{item.get('name') or item.get('type')} 发送失败") for item in failed)
+    return "failed", error[:400]
+
+
+def _set_push_status(nid: int, status: str, err: str = "", *, channels: list[dict] | None = None) -> None:
     if not nid:
         return
     db = SessionLocal()
@@ -142,6 +215,8 @@ def _set_push_status(nid: int, status: str, err: str = "") -> None:
         if n:
             n.push_status = status
             n.push_error = err
+            if channels is not None:
+                n.push_channels = channels
             db.commit()
     except Exception:
         db.rollback()

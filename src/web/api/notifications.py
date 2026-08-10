@@ -3,12 +3,12 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from src.core.notify_center import push_notification
 from src.web.database import get_db
-from src.web.models import AgentRun, Notification
+from src.web.models import AgentRun, Notification, NotifyChannel
 
 router = APIRouter()
 
@@ -24,6 +24,7 @@ class NotificationOut(BaseModel):
     trace_id: str = ""
     push_status: str = ""
     push_error: str = ""
+    push_channels: list[dict] = Field(default_factory=list)
     read: bool = False
     created_at: str = ""
 
@@ -82,9 +83,24 @@ def _to_out(n: Notification, run: AgentRun | None = None) -> NotificationOut:
         trace_id=n.trace_id or "",
         push_status=n.push_status or "",
         push_error=n.push_error or "",
+        push_channels=list(n.push_channels or []),
         read=n.read_at is not None,
         created_at=n.created_at.isoformat() if n.created_at else "",
     )
+
+
+def _configured_channels(db: Session) -> list[dict]:
+    """只向前端暴露安全的渠道标识，不返回 config 中的任何密钥。"""
+    rows = (
+        db.query(NotifyChannel)
+        .filter(NotifyChannel.enabled.is_(True))
+        .order_by(NotifyChannel.id.asc())
+        .all()
+    )
+    return [
+        {"id": int(row.id), "name": str(row.name or row.type or "未命名渠道"), "type": str(row.type or "")}
+        for row in rows
+    ]
 
 
 @router.get("/unread-count")
@@ -125,6 +141,7 @@ def list_notifications(
             for row in rows
         ],
         "unread": unread,
+        "configured_channels": _configured_channels(db),
     }
 
 
