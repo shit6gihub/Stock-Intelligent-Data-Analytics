@@ -564,21 +564,23 @@ README 旧的「智能 Agent 系统（4 套）」漏列了 4 个：`竞价复盘
 
 ## 📦 版本
 
-- **当前版本**：`v0.1.29`（镜像 tag 与 GitHub Release 对齐；含国内数据网关双模式接入、TA-Lib 61 种形态识别、K线形态接入技术指标/盘中监控/AI助手、AI助手技术面修复、影子账户前端页）
-- **容器镜像**：`ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest`（已公开，匿名可拉，digest `sha256:44a4eaeb87fe`）
+- **当前版本**：`v0.1.35`（镜像 tag 与 GitHub Release 对齐；含热门股票网关兜底、大盘资金流板块明细榜、分时K线修复、TradingAgents 今日实时资金流）
+- **容器镜像**：`ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest`（已公开，匿名可拉，digest `sha256:bbc6a12dc713`）
 - **预测引擎**：`ghcr.io/xiaoze-hub/stock-intelligent-data-analytics-forecast:latest`（独立镜像，digest `sha256:9d6192f9d237`）
 - **更新日志**：见 [Releases](https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics/releases)
-- 打 tag（如 `v0.1.29`）触发 GitHub Actions 自动构建并推送镜像到 GHCR
+- 打 tag（如 `v0.1.35`）触发 GitHub Actions 自动构建并推送镜像到 GHCR
 
-### 🆕 v0.1.12 → v0.1.29 主要更新（2026-08-10）
+### 🆕 v0.1.12 → v0.1.35 主要更新（2026-08-10）
 
-- **国内数据网关双模式接入**：`CN_FLOW_MODE=direct` 大陆直连东财 push2delay / `gateway` 海外走国内网关 / `auto` 自动检测；今日实时四档资金流（主力/超大/大/中/小单），盘中监控与 AI 助手资金面告别 T-1 滞后
-- **TA-Lib 61 种标准 K 线形态识别**：自研 30 种（同花顺教学）+ TA-Lib 61 种合并，接入技术指标建议（带 50+ 形态中文解释）、盘中监控形态提示、AI 助手
-- **AI 助手增强**：技术面数据修复（DataCollector 引用错误）、资金流输出今日实时、竞价工具 6 场景、K线形态工具
-- **K线形态体系**：看涨 8 + 看跌 8 + 经典 6 + 进场信号 8（同花顺教学文落地）
-- **商品轮动前瞻 + 地缘冲突检测**：盘前事件驱动联动涨价题材
-- **影子账户前端页**：拖拽上传交割单 → 行为画像/诊断/归因/PDF 报告
-- **同花顺数据源**：实时行情/K线/快讯/资金流（免登录 Web 接口）
+- **热门股票/板块真实数据**：东财 push2 clist 海外 502 → 国内网关 push2delay 兜底（live→网关→DB快照），告别"假展示"；热门板块走 ftshare 源
+- **大盘资金流板块明细榜**：同花顺行业资金 流入Top10/流出Top10 板块（替代"50板块求和"），前端 🔥流入/💧流出 双榜
+- **分时K线修复**：路由被 `/{symbol}` 抢占 + 容器 `_time` 未定义，腾讯分时 267 点正常
+- **TradingAgents 资金流今日实时**：多 Agent 分析资金面告别 T-1
+- **国内数据网关双模式**：`CN_FLOW_MODE=direct` 大陆直连 / `gateway` 海外走网关 / `auto` 自动检测
+- **TA-Lib 61 种标准 K 线形态**：自研 30 种 + TA-Lib 61 种合并，接入技术指标/监控/AI助手
+- **预测引擎隔夜事件源**：同花顺快讯免 key 替代 wudao 额度（FCC 禁令类新闻修正）
+- **K线形态体系**：看涨8+看跌8+经典6+进场信号8；商品轮动+地缘冲突检测
+- **影子账户前端页** + 同花顺数据源 + AI助手技术面/竞价工具
 
 ## 贡献
 
