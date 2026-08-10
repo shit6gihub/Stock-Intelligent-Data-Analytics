@@ -36,10 +36,15 @@
 ### feature
 
 - 新增 `dev-0.1.1` 本地 Docker 开发环境，同时运行 PanWatch 主服务和预测引擎，并复用已有 `panwatch_data` 数据卷。
+- 新增同花顺 Web 数据源 vendor（`ths_web.py`）：实时行情（fuyao 统一行情聚合接口，沪 market=17/深 market=33，免登录）、日K线（d.10jqka.com.cn）、快讯（news.10jqka.com.cn）、F10 基本面；已注册 quote/kline/flash_news/fundamentals 四类，香港节点实测可用。
+- 新增同花顺板块/大盘资金数据源（`ths_flow.py`）：行业/概念资金流向页面版解析 + 全市场大盘资金汇总，已在数据源设置页可维护。
+- 新增同花顺扫码登录 session 管理（`src/core/ths_auth.py` + `/api/ths/*`）：扫码生成二维码→轮询→自动登录+持久化，设置页可查看登录态并扫码续期，凭证自动续期无需人工干预。
+- 新增影子账户（Shadow Account）页面端入口（`/shadow`）：拖拽上传交割单 → 行为画像（回合/胜率/持仓/偏好市场）+ 行为诊断（处置效应/过度交易/追涨/锚定）+ 归因分析（影子收益/实际收益/差值），支持 HTML/PDF 报告。
 
 ### update
 
-- 无。
+- 数据源设置页可维护全部数据源：`board_capital_flow`（板块资金）/`market_capital_flow`（大盘资金）加入类型注册与分类，设置页「同花顺登录」区块显示账号/UserID/过期时间。
+- DB 数据源初始化：补齐同花顺实时行情/K线/快讯/基本面配置，生产环境同花顺实时行情成为默认主源（priority 0）。
 
 ### doc
 

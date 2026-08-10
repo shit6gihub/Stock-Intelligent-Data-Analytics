@@ -724,6 +724,43 @@ DATA_SOURCE_SEEDS: list[dict] = [
             "supports_batch": False,
             "test_symbols": [],
         },
+        # 同花顺 Web(实时行情/K线/快讯,免登录,香港节点可达)
+        {
+            "name": "同花顺实时行情",
+            "type": "quote",
+            "provider": "ths",
+            "config": {
+                "description": "fuyao 统一行情聚合接口(免登录,实时快照)。",
+            },
+            "enabled": True,
+            "priority": 0,
+            "supports_batch": False,
+            "test_symbols": ["600519", "000001"],
+        },
+        {
+            "name": "同花顺K线",
+            "type": "kline",
+            "provider": "ths",
+            "config": {
+                "description": "d.10jqka.com.cn 日K线(免登录)。",
+            },
+            "enabled": True,
+            "priority": 6,
+            "supports_batch": False,
+            "test_symbols": ["600519"],
+        },
+        {
+            "name": "同花顺快讯",
+            "type": "flash_news",
+            "provider": "ths",
+            "config": {
+                "description": "news.10jqka.com.cn 7x24 快讯(免登录)。",
+            },
+            "enabled": True,
+            "priority": 3,
+            "supports_batch": False,
+            "test_symbols": [],
+        },
         # K线截图数据源
         {
             "name": "雪球K线截图",
