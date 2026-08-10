@@ -147,7 +147,8 @@ class SignalPackBuilder:
             "kline", default_providers=["tencent"]
         )
         flow_providers, flow_disabled = self._source_policy(
-            "capital_flow", default_providers=["eastmoney"]
+            # 新浪优先: 东财 push2his 海外节点间歇性断连(2026-08-10),新浪通道稳定且数据同源
+            "capital_flow", default_providers=["sina", "eastmoney"]
         )
 
         events_providers, events_disabled = self._source_policy(
