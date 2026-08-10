@@ -130,18 +130,46 @@ async def board_capital_flow_proxy(
 
 @router.get("/market-capital-flow")
 async def market_capital_flow_proxy():
-    """大盘资金汇总(全市场行业资金合计,同花顺)。"""
+    """大盘资金(同花顺行业资金,含流入/流出板块明细)。
+
+    2026-08-10 重构: 不只返回求和汇总, 返回具体流入/流出板块榜(替代'50板块合成')。
+    """
     try:
         from src.core.marketdata_client import get_market_data
         md = get_market_data()
         mf = md.market_capital_flow()
         if mf is None:
             return {"error": "no_data"}
+        # 板块资金明细(行业, 同花顺 hyzjl)
+        boards = md.board_capital_flow(board_type="industry") or []
+        boards_sorted = sorted(
+            boards, key=lambda b: (b.net_inflow or 0.0), reverse=True
+        )
+        inflow_boards = [
+            {
+                "name": b.board_name,
+                "net_inflow": round(b.net_inflow or 0.0, 2),  # 亿
+                "change_pct": b.change_pct,
+            }
+            for b in boards_sorted[:10]
+            if (b.net_inflow or 0.0) > 0
+        ]
+        outflow_boards = [
+            {
+                "name": b.board_name,
+                "net_inflow": round(b.net_inflow or 0.0, 2),  # 亿(负=流出)
+                "change_pct": b.change_pct,
+            }
+            for b in reversed(boards_sorted[-10:])
+            if (b.net_inflow or 0.0) < 0
+        ]
         return {
             "total_inflow": mf.total_inflow,
             "total_outflow": mf.total_outflow,
             "net_inflow": mf.net_inflow,
             "board_count": mf.board_count,
+            "inflow_boards": inflow_boards,    # 资金流入板块榜
+            "outflow_boards": outflow_boards,  # 资金流出板块榜
             "source": mf.source,
             "timestamp": mf.timestamp.isoformat(),
         }
