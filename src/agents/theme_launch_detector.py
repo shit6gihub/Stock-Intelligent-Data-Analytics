@@ -27,6 +27,7 @@ class ThemeLaunchDetectorAgent(BaseAgent):
         start_ts = __import__("time").monotonic()
 
         sentiment_data = {}
+        top_sectors = []  # 采集失败时为空, 商品轮动检测跳过
         try:
             from src.collectors.market_sentiment_collector import (
                 MarketSentimentCollector,
@@ -68,6 +69,30 @@ class ThemeLaunchDetectorAgent(BaseAgent):
         except Exception as e:
             logger.warning("[%s] 题材启动采集失败: %s", trace_id, e)
             sentiment_data = {}
+
+        # 商品轮动前瞻 + 地缘冲突检测(2026-08-10 接入)
+        # 用涨停板块分布 + 近48h事件流识别轮动阶段/冲突,联动题材启动判断
+        rotation = {}
+        try:
+            from src.core.commodity_rotation import detect_rotation_stage
+            # 事件输入: 板块分布(领涨行业/概念) 作为商品相关信号
+            events = []
+            for s in top_sectors:
+                events.append(f"{s[0]}板块涨停{s[1]}家")
+            # 冲突关键词直接检测(板块名含 军工/黄金/石油 等)
+            sector_names = [s[0] for s in top_sectors]
+            conflict_kws = ["军工", "国防", "石油", "油气", "黄金"]
+            if any(k in " ".join(sector_names) for k in conflict_kws):
+                events.append("地缘冲突避险板块活跃(军工/石油/黄金)")
+            rotation = detect_rotation_stage(events)
+            logger.info(
+                "[%s] 商品轮动检测: stage=%s", trace_id, rotation.get("stage")
+            )
+        except Exception as e:
+            logger.warning("[%s] 商品轮动检测失败: %s", trace_id, e)
+            rotation = {}
+
+        sentiment_data["rotation"] = rotation
 
         logger.info(
             "[%s] 题材启动采集完成: elapsed_ms=%s",
@@ -130,6 +155,25 @@ class ThemeLaunchDetectorAgent(BaseAgent):
                 "{}×{}".format(s.get("name"), s.get("count")) for s in top_sectors
             )
             user_content.append(f"- {sector_str}")
+            user_content.append("")
+
+        # 商品轮动前瞻 + 地缘冲突(2026-08-10 接入, 联动题材启动判断)
+        rotation = sd.get("rotation") or {}
+        if rotation and rotation.get("stage"):
+            user_content.append("## 商品轮动前瞻(联动涨价题材)")
+            user_content.append(f"- 当前阶段:{rotation.get('stage')}")
+            rot_sectors = rotation.get("sectors") or []
+            if rot_sectors:
+                user_content.append(f"- 关联板块:{'、'.join(rot_sectors)}")
+            if rotation.get("next_stage") and rotation.get("next_sectors"):
+                user_content.append(
+                    f"- 下一幕预判:{rotation.get('next_stage')}(关注 {'、'.join(rotation.get('next_sectors'))})"
+                )
+            if rotation.get("conflict"):
+                user_content.append(f"- ⚠️ 地缘冲突模式:{rotation.get('conflict')}")
+            user_content.append(
+                "> 规则: 商品轮动/冲突阶段决定题材方向——能源涨→关注石油煤炭, 金属涨→有色钢铁, 冲突→军工黄金避险。题材启动需与轮动方向一致。"
+            )
             user_content.append("")
 
         first_boards = sd.get("first_boards", [])
