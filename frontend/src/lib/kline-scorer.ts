@@ -110,19 +110,22 @@ export function buildKlineSuggestion(s: KlineSummaryData, holding?: boolean): Kl
     }
   }
 
-  // K线组合形态(同花顺教学体系,2026-08-10 接入)
+  // K线组合形态(同花顺教学体系 + TA-Lib 标准形态,2026-08-10 接入)
   const klinePatterns = s.kline_patterns || []
   for (const p of klinePatterns) {
-    const name = p.name || ''
+    // TA-Lib 形态用 cn_name,自研形态用 name
+    const name = p.cn_name || p.name || ''
     const signal = p.signal || ''
     const pos = p.position || ''
-    const details = `周期${tf} ${asof} · 位置:${pos || '--'}`
+    const details = p.source === 'talib'
+      ? `TA-Lib标准形态 · ${p.name} · 强度${p.strength ?? ''}`
+      : `周期${tf} ${asof} · 位置:${pos || '--'}`
     if (signal === '看涨') {
-      // 强底部信号(金针/双针/揭竿而起) +2,趋势延续 +1
-      const strong = ['金针探底', '双针探底', '揭竿而起', '涨停双响炮'].includes(name)
+      // 强底部信号(金针/双针/揭竿而起/双响炮/早晨之星/锤子线) +2,趋势延续 +1
+      const strong = ['金针探底', '双针探底', '揭竿而起', '涨停双响炮', '早晨之星', '锤子线', '红三兵', '刺透形态', '岛形底'].includes(name)
       addItem(`${name}，看涨形态`, strong ? 2 : 1, name, details)
     } else if (signal === '看跌') {
-      const strong = ['三只乌鸦', '黄昏之星', '倾盆大雨'].includes(name)
+      const strong = ['三只乌鸦', '黄昏之星', '倾盆大雨', '上吊线', '乌云盖顶', '射击之星'].includes(name)
       addItem(`${name}，看跌形态`, strong ? -2 : -1, name, details)
     } else {
       addItem(`${name}`, 0, name, details)

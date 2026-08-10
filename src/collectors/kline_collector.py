@@ -396,6 +396,129 @@ def _detect_combined_patterns(klines: list[KlineData]) -> str | None:
         return None
 
 
+# TA-Lib 形态中文名映射(2026-08-10 接入,61 种标准形态)
+_TALIB_CN: dict[str, str] = {
+    "CDLDOJI": "十字星",
+    "CDLDRAGONFLYDOJI": "蜻蜓十字",
+    "CDLGRAVESTONEDOJI": "墓碑十字",
+    "CDLLONGLEGGEDDOJI": "长脚十字",
+    "CDLENGULFING": "吞没形态",
+    "CDLHAMMER": "锤子线",
+    "CDLHANGINGMAN": "上吊线",
+    "CDLSHOOTINGSTAR": "射击之星",
+    "CDLINVERTEDHAMMER": "倒锤子",
+    "CDLMORNINGSTAR": "早晨之星",
+    "CDLEVENINGSTAR": "黄昏之星",
+    "CDLMORNINGDOJISTAR": "十字晨星",
+    "CDLEVENINGDOJISTAR": "十字暮星",
+    "CDL3WHITESOLDIERS": "红三兵",
+    "CDL3BLACKCROWS": "三只乌鸦",
+    "CDL3INSIDE": "三内三外",
+    "CDL3LINESTRIKE": "三线打击",
+    "CDL3OUTSIDE": "外侧三日",
+    "CDL3STARSINSOUTH": "南方三星",
+    "CDLABANDONEDBABY": "弃婴形态",
+    "CDLADVANCEBLOCK": "推进阻挡",
+    "CDLBELTHOLD": "捉腰带线",
+    "CDLBREAKAWAY": "脱离形态",
+    "CDLCLOSINGMARUBOZU": "收盘无影",
+    "CDLCONCEALBABYSWALL": "藏婴吞没",
+    "CDLCOUNTERATTACK": "反击形态",
+    "CDLDARKCLOUDCOVER": "乌云盖顶",
+    "CDLDOJISTAR": "十字星线",
+    "CDLDOWNTRENDGAP": "下跌缺口",
+    "CDLHARAMI": "孕线形态",
+    "CDLHARAMICROSS": "十字孕线",
+    "CDLHIGHWAVE": "高浪线",
+    "CDLHIKKAKE": "上升三法(日)",
+    "CDLHIKKAKEMOD": "修正三法",
+    "CDLHOMINGPIGEON": "家鸽形态",
+    "CDLIDENTICAL3CROWS": "三乌同类",
+    "CDLINNECK": "颈内线",
+    "CDLISLANDBOTTOM": "岛形底",
+    "CDLISLANDTOP": "岛形顶",
+    "CDLKICKING": "踢出形态",
+    "CDLKICKINGBYLENGTH": "放量踢出",
+    "CDLLADDERBOTTOM": "梯底形态",
+    "CDLLONGLEGGEDDOJI": "长脚十字",
+    "CDLLONGLINE": "长线形态",
+    "CDLMARUBOZU": "光头光脚",
+    "CDLMATCHINGLOW": "低点相同",
+    "CDLMATHOLD": "铺垫形态",
+    "CDLPIERCING": "刺透形态",
+    "CDLRICKSHAWMAN": "黄包车夫",
+    "CDLRISEFALL3METHODS": "上升三法",
+    "CDLSEPARATINGLINES": "分离线",
+    "CDLSHOOTINGSTAR": "射击之星",
+    "CDLSHORTLINE": "短线形态",
+    "CDLSPINNINGTOP": "纺锤线",
+    "CDLSTALLEDPATTERN": "停滞形态",
+    "CDLSTICKSANDWICH": "三明治形态",
+    "CDLTAKURI": "探水竿",
+    "CDLTASUKIGAP": "跳空并列",
+    "CDLTHRUSTING": "推进形态",
+    "CDLTRISTAR": "三星形态",
+    "CDLUNIQUE3RIVER": "独特三河",
+    "CDLUPSIDEGAP2CROWS": "上行双鸦",
+    "CDLXSIDEGAP3METHODS": "上升缺口三法",
+}
+
+
+def _detect_talib_patterns(klines: list[KlineData], lookback: int = 5) -> list[dict]:
+    """TA-Lib 标准 K 线形态识别(61 种,2026-08-10 接入)。
+
+    返回: [{name, cn_name, signal, strength}],最近 lookback 根内有信号的形态。
+    """
+    try:
+        import numpy as np
+        import talib
+    except ImportError:
+        return []
+
+    if not klines or len(klines) < 10:
+        return []
+
+    o = np.array([k.open for k in klines], dtype=float)
+    h = np.array([k.high for k in klines], dtype=float)
+    l = np.array([k.low for k in klines], dtype=float)
+    c = np.array([k.close for k in klines], dtype=float)
+
+    results: list[dict] = []
+    seen: set[str] = set()
+    for fn in dir(talib):
+        if not fn.startswith("CDL"):
+            continue
+        try:
+            r = getattr(talib, fn)(o, h, l, c)
+        except Exception:
+            continue
+        if len(r) == 0:
+            continue
+        # 只取最近 lookback 根内有信号的
+        tail = r[-lookback:]
+        nonzero = tail[tail != 0]
+        if len(nonzero) == 0:
+            continue
+        strength = int(nonzero[-1])
+        signal = "看涨" if strength > 0 else "看跌"
+        cn = _TALIB_CN.get(fn, fn)
+        key = cn
+        if key in seen:
+            continue
+        seen.add(key)
+        results.append({
+            "name": fn,
+            "cn_name": cn,
+            "signal": signal,
+            "strength": abs(strength),
+            "source": "talib",
+        })
+
+    # 看涨在前
+    results.sort(key=lambda x: 0 if x["signal"] == "看涨" else 1)
+    return results
+
+
 def _get_combined_patterns(klines: list[KlineData]) -> list[dict]:
     """全部识别到的组合形态(含信号方向),供技术指标建议评分使用。
 
@@ -820,6 +943,6 @@ class KlineCollector:
             "resistance": indicators.resistance,
             # K线形态
             "kline_pattern": indicators.kline_pattern,
-            # 组合形态列表(同花顺教学体系,含信号方向,供技术指标建议评分)
-            "kline_patterns": _get_combined_patterns(klines),
+            # 组合形态列表(同花顺教学体系 + TA-Lib 标准形态,含信号方向,供技术指标建议评分)
+            "kline_patterns": _get_combined_patterns(klines) + _detect_talib_patterns(klines),
         }

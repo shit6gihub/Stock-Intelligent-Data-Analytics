@@ -203,3 +203,29 @@ def test_bullish_engulfing_small_yin():
     hits = detect_patterns(bars)
     names = [h.name for h in hits]
     assert "大阳包小阴" in names, f"应识别大阳包小阴,实际 {names}"
+
+
+# ============ TA-Lib 标准形态测试(2026-08-10 接入) ============
+
+def test_talib_detect_returns_list():
+    """TA-Lib 识别返回列表(字段齐全)。"""
+    from src.collectors.kline_collector import _detect_talib_patterns, KlineData
+    from datetime import datetime, timedelta
+    import random
+    random.seed(42)
+    bars = []
+    base = datetime(2026, 7, 1)
+    price = 10.0
+    for i in range(60):
+        price += random.uniform(-0.3, 0.35)
+        o, c = price, price + random.uniform(-0.2, 0.25)
+        bars.append(KlineData(
+            date=(base + timedelta(days=i)).strftime('%Y-%m-%d'),
+            open=o, high=max(o, c) + 0.1, low=min(o, c) - 0.1,
+            close=c, volume=10000,
+        ))
+    result = _detect_talib_patterns(bars)
+    assert isinstance(result, list)
+    for p in result:
+        assert p["cn_name"] and p["signal"] in ("看涨", "看跌") and p["strength"] > 0
+        assert p["source"] == "talib"

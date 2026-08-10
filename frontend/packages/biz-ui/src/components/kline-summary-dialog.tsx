@@ -39,7 +39,7 @@ export interface KlineSummaryData {
   ma20?: number | null
   ma60?: number | null
   kline_pattern?: string | null
-  kline_patterns?: Array<{ name: string; signal: string; position?: string; description?: string }> | null
+  kline_patterns?: Array<{ name: string; signal: string; position?: string; description?: string; cn_name?: string; strength?: number; source?: string }> | null
   support?: number | null
   resistance?: number | null
   support_s?: number | null

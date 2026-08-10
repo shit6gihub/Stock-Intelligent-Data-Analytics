@@ -518,10 +518,11 @@ async def _fetch_capital_flow_context(symbol: str, market: str) -> str:
 
 
 async def _fetch_kline_pattern_context(symbol: str, market: str) -> str:
-    """识别 K 线组合形态(同花顺形态教学体系)。"""
+    """识别 K 线组合形态(同花顺教学体系 + TA-Lib 标准形态)。"""
     try:
         from src.core.marketdata_client import get_market_data
         from src.core.kline_pattern import detect_patterns, format_patterns
+        from src.collectors.kline_collector import _detect_talib_patterns
 
         md = get_market_data()
         bars = await asyncio.to_thread(md.klines, symbol, market="CN" if market == "CN" else market, days=60)
@@ -529,6 +530,12 @@ async def _fetch_kline_pattern_context(symbol: str, market: str) -> str:
             return f"未能获取 {market}:{symbol} 的K线数据。"
         hits = detect_patterns(bars)
         text = format_patterns(hits)
+        # TA-Lib 标准形态
+        talib_hits = _detect_talib_patterns(list(bars))
+        if talib_hits:
+            text += "\n\n【TA-Lib 标准形态】"
+            for p in talib_hits[:8]:
+                text += f"\n- {p['cn_name']}({p['name']}) {p['signal']} 强度{p['strength']}"
         # 附带最近价格信息
         last = bars[-1]
         head = f"{market}:{symbol} 最近K线({last.date}): 开{last.open} 高{last.high} 低{last.low} 收{last.close}\n"
