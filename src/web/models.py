@@ -77,8 +77,9 @@ class NotifyChannel(Base):
     __tablename__ = "notify_channels"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)  # NULL=全局共享渠道
     name = Column(String, nullable=False)
-    type = Column(String, nullable=False)  # "telegram"
+    type = Column(String, nullable=False)  # "telegram" | "wecom" | "weixin" | "webhook"
     config = Column(JSON, default={})  # {"bot_token": "...", "chat_id": "..."}
     enabled = Column(Boolean, default=True)
     is_default = Column(Boolean, default=False)
@@ -91,6 +92,7 @@ class Account(Base):
     __tablename__ = "accounts"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)  # NULL=旧数据/全局
     name = Column(String, nullable=False)  # 账户名称，如 "招商证券"、"华泰证券"
     available_funds = Column(Float, default=0)  # 可用资金
     enabled = Column(Boolean, default=True)
@@ -106,6 +108,7 @@ class Stock(Base):
     __tablename__ = "stocks"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)  # 自选归属用户
     symbol = Column(String, nullable=False)
     name = Column(String, nullable=False)
     market = Column(String, nullable=False)  # CN / HK / US
@@ -134,6 +137,7 @@ class Position(Base):
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)  # 持仓归属用户
     account_id = Column(
         Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
     )
@@ -206,6 +210,7 @@ class AgentRun(Base):
     __tablename__ = "agent_runs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)  # 触发用户(NULL=系统定时)
     agent_name = Column(String, nullable=False)
     status = Column(String, nullable=False)  # success / failed
     trace_id = Column(String, default="")
@@ -316,6 +321,7 @@ class AnalysisHistory(Base):
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)  # 报告归属(NULL=全局共享)
     agent_name = Column(String, nullable=False)  # "daily_report" / "premarket_outlook"
     stock_symbol = Column(String, nullable=False)  # 股票代码，"*" 表示全部
     analysis_date = Column(String, nullable=False)  # 分析日期 "YYYY-MM-DD"

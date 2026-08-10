@@ -57,6 +57,7 @@ def init_db():
     _migrate_settings_to_models(engine)
     _migrate_positions_to_accounts(engine)
     _migrate_remove_stock_enabled(engine)
+    _migrate_add_user_id_columns(engine)
     if has_pending_migrations(engine):
         _backup_db_before_migration()
     run_versioned_migrations(engine)
@@ -540,3 +541,46 @@ FROM stocks
             conn.execute(text("PRAGMA foreign_keys=ON"))
             conn.commit()
             logger.info("已通过重建表移除 stocks.enabled 列")
+
+
+def _migrate_add_user_id_columns(engine):
+    """多用户阶段2: 业务表加 user_id 列 + 旧数据归 owner(2026-08-10)。
+
+    - notify_channels/accounts/stocks/positions/agent_runs/analysis_history 加 user_id
+    - 旧数据(NULL)自动归 owner(users 表第一个 owner)
+    - 新建的 users 表由 create_all 自动创建, 此迁移只处理存量表加列
+    """
+    tables = ["notify_channels", "accounts", "stocks", "positions", "agent_runs", "analysis_history"]
+    with engine.connect() as conn:
+        # 确定 owner id(无用户表则跳过——首次部署 create_all 已建)
+        try:
+            owner_row = conn.execute(
+                text("SELECT id FROM users WHERE role='owner' ORDER BY created_at LIMIT 1")
+            ).fetchone()
+        except Exception:
+            return
+        owner_id = owner_row[0] if owner_row else None
+        if not owner_id:
+            return
+
+        for table in tables:
+            try:
+                if not _has_table(conn, table):
+                    continue
+                has_col = _has_column(conn, table, "user_id")
+                if not has_col:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN user_id VARCHAR(36)"))
+                    conn.execute(
+                        text(f"CREATE INDEX IF NOT EXISTS ix_{table}_user_id ON {table} (user_id)")
+                    )
+                    logger.info(f"多用户迁移: {table}.user_id 列已加")
+                # 旧数据归 owner(列存在也要执行, 兼容建表后存量数据)
+                conn.execute(
+                    text(f"UPDATE {table} SET user_id = :owner WHERE user_id IS NULL"),
+                    {"owner": owner_id},
+                )
+                conn.commit()
+                logger.info(f"多用户迁移: {table} 旧数据归 owner")
+            except Exception as e:
+                conn.rollback()
+                logger.warning(f"多用户迁移 {table} 失败: {e}")
