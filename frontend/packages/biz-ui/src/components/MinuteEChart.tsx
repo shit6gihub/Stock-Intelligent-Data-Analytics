@@ -36,6 +36,8 @@ export default function MinuteEChart({ points, prevClose, isIndex }: Props) {
       chart = echarts.init(el)
       chartRef.current = chart
       initedRef.current = true
+      // 容器可能刚挂载尺寸为 0, 强制按当前尺寸重绘
+      chart.resize()
     } catch (e) {
       console.warn('[MinuteEChart] init failed', e)
       return
@@ -48,8 +50,27 @@ export default function MinuteEChart({ points, prevClose, isIndex }: Props) {
       }
     }
     window.addEventListener('resize', onResize)
+    // ResizeObserver: 容器尺寸变化(如 tab 切换/布局稳定)时重绘
+    let ro: ResizeObserver | null = null
+    try {
+      ro = new ResizeObserver(() => {
+        try {
+          chart?.resize()
+        } catch {
+          /* ignore */
+        }
+      })
+      ro.observe(el)
+    } catch {
+      /* ResizeObserver 不支持时忽略 */
+    }
     return () => {
       window.removeEventListener('resize', onResize)
+      try {
+        ro?.disconnect()
+      } catch {
+        /* ignore */
+      }
       try {
         chart?.dispose()
       } catch {
