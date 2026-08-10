@@ -162,6 +162,7 @@ export default function NotificationsPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [filter, setFilter] = useState<FilterKey>('all')
   const [category, setCategory] = useState('')
+  const [channelFilter, setChannelFilter] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [detail, setDetail] = useState<NotificationDetail | null>(null)
@@ -220,12 +221,29 @@ export default function NotificationsPage() {
   const unread = useMemo(() => items.filter(item => !item.read).length, [items])
   const failed = useMemo(() => items.filter(item => item.push_status === 'failed').length, [items])
   const categories = useMemo(() => Array.from(new Set(items.map(item => item.category).filter(Boolean))), [items])
+  const channelOptions = useMemo(() => {
+    const options = new Map<string, string>()
+    for (const channel of configuredChannels) {
+      if (channel.type) options.set(channel.type, channel.name || CHANNEL_TYPE_LABELS[channel.type] || channel.type)
+    }
+    for (const item of items) {
+      for (const channel of item.push_channels || []) {
+        if (channel.type) options.set(channel.type, channelName(channel))
+      }
+    }
+    return Array.from(options.entries()).map(([value, label]) => ({ value, label }))
+  }, [configuredChannels, items])
   const filtered = useMemo(() => items.filter(item => {
     if (filter === 'unread' && item.read) return false
     if (filter === 'failed' && item.push_status !== 'failed') return false
     if (category && item.category !== category) return false
+    if (channelFilter === '__site_only__' && item.push_status !== 'skipped') return false
+    if (channelFilter === '__unrecorded__' && !(
+      (item.push_status === 'sent' || item.push_status === 'failed') && (item.push_channels || []).length === 0
+    )) return false
+    if (channelFilter && !channelFilter.startsWith('__') && !(item.push_channels || []).some(channel => channel.type === channelFilter)) return false
     return true
-  }), [category, filter, items])
+  }), [category, channelFilter, filter, items])
   const selected = items.find(item => item.id === selectedId) || null
   const selectedDetail = detail?.id === selectedId ? detail : null
   const task = selectedDetail?.task || null
@@ -343,6 +361,25 @@ export default function NotificationsPage() {
             </button>
           ))}
         </div>
+
+        <span className="hidden h-5 w-px bg-border/60 sm:block" />
+
+        <label className="relative flex h-8 shrink-0 items-center rounded-lg border border-border/50 bg-background/45 pl-7 text-muted-foreground transition-colors focus-within:border-primary/40 focus-within:text-primary">
+          <Send className="pointer-events-none absolute left-2.5 h-3 w-3" />
+          <select
+            aria-label="按推送渠道筛选"
+            value={channelFilter}
+            onChange={event => setChannelFilter(event.target.value)}
+            className="h-full max-w-[150px] cursor-pointer bg-transparent pl-0 pr-2 text-[11px] text-foreground outline-none"
+          >
+            <option value="">全部渠道</option>
+            {channelOptions.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+            <option value="__site_only__">仅站内通知</option>
+            <option value="__unrecorded__">历史未记录渠道</option>
+          </select>
+        </label>
       </div>
 
       <div className="grid min-h-[560px] overflow-hidden rounded-2xl border border-border/50 bg-card lg:grid-cols-[minmax(320px,0.82fr)_minmax(0,1.45fr)]">
