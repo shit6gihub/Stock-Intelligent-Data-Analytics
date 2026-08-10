@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { MessageCircle, X, Plus, Trash2, Send, ChevronLeft, XCircle } from 'lucide-react'
+import { MessageCircle, X, Plus, Trash2, Send, ChevronLeft, XCircle, Settings2, Check } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { chatApi, type ChatConversation, type ChatMessage } from '@panwatch/api'
@@ -9,6 +9,60 @@ interface StockContext {
   market: string
   stockName: string
   pageContext?: string
+}
+
+type DesktopChatSize = 'compact' | 'standard' | 'large' | 'wide'
+type DesktopChatPosition = 'left' | 'center' | 'right'
+
+const CHAT_SIZE_STORAGE_KEY = 'panwatch_chat_desktop_size'
+const CHAT_POSITION_STORAGE_KEY = 'panwatch_chat_desktop_position'
+
+const DESKTOP_SIZE_OPTIONS: Array<{ value: DesktopChatSize; label: string; detail: string }> = [
+  { value: 'compact', label: '紧凑', detail: '360 × 480' },
+  { value: 'standard', label: '标准', detail: '420 × 600' },
+  { value: 'large', label: '大窗口', detail: '560 × 720' },
+  { value: 'wide', label: '宽屏', detail: '720 × 760' },
+]
+
+const DESKTOP_POSITION_OPTIONS: Array<{ value: DesktopChatPosition; label: string }> = [
+  { value: 'left', label: '左下' },
+  { value: 'center', label: '底部居中' },
+  { value: 'right', label: '右下' },
+]
+
+const DESKTOP_SIZE_CLASSES: Record<DesktopChatSize, string> = {
+  compact: 'md:w-[360px] md:h-[480px]',
+  standard: 'md:w-[420px] md:h-[600px]',
+  large: 'md:w-[560px] md:h-[720px]',
+  wide: 'md:w-[720px] md:h-[760px]',
+}
+
+const DESKTOP_POSITION_CLASSES: Record<DesktopChatPosition, string> = {
+  left: 'md:left-5 md:right-auto md:translate-x-0',
+  center: 'md:left-1/2 md:right-auto md:-translate-x-1/2',
+  right: 'md:left-auto md:right-5 md:translate-x-0',
+}
+
+function readDesktopChatSize(): DesktopChatSize {
+  if (typeof window === 'undefined') return 'standard'
+  try {
+    const value = window.localStorage.getItem(CHAT_SIZE_STORAGE_KEY)
+    if (value === 'compact' || value === 'standard' || value === 'large' || value === 'wide') return value
+  } catch {
+    // localStorage may be unavailable in privacy-restricted browsers.
+  }
+  return 'standard'
+}
+
+function readDesktopChatPosition(): DesktopChatPosition {
+  if (typeof window === 'undefined') return 'right'
+  try {
+    const value = window.localStorage.getItem(CHAT_POSITION_STORAGE_KEY)
+    if (value === 'left' || value === 'center' || value === 'right') return value
+  } catch {
+    // localStorage may be unavailable in privacy-restricted browsers.
+  }
+  return 'right'
 }
 
 export default function ChatWidget() {
@@ -21,7 +75,11 @@ export default function ChatWidget() {
   const [view, setView] = useState<'list' | 'chat'>('list')
   const [stockContext, setStockContext] = useState<StockContext | null>(null)
   const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([])
+  const [desktopSize, setDesktopSize] = useState<DesktopChatSize>(readDesktopChatSize)
+  const [desktopPosition, setDesktopPosition] = useState<DesktopChatPosition>(readDesktopChatPosition)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const endRef = useRef<HTMLDivElement>(null)
+  const settingsRef = useRef<HTMLDivElement>(null)
 
   const loadConversations = useCallback(async () => {
     try {
@@ -88,6 +146,40 @@ export default function ChatWidget() {
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CHAT_SIZE_STORAGE_KEY, desktopSize)
+    } catch {
+      // Keep the current session setting even when persistence is unavailable.
+    }
+  }, [desktopSize])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CHAT_POSITION_STORAGE_KEY, desktopPosition)
+    } catch {
+      // Keep the current session setting even when persistence is unavailable.
+    }
+  }, [desktopPosition])
+
+  useEffect(() => {
+    if (!settingsOpen) return
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!settingsRef.current?.contains(event.target as Node)) setSettingsOpen(false)
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSettingsOpen(false)
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [settingsOpen])
 
   const openConversation = useCallback(async (conv: ChatConversation) => {
     setActiveConvId(conv.id)
@@ -187,7 +279,9 @@ export default function ChatWidget() {
     return (
       <button
         onClick={() => setOpen(true)}
-        className="fixed bottom-20 right-4 md:bottom-5 md:right-5 z-40 w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:bg-primary/90 transition-all hover:scale-105"
+        className={`fixed bottom-20 right-4 md:bottom-5 z-40 w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:bg-primary/90 transition-all hover:scale-105 ${DESKTOP_POSITION_CLASSES[desktopPosition]}`}
+        title="打开 AI 助手"
+        aria-label="打开 AI 助手"
       >
         <MessageCircle className="w-5 h-5" />
       </button>
@@ -195,7 +289,7 @@ export default function ChatWidget() {
   }
 
   return (
-    <div className="fixed bottom-0 right-0 z-50 w-full h-full md:w-[420px] md:h-[600px] md:bottom-5 md:right-5 md:rounded-xl bg-background border border-border/60 shadow-2xl flex flex-col overflow-hidden">
+    <div className={`fixed bottom-0 right-0 z-50 w-full h-full md:bottom-5 md:max-w-[calc(100vw-2.5rem)] md:max-h-[calc(100vh-2.5rem)] md:rounded-xl bg-background border border-border/60 shadow-2xl flex flex-col overflow-hidden ${DESKTOP_SIZE_CLASSES[desktopSize]} ${DESKTOP_POSITION_CLASSES[desktopPosition]}`}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/40 bg-accent/20">
         <div className="flex items-center gap-2">
@@ -231,9 +325,62 @@ export default function ChatWidget() {
               <Plus className="w-4 h-4" />
             </button>
           )}
+          <div ref={settingsRef} className="relative hidden md:block">
+            <button
+              onClick={() => setSettingsOpen((current) => !current)}
+              className={`p-1.5 rounded-md transition-colors ${settingsOpen ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}`}
+              title="窗口设置"
+              aria-label="窗口设置"
+              aria-expanded={settingsOpen}
+            >
+              <Settings2 className="w-4 h-4" />
+            </button>
+            {settingsOpen && (
+              <div className="absolute right-0 top-9 z-20 w-[280px] rounded-xl border border-border/70 bg-background p-3 shadow-2xl">
+                <div className="mb-2 text-[11px] font-medium text-muted-foreground">窗口大小</div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {DESKTOP_SIZE_OPTIONS.map((option) => {
+                    const active = desktopSize === option.value
+                    return (
+                      <button
+                        key={option.value}
+                        onClick={() => setDesktopSize(option.value)}
+                        className={`flex min-w-0 items-center justify-between rounded-lg border px-2.5 py-2 text-left transition-colors ${active ? 'border-primary/60 bg-primary/10 text-primary' : 'border-border/50 bg-accent/20 text-foreground hover:bg-accent/50'}`}
+                      >
+                        <span className="min-w-0">
+                          <span className="block text-[12px] font-medium">{option.label}</span>
+                          <span className="block text-[10px] text-muted-foreground">{option.detail}</span>
+                        </span>
+                        {active && <Check className="ml-1 h-3.5 w-3.5 shrink-0" />}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                <div className="mb-2 mt-3 text-[11px] font-medium text-muted-foreground">停靠位置</div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {DESKTOP_POSITION_OPTIONS.map((option) => {
+                    const active = desktopPosition === option.value
+                    return (
+                      <button
+                        key={option.value}
+                        onClick={() => setDesktopPosition(option.value)}
+                        className={`flex items-center justify-center gap-1 rounded-lg border px-2 py-2 text-[11px] transition-colors ${active ? 'border-primary/60 bg-primary/10 text-primary' : 'border-border/50 bg-accent/20 text-foreground hover:bg-accent/50'}`}
+                      >
+                        {active && <Check className="h-3 w-3 shrink-0" />}
+                        {option.label}
+                      </button>
+                    )
+                  })}
+                </div>
+                <p className="mt-2.5 text-[10px] leading-relaxed text-muted-foreground">设置保存在当前浏览器，悬浮按钮会同步移动。</p>
+              </div>
+            )}
+          </div>
           <button
-            onClick={() => setOpen(false)}
+            onClick={() => { setSettingsOpen(false); setOpen(false) }}
             className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+            aria-label="关闭 AI 助手"
           >
             <X className="w-4 h-4" />
           </button>
