@@ -141,18 +141,29 @@ export default function MinuteEChart({ points, prevClose, isIndex }: Props) {
               ].filter(Boolean).join('<br/>')
             },
           },
-          xAxis: {
-            type: 'category',
-            data: times,
-            boundaryGap: false,
-            axisLine: { lineStyle: { color: '#334155' } },
-            axisLabel: {
-              color: '#94a3b8',
-              fontSize: 10,
-              formatter: (v: string) => (v === '0930' || v === '1130' || v === '1300' || v === '1500' ? v : ''),
+          xAxis: [
+            {
+              type: 'category',
+              data: times,
+              boundaryGap: false,
+              axisLine: { lineStyle: { color: '#334155' } },
+              axisLabel: {
+                color: '#94a3b8',
+                fontSize: 10,
+                formatter: (v: string) => (v === '0930' || v === '1130' || v === '1300' || v === '1500' ? v : ''),
+              },
+              axisTick: { show: false },
             },
-            axisTick: { show: false },
-          },
+            {
+              type: 'category',
+              gridIndex: 1,
+              data: times,
+              boundaryGap: false,
+              axisLabel: { show: false },
+              axisTick: { show: false },
+              axisLine: { show: false },
+            },
+          ],
           yAxis: [
             {
               type: 'value',
