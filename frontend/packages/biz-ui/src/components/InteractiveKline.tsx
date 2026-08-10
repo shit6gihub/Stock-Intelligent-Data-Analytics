@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
+import MinuteEChart from './MinuteEChart'
 
 type BusinessDay = { year: number; month: number; day: number }
 
@@ -655,108 +656,61 @@ export default function InteractiveKline(props: {
       </div>
 
       {mode === 'minute' ? (
-        (() => {
-          const W = 900
-          const H = 380
-          const PAD = 36
-          const pts = minutePoints
-          let pricePath = ''
-          let avgPath = ''
-          let lo = 0
-          let hi = 0
-          // ±分界线: 昨收作为零轴基准(2026-08-10 修复), y 轴以昨收为对称中心
-          const prevC = minutePrevClose ?? pts[0]?.price ?? 0
-          if (pts.length > 1) {
-            // y 轴范围: 指数只用价格(无均价), 个股含价格+均价
-            const priceVals = pts.map(p => p.price)
-            const vals = minuteIsIndex ? priceVals : pts.flatMap(p => [p.price, p.avg])
-            const dayLo = Math.min(...vals)
-            const dayHi = Math.max(...vals)
-            // 以昨收为中心, 上下各取 max(今日常规范围, 昨收±2.5%) 对称
-            const baseRange = Math.max(
-              (dayHi - dayLo) / 2,
-              Math.abs(dayHi - prevC),
-              Math.abs(prevC - dayLo),
-              prevC * 0.025,
-            )
-            lo = prevC - baseRange
-            hi = prevC + baseRange
-            const range = hi - lo || 1
-            const stepX = (W - PAD * 2) / (pts.length - 1)
-            const build = (get: (p: MinutePoint) => number) =>
-              pts
-                .map((p, i) => {
-                  const x = PAD + i * stepX
-                  const y = PAD + (1 - (get(p) - lo) / range) * (H - PAD * 2)
-                  return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`
-                })
-                .join(' ')
-            pricePath = build(p => p.price)
-            avgPath = minuteIsIndex ? '' : build(p => p.avg)
-          }
-          // 昨收基准线 y 坐标
-          const prevY = prevC
-            ? PAD + (1 - (prevC - lo) / (hi - lo || 1)) * (H - PAD * 2)
-            : null
-          const first = pts[0]
-          const last = pts[pts.length - 1]
-          const up = !!last && !!first && last.price >= first.price
-          const changePct = last && first && first.price ? ((last.price - first.price) / first.price) * 100 : 0
-          const totalVol = pts.reduce((s, p) => s + (p.volume || 0), 0)
-          return (
-            <div>
-              {minuteError ? (
-                <div className="text-[12px] text-rose-600 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2 mb-3">
-                  {minuteError}
-                </div>
-              ) : null}
-              {minuteLoading && !pts.length ? (
-                <div className="w-full h-[380px] rounded-xl border border-border/50 animate-pulse bg-accent/20" />
-              ) : !pts.length ? (
-                <div className="w-full h-[380px] rounded-xl border border-border/50 flex items-center justify-center text-[12px] text-muted-foreground">
-                  暂无分时数据（非交易日 / 停牌 / 数据源不可用）
-                </div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3">
-                    <div className="rounded-lg bg-accent/20 px-2.5 py-2 text-[11px]"><span className="text-muted-foreground">现价</span> <span className={`font-mono ml-1 ${up ? 'text-rose-500' : 'text-emerald-500'}`}>{last?.price.toFixed(2)}</span></div>
-                    <div className="rounded-lg bg-accent/20 px-2.5 py-2 text-[11px]"><span className="text-muted-foreground">较开盘</span> <span className={`font-mono ml-1 ${changePct >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>{changePct >= 0 ? '+' : ''}{changePct.toFixed(2)}%</span></div>
-                    {!minuteIsIndex && (
-                      <div className="rounded-lg bg-accent/20 px-2.5 py-2 text-[11px]"><span className="text-muted-foreground">均价</span> <span className="font-mono ml-1">{last?.avg.toFixed(2)}</span></div>
-                    )}
-                    <div className="rounded-lg bg-accent/20 px-2.5 py-2 text-[11px]"><span className="text-muted-foreground">区间</span> <span className="font-mono ml-1">{hi.toFixed(2)}/{lo.toFixed(2)}</span></div>
-                    <div className="rounded-lg bg-accent/20 px-2.5 py-2 text-[11px]"><span className="text-muted-foreground">成交量</span> <span className="font-mono ml-1">{(totalVol / 10000).toFixed(1)}万手</span></div>
-                  </div>
-                  <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-[380px] rounded-xl border border-border/50 bg-card">
-                    {[0, 0.25, 0.5, 0.75, 1].map(f => (
-                      <line key={f} x1={PAD} y1={PAD + f * (H - PAD * 2)} x2={W - PAD} y2={PAD + f * (H - PAD * 2)} stroke="currentColor" className="text-border" strokeWidth={0.5} opacity={0.5} />
-                    ))}
-                    <text x={PAD} y={PAD - 8} className="fill-muted-foreground" fontSize="11">{hi.toFixed(2)}</text>
-                    <text x={PAD} y={H - PAD + 16} className="fill-muted-foreground" fontSize="11">{lo.toFixed(2)}</text>
-                    <text x={W - PAD - 30} y={H - PAD + 16} className="fill-muted-foreground" fontSize="11">{last?.t}</text>
-                    {prevY !== null && (
-                      <>
-                        <line x1={PAD} y1={prevY} x2={W - PAD} y2={prevY} stroke="#94a3b8" strokeWidth={1} strokeDasharray="5 4" opacity={0.9} />
-                        <text x={W - PAD - 4} y={prevY - 5} className="fill-slate-500" fontSize="10" textAnchor="end">昨收 {prevC.toFixed(2)}</text>
-                      </>
-                    )}
-                    {!minuteIsIndex && avgPath && (
-                      <path d={avgPath} fill="none" stroke="#f59e0b" strokeWidth={1.2} opacity={0.85} />
-                    )}
-                    <path d={pricePath} fill="none" stroke={up ? '#f43f5e' : '#10b981'} strokeWidth={1.6} />
-                  </svg>
-                  <div className="mt-2 flex gap-4 text-[11px] text-muted-foreground">
-                    <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-rose-400" /> 价格</span>
-                    {!minuteIsIndex && (
-                      <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-amber-400" /> 均价(成交额/成交股数)</span>
-                    )}
-                    <span>腾讯实时分时 · 每30秒自动刷新 · {pts.length} 个点</span>
-                  </div>
-                </>
-              )}
+        <div>
+          {minuteError ? (
+            <div className="text-[12px] text-rose-600 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2 mb-3">
+              {minuteError}
             </div>
-          )
-        })()
+          ) : null}
+          {minuteLoading && !minutePoints.length ? (
+            <div className="w-full h-[380px] rounded-xl border border-border/50 animate-pulse bg-accent/20" />
+          ) : !minutePoints.length ? (
+            <div className="w-full h-[380px] rounded-xl border border-border/50 flex items-center justify-center text-[12px] text-muted-foreground">
+              暂无分时数据（非交易日 / 停牌 / 数据源不可用）
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3">
+                <div className="rounded-lg bg-accent/20 px-2.5 py-2 text-[11px]">
+                  <span className="text-muted-foreground">现价</span>{' '}
+                  <span className={`font-mono ml-1 ${minutePoints[minutePoints.length - 1]?.price >= (minutePrevClose ?? 0) ? 'text-rose-500' : 'text-emerald-500'}`}>
+                    {minutePoints[minutePoints.length - 1]?.price.toFixed(2)}
+                  </span>
+                </div>
+                <div className="rounded-lg bg-accent/20 px-2.5 py-2 text-[11px]">
+                  <span className="text-muted-foreground">较昨收</span>{' '}
+                  <span className={`font-mono ml-1 ${minutePoints[minutePoints.length - 1]?.price >= (minutePrevClose ?? 0) ? 'text-rose-500' : 'text-emerald-500'}`}>
+                    {minutePrevClose && minutePoints.length
+                      ? `${((minutePoints[minutePoints.length - 1].price - minutePrevClose) / minutePrevClose * 100) >= 0 ? '+' : ''}${((minutePoints[minutePoints.length - 1].price - minutePrevClose) / minutePrevClose * 100).toFixed(2)}%`
+                      : '--'}
+                  </span>
+                </div>
+                {!minuteIsIndex && (
+                  <div className="rounded-lg bg-accent/20 px-2.5 py-2 text-[11px]">
+                    <span className="text-muted-foreground">均价</span> <span className="font-mono ml-1">{minutePoints[minutePoints.length - 1]?.avg.toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="rounded-lg bg-accent/20 px-2.5 py-2 text-[11px]">
+                  <span className="text-muted-foreground">昨收</span> <span className="font-mono ml-1">{minutePrevClose?.toFixed(2) ?? '--'}</span>
+                </div>
+                <div className="rounded-lg bg-accent/20 px-2.5 py-2 text-[11px]">
+                  <span className="text-muted-foreground">成交量</span> <span className="font-mono ml-1">{(minutePoints.reduce((s, p) => s + (p.volume || 0), 0) / 10000).toFixed(1)}万手</span>
+                </div>
+              </div>
+              <div className="w-full rounded-xl border border-border/50 bg-card">
+                <MinuteEChart points={minutePoints} prevClose={minutePrevClose} isIndex={minuteIsIndex} />
+              </div>
+              <div className="mt-2 flex gap-4 text-[11px] text-muted-foreground">
+                <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-rose-400" /> 价格</span>
+                {!minuteIsIndex && (
+                  <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-amber-400" /> 均价</span>
+                )}
+                <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 border-t border-dashed border-slate-500" /> 昨收(±分界线)</span>
+                <span>腾讯实时分时 · 每30秒自动刷新 · {minutePoints.length} 个点</span>
+              </div>
+            </>
+          )}
+        </div>
       ) : (
       <>
       {error ? (
