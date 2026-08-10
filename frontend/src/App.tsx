@@ -49,6 +49,11 @@ const desktopMoreNavItems = navItems.slice(5)
 const mobilePrimaryNavItems = navItems.slice(0, 5)
 const mobileMoreNavItems = navItems.slice(5)
 
+function LegacyStocksRedirect() {
+  const location = useLocation()
+  return <Navigate to={`/portfolio${location.search}`} replace />
+}
+
 // 认证守卫组件
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const [authState, setAuthState] = useState<'checking' | 'authenticated' | 'unauthenticated'>('checking')
@@ -274,6 +279,7 @@ function App() {
           <Route path="/forecast" element={<ForecastPage />} />
           <Route path="/index/:symbol" element={<IndexDetailPage />} />
           <Route path="/portfolio" element={<StocksPage />} />
+          <Route path="/stocks" element={<LegacyStocksRedirect />} />
           <Route path="/agents" element={<AgentsPage />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/reports" element={<ReportsPage />} />
@@ -284,6 +290,7 @@ function App() {
           <Route path="/datasources" element={<DataSourcesPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/analysis/:symbol/:date" element={<AnalysisDetailPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
       <ChatWidget />

@@ -28,6 +28,18 @@ class NotificationOut(BaseModel):
     created_at: str = ""
 
 
+def _normalize_link(link: str | None) -> str:
+    """兼容旧版个股通知链接。
+
+    前端从未提供 ``/stocks`` 路由，该链接会只显示应用外壳。保留原有
+    query string 并转到持仓页，使数据库中已存的通知也能正常打开。
+    """
+    value = str(link or "")
+    if value == "/stocks" or value.startswith("/stocks?"):
+        return f"/portfolio{value[len('/stocks') :]}"
+    return value
+
+
 def _to_out(n: Notification) -> NotificationOut:
     return NotificationOut(
         id=n.id,
@@ -35,7 +47,7 @@ def _to_out(n: Notification) -> NotificationOut:
         level=n.level or "info",
         title=n.title or "",
         body=n.body or "",
-        link=n.link or "",
+        link=_normalize_link(n.link),
         source=n.source or "",
         trace_id=n.trace_id or "",
         push_status=n.push_status or "",

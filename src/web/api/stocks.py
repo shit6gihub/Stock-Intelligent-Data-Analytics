@@ -470,7 +470,7 @@ async def trigger_stock_agent(
                     source=agent_name,
                     trace_id=trace_id,
                     duration_ms=int((time.monotonic() - started) * 1000),
-                    link=f"/stocks?symbol={_sym}&market={_mkt}",
+                    link=f"/portfolio?symbol={_sym}&market={_mkt}",
                 )
             except Exception:
                 logger.exception("写入站内通知失败: %s %s", agent_name, _sym)

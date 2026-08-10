@@ -417,6 +417,7 @@ export function SuggestionBadge({
             isAI={isAI}
             isExpired={!!suggestion.is_expired}
             size="md"
+            iconOnlyWhenAlert
             onClick={(e) => {
               e.stopPropagation()
               if (suggestion.agent_label === '技术指标') setKlineDialogOpen(true)

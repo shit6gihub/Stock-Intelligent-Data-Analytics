@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Bell, Plus, Pencil, Trash2 } from 'lucide-react'
+import { AlarmClock, Bell, Plus, Pencil, Trash2 } from 'lucide-react'
 import { fetchAPI, stocksApi, type NotifyChannel } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@panwatch/base-ui/components/ui/dialog'
@@ -257,14 +257,19 @@ export default function StockPriceAlertPanel(props: {
     </Button>
   ) : (
     <button
-      className="relative inline-flex items-center justify-center h-7 w-7 rounded-md hover:bg-accent/40 transition-colors"
+      className={`relative inline-flex h-8 w-8 items-center justify-center rounded-full border shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
+        shownSummary.enabled > 0
+          ? 'border-amber-500/40 bg-amber-500/12 text-amber-500 hover:bg-amber-500/20'
+          : 'border-border/60 bg-accent/30 text-muted-foreground hover:border-primary/35 hover:bg-primary/10 hover:text-primary'
+      }`}
       onClick={() => setOpen(true)}
       title={shownSummary.total > 0 ? `提醒 ${shownSummary.enabled}/${shownSummary.total}` : '价格提醒'}
+      aria-label={shownSummary.total > 0 ? `价格提醒，已启用 ${shownSummary.enabled} 条` : '设置价格提醒'}
       type="button"
     >
-      <Bell className="w-3.5 h-3.5" />
+      <AlarmClock className="h-4 w-4" />
       {shownSummary.total > 0 && (
-        <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-1 rounded-full bg-primary text-primary-foreground text-[9px] leading-[14px] text-center">
+        <span className="absolute -right-1 -top-1 h-[15px] min-w-[15px] rounded-full bg-primary px-1 text-center text-[9px] leading-[15px] text-primary-foreground ring-1 ring-card">
           {shownSummary.enabled}
         </span>
       )}
