@@ -73,6 +73,7 @@
 - 大盘资金流对齐同花顺APP：之前用同花顺 hyzjl 行业资金求和（总流入2611亿口径不对）；改为国内网关 `/cn/market-overview`（东财 push2delay 沪深指数主力净流入），两市主力净流入 -414.7亿（沪-136.5/深-278.2）、总成交额 25231亿（APP 25387 接近）、涨跌家数 3924/1266（APP 4068/1391）、上证点位 3966.59 +0.67% 与APP完全一致；前端展示主力净流入+成交额+涨跌家数+沪深分项+板块榜。
 - 分时K线双修复：①指数分时代码冲突——上证指数000001与平安银行000001撞车，prefix 误判 sz → 显示个股数据；加指数代码白名单（000001/000300/000016/000905/000852→sh，399开头→sz），生产验证上证指数 242点 最新3966.59（与APP一致）；②分时图±分界线——后端返回 prev_close（腾讯 qt list[4] 昨收），前端 y 轴以昨收为对称中心 + 灰色虚线"昨收"基准线（昨收上=红涨下=绿跌，同花顺/腾讯标准分时）。
 - 分时图切换 ECharts 6.1.0：新组件 MinuteEChart（价格线红涨绿跌+渐变面积、均价线黄色仅个股、昨收基准虚线±分界线、下方成交量柱红涨绿跌、十字光标+tooltip 价格/涨跌幅/均价/量、y轴以昨收对称±2.5%保底），替换 InteractiveKline 手写 SVG（删~100行）；数据卡改为现价/较昨收/均价(个股)/昨收/成交量；日K线仍用 Lightweight Charts（CDN 全局 window.LightweightCharts，unpkg+jsdelivr 双源降级）。
+- 分时图白屏修复（v0.1.40→v0.1.44，本地 dev 完整错误栈定位）：①React 崩溃白屏=setOption 抛异常无错误边界→加 try/catch+init 防重入；②`undefined.get`=成交量 series xAxisIndex:1 但只定义 1 个 xAxis→补 xAxis[1]；③`xAxis and yAxis must use the same grid`=series xAxisIndex:0+yAxisIndex:1 跨 grid→series 改 xAxisIndex:1+yAxisIndex:1（双 grid 双 xAxis 双 yAxis 各自配对）；④容器 0 尺寸→init 后强制 resize+ResizeObserver；生产验证 canvas 渲染成功，价格线/昨收虚线/成交量柱正常，上证指数分时 3966.59。
 
 ### update
 
