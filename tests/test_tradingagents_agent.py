@@ -541,7 +541,11 @@ class TestAgentCollect(unittest.IsolatedAsyncioTestCase):
         fake_md.events = MagicMock(return_value=[fake_event])
 
         with patch.object(agent_module, "get_market_data", lambda: fake_md):
-            data = await agent.collect(context)
+            # 禁用今日实时网关(测试环境无外网依赖, 走 marketdata 引擎回退路径)
+            import src.collectors.capital_flow_collector as cfc
+            with patch.object(cfc, "_fetch_direct_flow", lambda s: None), \
+                 patch.object(cfc, "_fetch_cn_gateway_flow", lambda s: None):
+                data = await agent.collect(context)
 
         self.assertEqual(data["stock"], stock)
         self.assertIsInstance(data["quote"], dict)
