@@ -30,6 +30,8 @@ def test_capital_flow_cached(monkeypatch):
             )
 
     monkeypatch.setattr(capital_flow_collector, "get_market_data", lambda: _MD())
+    # 禁用国内网关(测试环境无网关依赖)
+    monkeypatch.setattr(capital_flow_collector, "_CN_GATEWAY_DISABLED", True)
     c = capital_flow_collector.CapitalFlowCollector(MarketCode.CN)
     assert c.get_capital_flow("600519") is not None
     assert c.get_capital_flow("600519") is not None
