@@ -457,27 +457,27 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {/* 大盘资金流(同花顺源,东财 502 替代) */}
+      {/* 大盘资金流(东财两市主力净流入, 对齐同花顺APP) */}
       {marketFlow && (
         <div className="card-subtle mt-3 p-3">
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
             <div className="flex items-center gap-2">
               <TrendingUp className="h-4 w-4 text-primary" />
               <span className="text-[12px] font-semibold">大盘资金流</span>
-              <span className="text-[10px] text-muted-foreground">同花顺 · {marketFlow.board_count ?? '--'}板块</span>
+              <span className="text-[10px] text-muted-foreground">东财 · 两市主力</span>
             </div>
             <div className="flex items-center gap-4 text-[12px]">
-              <span className="text-muted-foreground">总流入 <b className="text-red-500 font-mono">{(marketFlow.total_inflow ?? 0).toFixed(1)}亿</b></span>
-              <span className="text-muted-foreground">总流出 <b className="text-green-500 font-mono">{(marketFlow.total_outflow ?? 0).toFixed(1)}亿</b></span>
-              <span className="text-muted-foreground">净流入
-                <b className={`font-mono ${(marketFlow.net_inflow ?? 0) >= 0 ? 'text-red-500' : 'text-green-500'}`}>
-                  {(marketFlow.net_inflow ?? 0) >= 0 ? '+' : ''}{(marketFlow.net_inflow ?? 0).toFixed(1)}亿
+              <span className="text-muted-foreground">主力净流入
+                <b className={`font-mono ${(marketFlow.total_main_flow ?? 0) >= 0 ? 'text-red-500' : 'text-green-500'}`}>
+                  {(marketFlow.total_main_flow ?? 0) >= 0 ? '+' : ''}{(marketFlow.total_main_flow ?? 0).toFixed(1)}亿
                 </b>
               </span>
+              <span className="text-muted-foreground">成交额 <b className="font-mono">{(marketFlow.total_amount ?? 0).toFixed(0)}亿</b></span>
+              <span className="text-muted-foreground">涨 <b className="text-red-500 font-mono">{marketFlow.up_count ?? '--'}</b>
+                <span className="mx-1">/</span>跌 <b className="text-green-500 font-mono">{marketFlow.down_count ?? '--'}</b></span>
+              <span className="text-muted-foreground">沪 <b className="font-mono">{(marketFlow.sh_flow ?? 0).toFixed(1)}亿</b>
+                <span className="mx-1">/</span>深 <b className="font-mono">{(marketFlow.sz_flow ?? 0).toFixed(1)}亿</b></span>
             </div>
-            {marketFlow.timestamp && (
-              <span className="ml-auto text-[10px] text-muted-foreground">更新 {marketFlow.timestamp?.slice(11, 16)}</span>
-            )}
           </div>
 
           {/* 板块资金明细: 流入榜 / 流出榜 */}

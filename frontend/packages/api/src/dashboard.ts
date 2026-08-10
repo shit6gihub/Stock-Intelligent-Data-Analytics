@@ -28,10 +28,17 @@ export interface DashboardMarketIndex {
 }
 
 export interface DashboardMarketCapitalFlow {
-  total_inflow: number
-  total_outflow: number
-  net_inflow: number
-  board_count: number
+  total_main_flow?: number          // 两市主力净流入(亿)
+  sh_flow?: number
+  sz_flow?: number
+  cyb_flow?: number
+  total_amount?: number             // 两市成交额(亿)
+  up_count?: number
+  down_count?: number
+  flat_count?: number
+  sh?: { point?: number; change_pct?: number } | null
+  sz?: { point?: number; change_pct?: number } | null
+  cyb?: { point?: number; change_pct?: number } | null
   source?: string
   timestamp?: string
   inflow_boards?: { name: string; net_inflow: number; change_pct?: number | null }[]

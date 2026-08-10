@@ -130,17 +130,22 @@ async def board_capital_flow_proxy(
 
 @router.get("/market-capital-flow")
 async def market_capital_flow_proxy():
-    """大盘资金(同花顺行业资金,含流入/流出板块明细)。
+    """大盘资金(对齐同花顺APP口径: 两市主力净流入 + 总成交额 + 涨跌家数 + 板块明细)。
 
-    2026-08-10 重构: 不只返回求和汇总, 返回具体流入/流出板块榜(替代'50板块合成')。
+    2026-08-10 重构: 之前用同花顺 hyzjl 行业资金求和(总流入2611亿口径不对),
+    改为国内网关东财两市主力净流入(超大单+大单汇总, 与APP一致)。
     """
     try:
+        import requests as _req
+        # 1. 国内网关: 两市主力净流入 + 成交额 + 涨跌家数
+        ov = _req.get(
+            "http://115.190.177.213:8100/cn/market-overview", timeout=6
+        ).json()
+        if ov.get("error"):
+            return {"error": ov["error"]}
+        # 2. 板块资金明细(同花顺 hyzjl 行业, 流入/流出榜)
         from src.core.marketdata_client import get_market_data
         md = get_market_data()
-        mf = md.market_capital_flow()
-        if mf is None:
-            return {"error": "no_data"}
-        # 板块资金明细(行业, 同花顺 hyzjl)
         boards = md.board_capital_flow(board_type="industry") or []
         boards_sorted = sorted(
             boards, key=lambda b: (b.net_inflow or 0.0), reverse=True
@@ -164,14 +169,22 @@ async def market_capital_flow_proxy():
             if (b.net_inflow or 0.0) < 0
         ]
         return {
-            "total_inflow": mf.total_inflow,
-            "total_outflow": mf.total_outflow,
-            "net_inflow": mf.net_inflow,
-            "board_count": mf.board_count,
-            "inflow_boards": inflow_boards,    # 资金流入板块榜
-            "outflow_boards": outflow_boards,  # 资金流出板块榜
-            "source": mf.source,
-            "timestamp": mf.timestamp.isoformat(),
+            # 两市主力净流入(对齐同花顺APP)
+            "total_main_flow": ov.get("total_main_flow"),      # 亿
+            "sh_flow": (ov.get("sh") or {}).get("main_flow"),  # 沪市主力
+            "sz_flow": (ov.get("sz") or {}).get("main_flow"),  # 深市主力
+            "cyb_flow": (ov.get("cyb") or {}).get("main_flow"),
+            # 市场统计(同花顺APP盘面)
+            "total_amount": ov.get("total_amount"),            # 两市成交额亿
+            "up_count": ov.get("up_count"),
+            "down_count": ov.get("down_count"),
+            "flat_count": ov.get("flat_count"),
+            "sh": ov.get("sh"), "sz": ov.get("sz"), "cyb": ov.get("cyb"),
+            # 板块明细
+            "inflow_boards": inflow_boards,
+            "outflow_boards": outflow_boards,
+            "source": "eastmoney_push2delay_cn",
+            "timestamp": None,
         }
     except Exception as e:
         logger.warning(f"大盘资金代理失败: {e}")
