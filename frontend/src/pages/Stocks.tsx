@@ -1516,6 +1516,18 @@ export default function StocksPage() {
     return { mv, assets, pct }
   }, [portfolio])
 
+  const portfolioMarketStatusLabel = useMemo(() => {
+    const heldMarkets = new Set(
+      (portfolio?.accounts || []).flatMap(account =>
+        (account.positions || []).map(position => position.market),
+      ),
+    )
+    return marketStatus
+      .filter(item => heldMarkets.has(item.code))
+      .map(item => `${item.name} · ${item.status_text}`)
+      .join(' / ')
+  }, [marketStatus, portfolio])
+
   const positionsCount = useMemo(() => {
     return (portfolio?.accounts || []).reduce((acc, a) => acc + (a.positions?.length || 0), 0)
   }, [portfolio])
@@ -1768,13 +1780,18 @@ export default function StocksPage() {
             const isUp = dayPnl >= 0
             return (
               <div className="card p-4">
-                <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                <div className="flex flex-wrap items-center gap-2 text-muted-foreground mb-1">
                   {isUp ? (
                     <ArrowUpRight className="w-4 h-4 text-rose-500" />
                   ) : (
                     <ArrowDownRight className="w-4 h-4 text-emerald-500" />
                   )}
                   <span className="text-[12px]">{dailyPnlDisplayLabel(portfolio.total)}</span>
+                  {portfolioMarketStatusLabel && (
+                    <span className="rounded-full bg-accent/60 px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
+                      {portfolioMarketStatusLabel}
+                    </span>
+                  )}
                 </div>
                 <div className={`text-[20px] font-bold font-mono ${isUp ? 'text-rose-500' : 'text-emerald-500'}`}>
                   {isUp ? '+' : ''}{formatMoney(dayPnl)}
