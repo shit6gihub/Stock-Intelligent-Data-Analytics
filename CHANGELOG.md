@@ -64,6 +64,7 @@
 - 修复 AI 助手技术面数据获取失败：`_fetch_technical_context` 引用不存在的 `DataCollector` 类（只有 DataCollectorManager）→ import 抛异常返回空；改用 KlineCollector + MarketCode，修正 summary 结构读取（无嵌套键兼容）与字段名（rsi_14→rsi6/rsi_status、support_level→support、resistance_level→resistance），并附带 K 线形态；验证 603061 金海通技术面完整返回。
 - 盘中监控加 K 线形态提示 + 技术指标建议形态解释：盘中监控技术分析块输出自研同花顺形态 + TA-Lib 标准形态（信号方向/强度/位置 + 交叉确认规则）；技术指标建议弹窗为每个组合形态加独立 TechnicalBadge（看涨红/看跌绿）+ 悬停解释（来源/强度 + 50+ 形态中文含义映射表 TALIB_PATTERN_EXPLAIN）；typecheck+build 通过。
 - 接入国内数据网关（115.190.177.213:8100，Debian12 + FastAPI）：香港节点东财资金流字段被风控断连（push2 ulist f62 间歇 RemoteDisconnected），网关用东财 push2delay 域名稳定返回今日实时四档资金流（主力/超大/大/中/小单）；`capital_flow_collector` 优先调网关（今日实时，含数据基准日标注），失败回退悟道/Engine（T-1）；`CN_GATEWAY_DISABLE=1` 测试禁用开关；验证神剑股份今日主力净流入 5781 万（与券商同源，不再是 T-1 的 2.62 亿）；全量 515 测试通过。
+- 资金流双模式接入（大陆/海外）：`CN_FLOW_MODE=direct` 大陆本地直连东财 push2delay（不依赖网关）；`gateway` 海外走国内网关代理；`auto`（默认）先直连失败走网关自动检测；生产在韩国首尔节点，auto 模式实测直连 push2delay 可用、网关作兜底。
 
 ### update
 
