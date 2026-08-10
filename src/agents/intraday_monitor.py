@@ -503,8 +503,10 @@ class IntradayMonitorAgent(BaseAgent):
                 )
                 # 主力净流入(方向明确: +流入 / -流出)
                 direction = "流入" if inflow > 0 else ("流出" if inflow < 0 else "平衡")
+                # 数据基准日: 新浪/东财 daykline 是 T-1 收盘数据(盘中无当日实时)
+                flow_date = flow.get("date") or flow.get("opendate") or "最近交易日"
                 lines.append(
-                    f"- 资金：主力净{direction} {inflow_str}（占比{inflow_pct:+.1f}%）"
+                    f"- 资金：主力净{direction} {inflow_str}（占比{inflow_pct:+.1f}%，数据基准日 {flow_date}）"
                 )
                 # 分项净流入(超大单/大单, 有值才显示)
                 super_net = flow.get("super_net_inflow")

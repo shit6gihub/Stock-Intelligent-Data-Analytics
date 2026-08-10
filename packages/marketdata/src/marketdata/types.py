@@ -75,6 +75,7 @@ class CapitalFlow:
     mid_net_inflow: float | None = None        # 中单净流入
     small_net_inflow: float | None = None      # 小单净流入
     main_net_5d: float | None = None           # 5日主力净流入
+    date: str | None = None                    # 数据基准日(新浪/东财=T-1收盘; 盘中无当日实时)
 
 
 @dataclass(frozen=True)

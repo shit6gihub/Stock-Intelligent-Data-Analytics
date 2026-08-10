@@ -28,6 +28,7 @@ class CapitalFlow:
 
     # 5日资金流
     main_net_5d: float | None = None  # 5日主力净流入
+    date: str | None = None  # 数据基准日(盘中=T-1收盘)
 
 
 def get_market_data():
@@ -89,6 +90,7 @@ class CapitalFlowCollector:
                     mid_net_inflow=md_cf.mid_net_inflow,
                     small_net_inflow=md_cf.small_net_inflow,
                     main_net_5d=md_cf.main_net_5d,
+                    date=md_cf.date,
                 )
             else:
                 # 悟道实时净额优先, 四档用 Engine
@@ -97,6 +99,7 @@ class CapitalFlowCollector:
                 capital_flow.mid_net_inflow = md_cf.mid_net_inflow
                 capital_flow.small_net_inflow = md_cf.small_net_inflow
                 capital_flow.main_net_5d = md_cf.main_net_5d
+                capital_flow.date = md_cf.date
                 if md_cf.name:
                     capital_flow.name = md_cf.name
 
@@ -147,4 +150,5 @@ class CapitalFlowCollector:
             "mid_net_inflow": flow.mid_net_inflow,
             "small_net_inflow": flow.small_net_inflow,
             "trend_5d": trend_5d,
+            "date": flow.date,  # 数据基准日(盘中=T-1, 明确标注防误导)
         }

@@ -115,6 +115,7 @@ class EastmoneyCapitalFlowVendor(CapitalFlowVendor):
             mid_net_inflow=_safe_float(parts[3]),         # 中单净流入
             small_net_inflow=_safe_float(parts[2]),       # 小单净流入
             main_net_5d=main_net_5d,                      # 5日主力净流入
+            date=str(parts[0]) if parts else None,        # 数据基准日
         )]
 
 
@@ -185,4 +186,5 @@ class SinaCapitalFlowVendor(CapitalFlowVendor):
             mid_net_inflow=0.0,     # 新浪该端点无中单细分
             small_net_inflow=0.0,   # 新浪该端点无小单细分
             main_net_5d=main_net_5d,  # 5日主力净流入
+            date=str(latest.get("opendate") or ""),  # 数据基准日
         )]
