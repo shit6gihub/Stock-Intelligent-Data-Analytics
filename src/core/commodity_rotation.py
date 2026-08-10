@@ -36,6 +36,9 @@ CONFLICT_KEYWORDS = [
     "军事行动", "地缘", "中东", "以伊", "伊朗", "以色列", "俄乌", "巴以",
 ]
 
+# 避险板块同现检测(2026-08-10 题材启动接入): 石油+军工+黄金 同时活跃 = 冲突信号
+CONFLICT_SECTOR_KWS = ["石油", "油气", "军工", "国防", "黄金", "避险", "原油"]
+
 # 商品关键词 → 所属阶段
 COMMODITY_KEYWORDS = {
     "原油": STAGE_ENERGY, "石油": STAGE_ENERGY, "煤炭": STAGE_ENERGY, "天然气": STAGE_ENERGY,
@@ -87,6 +90,25 @@ def detect_rotation_stage(events: list[str]) -> dict:
                     ],
                     "conflict": True,
                 }
+
+    # 避险板块同现(2026-08-10): 石油/军工/黄金 等 ≥2 个不同避险板块同时活跃 = 冲突信号
+    hit_sectors = set()
+    for ev in events:
+        for kw in CONFLICT_SECTOR_KWS:
+            if kw in ev:
+                hit_sectors.add(kw)
+    if len(hit_sectors) >= 2:
+        return {
+            "stage": STAGE_CONFLICT,
+            "sectors": STAGE_SECTORS[STAGE_CONFLICT],
+            "next_stage": STAGE_GOLD,
+            "next_sectors": STAGE_SECTORS[STAGE_GOLD],
+            "hints": [
+                f"⚠️ 避险板块同现({len(hit_sectors)}个: {'/'.join(sorted(hit_sectors))}) → 地缘冲突模式",
+                "石油+军工+黄金同时活跃 = 市场避险情绪,题材方向转向防御",
+            ],
+            "conflict": True,
+        }
 
     # 统计各阶段命中次数
     stage_hits: dict[str, int] = {}

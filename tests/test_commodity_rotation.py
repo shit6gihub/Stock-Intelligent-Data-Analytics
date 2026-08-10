@@ -76,3 +76,11 @@ def test_conflict_energy_combined():
     """冲突+能源事件 → 仍判地缘冲突(优先级)。"""
     r = detect_rotation_stage(["铜价上涨", "伊朗遭导弹袭击"])
     assert r["stage"] == "地缘冲突"
+
+
+def test_conflict_sector_cooccurrence():
+    """避险板块同现(石油+军工+黄金 ≥2) → 地缘冲突; 单个不算。"""
+    r = detect_rotation_stage(["石油板块涨停4家", "军工板块涨停3家"])
+    assert r["stage"] == "地缘冲突" and r.get("conflict") is True
+    r2 = detect_rotation_stage(["石油板块涨停4家"])
+    assert r2["stage"] != "地缘冲突"
