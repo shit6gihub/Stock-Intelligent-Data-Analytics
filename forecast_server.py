@@ -14,6 +14,7 @@ import sys
 import io
 import json
 import time
+import threading
 from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "forecast_lib"))
@@ -22,6 +23,13 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
+
+# 并发控制(2026-08-10 多用户): 2核跑2个推理, 超出排队
+_predict_semaphore = threading.BoundedSemaphore(2)
+_backtest_semaphore = threading.BoundedSemaphore(1)  # 回测更重, 单并发
+# 预测结果缓存: {symbol:days:target_date -> result}, TTL 30 分钟
+_predict_cache: dict[str, dict] = {}
+_PREDICT_CACHE_TTL = 1800.0
 
 # 模块导入
 from forecast_models import (
@@ -61,9 +69,29 @@ def predict(symbol: str, days: int = 5, task_id: str = "", target_date: str = ""
     """多模型预测: Kronos + Lag-Llama + XGBoost + 线性回归 投票。
 
     target_date 可选: 预测到该日期为止(自动换算交易日数)。task_id 可选(进度日志)。
+
+    并发控制(2026-08-10 多用户): 信号量限流(2核跑2个推理, 超出排队)
+    + 结果缓存(symbol+基准日, 团队重复查询零重算)。
     """
     if not symbol.isdigit() or len(symbol) != 6:
         raise HTTPException(400, "symbol 需为 6 位 A 股代码")
+
+    # 结果缓存: 相同 symbol+days 近期结果直接返回(团队 4-5 人看同一批票)
+    cache_key = f"{symbol}:{days}:{target_date}"
+    cached = _predict_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    # 信号量限流: 最多 2 个并发推理(2核 CPU), 超出排队等待
+    with _predict_semaphore:
+        result = _do_predict(symbol, days, task_id, target_date)
+        # 写缓存(TTL 30 分钟)
+        _predict_cache[cache_key] = result
+        return result
+
+
+def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str = ""):
+    """(内部) 实际预测主体, 由 predict 限流后调用。"""
 
     tid = task_id or new_task()
     if tid not in _tasks_placeholder():
@@ -370,6 +398,12 @@ def predict_status(task_id: str):
 
 @app.get("/backtest")
 def backtest(symbol: str, force_legacy: bool = False):
+    """回测(重计算, 限 1 并发防 CPU 打满)。"""
+    with _backtest_semaphore:
+        return _do_backtest(symbol, force_legacy)
+
+
+def _do_backtest(symbol: str, force_legacy: bool = False):
     """回测: 用历史预测推算模型 + LLM 修正的准确率, 并与实际行情对照。
 
     数据源: prediction_runs 表里该 symbol 的所有历史 run + K 线实际数据。
