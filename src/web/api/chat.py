@@ -498,7 +498,7 @@ async def _fetch_technical_context(symbol: str, market: str) -> str:
 
 
 async def _fetch_capital_flow_context(symbol: str, market: str) -> str:
-    """获取主力资金流向摘要（A股）。"""
+    """获取主力资金流向摘要（A股, 今日实时, 含四档分项）。"""
     try:
         from src.collectors.capital_flow_collector import CapitalFlowCollector
         from src.models.market import MarketCode
@@ -510,13 +510,38 @@ async def _fetch_capital_flow_context(symbol: str, market: str) -> str:
         )
         if not summary or summary.get("error"):
             return ""
-        # summary 结构: 主力净流入/占比/超大单/大单/中单/小单/5日趋势 等
-        parts = []
-        for k, v in summary.items():
-            if k == "error":
-                continue
-            parts.append(f"{k}:{v}")
-        return f"资金流向：{'，'.join(parts)}"
+
+        def _fmt(v: float | None) -> str:
+            """净额(元) → 亿/万 友好格式。"""
+            if v is None:
+                return "--"
+            if abs(v) >= 1e8:
+                return f"{v / 1e8:+.2f}亿"
+            return f"{v / 1e4:+.0f}万"
+
+        main = float(summary.get("main_net_inflow") or 0)
+        direction = "净流入" if main > 0 else ("净流出" if main < 0 else "平衡")
+        pct = summary.get("main_net_inflow_pct")
+        # collector 已归一化为 %(f184 ×100 → %); None 显示 --
+        pct_str = f"{float(pct):+.1f}%" if pct is not None else "--"
+        flow_date = summary.get("date") or "最近交易日"
+
+        lines = [f"资金流向（今日实时, 基准日 {flow_date}）"]
+        lines.append(f"- 主力{direction} {_fmt(main)}（占比{pct_str}）")
+        if summary.get("super_net_inflow") is not None:
+            lines.append(
+                f"- 超大单{_fmt(summary.get('super_net_inflow'))} | "
+                f"大单{_fmt(summary.get('big_net_inflow'))} | "
+                f"中单{_fmt(summary.get('mid_net_inflow'))} | "
+                f"小单{_fmt(summary.get('small_net_inflow'))}"
+            )
+        if summary.get("trend_5d") and summary.get("trend_5d") != "无数据":
+            lines.append(f"- 5日资金：{summary.get('trend_5d')}")
+        # 分歧提示: 主力流入但超大单流出
+        super_net = summary.get("super_net_inflow")
+        if main > 0 and super_net is not None and float(super_net) < 0:
+            lines.append("- ⚠️ 主力净流入但超大单净流出(分歧): 大单拉抬、超大单出货, 谨慎追涨")
+        return "\n".join(lines)
     except Exception as e:
         logger.debug(f"获取资金流失败: {e}")
         return ""
