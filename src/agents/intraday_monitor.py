@@ -423,6 +423,26 @@ class IntradayMonitorAgent(BaseAgent):
                 f"- MA5：{format_num(kline.get('ma5'))} | MA10：{format_num(kline.get('ma10'))} | MA20：{format_num(kline.get('ma20'))} | MA60：{format_num(kline.get('ma60'))}"
             )
 
+            # K线形态(自研同花顺形态 + TA-Lib 标准形态,2026-08-10 接入)
+            kline_patterns = kline.get("kline_patterns") or []
+            if kline_patterns:
+                lines.append("\n- K线形态:")
+                for p in kline_patterns[:6]:
+                    pname = p.get("cn_name") or p.get("name") or ""
+                    psig = p.get("signal") or ""
+                    if p.get("source") == "talib":
+                        lines.append(
+                            f"  - {pname}(TA-Lib标准形态) {psig} 强度{p.get('strength', '')}"
+                        )
+                    else:
+                        lines.append(
+                            f"  - {pname}(同花顺形态) {psig} 位置:{p.get('position', '--')}"
+                        )
+                lines.append("")
+                lines.append(
+                    "> 形态规则: 看涨形态(锤子线/红三兵/早晨之星/金针探底等)在低位更有意义, 看跌形态(射击之星/三只乌鸦/黄昏之星等)在高位更危险。形态需与趋势/量能/资金面交叉确认, 不单独构成买卖依据。"
+                )
+
         # 市场情绪面 + 板块面(涨停池/情绪周期/板块涨跌资金)
         ms = data.get("market_sentiment", {}) or {}
         senti = ms.get("sentiment") or {}

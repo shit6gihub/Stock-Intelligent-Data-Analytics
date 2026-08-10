@@ -7,6 +7,56 @@ import { buildKlineSuggestion } from '@/lib/kline-scorer'
 import { HoverPopover } from '@panwatch/base-ui/components/ui/hover-popover'
 import { TechnicalBadge, technicalToneFromSuggestionAction } from '@panwatch/biz-ui/components/technical-badge'
 
+// K线形态中文解释(悬停查看含义;TA-Lib 标准形态 + 同花顺教学形态)
+const TALIB_PATTERN_EXPLAIN: Record<string, string> = {
+  // 底部反转(看涨)
+  '金针探底': '下跌末端极长下影线，急跌后快速拉回，下方有大资金托底，可能是见底信号',
+  '双针探底': '两次急跌都被拉回，两根长下影线低点接近，底部支撑更坚固，容易反弹',
+  '早晨之星': '长阴→星线→长阳，多空反转，经典抄底信号',
+  '锤子线': '下影线很长、实体在上方，出现在下跌末端意味着抛压枯竭、买盘承接',
+  '倒锤子': '上影线很长，出现在底部说明上方卖压被测试后买盘可能反攻',
+  '红三兵': '三根连续阳线收盘递增，买盘积聚多头增强，后续大概率继续走强',
+  '刺透形态': '下跌趋势中阳线实体深入前一根阴线实体一半以上，空方失守、反转信号',
+  '岛形底': '跳空下跌后跳空上涨形成孤岛，底部反转的强信号',
+  '十字晨星': '长阴→十字星→长阳，比早晨之星更强的反转确认',
+  '捉腰带线': '开盘即最低价的大阳线，多方强势开攻',
+  '收盘无影': '阳线几乎无上影线，收盘在最高价，多方完全控盘',
+  '上升三法': '大阳线拉起→中间小K线整理→再大阳突破，蓄势再涨',
+  '进击两阳线': '两根连续阳线且第二根更强，多方强势进攻',
+  '大锤和小锤': '底部连续两根长下影锤子线，双重支撑，底部稳固',
+  '大阳包小阴': '大阳线完全吞没前日小阴线，多方碾压空方，底部反转',
+  '大阴后两小阳': '大阴线后两根小阳线，空头宣泄进入休整期，企稳信号',
+  '底部强势大阳线': '底部区域放量大阳线，强势上涨启动',
+  '底部大长腿': '底部极长下影线，空方抛压枯竭，下方有承接',
+  '底部十字星': '下跌末端十字星，多空平衡，趋势转折点',
+  '孕线形态': '小实体完全在前一根大实体内，趋势动能减弱，可能反转',
+  '十字孕线': '十字星完全在前一根大实体内，比孕线更强的反转信号',
+  '高浪线': '上下影都很长、实体很小，多空激烈拉锯，趋势可能变化',
+  '长脚十字': '上下影极长的十字星，多空极度分歧，变盘信号',
+  '纺锤线': '小实体+上下影，趋势中继或反转前的犹豫',
+  '光头光脚': '开盘即最低、收盘即最高的阳线，走势极强',
+  '跳空并列': '连续跳空后的并列K线，趋势延续或反转需看位置',
+  '上升缺口三法': '上升趋势中跳空后三根小K线再突破，中继看涨',
+  // 顶部反转(看跌)
+  '三只乌鸦': '上涨顶部连续三根阴线收盘递减，空头持续打压，强烈看跌',
+  '黄昏之星': '长阳→星线→长阴，经典顶部反转信号',
+  '乌云盖顶': '阳线后阴线深入前阳实体一半以上，空方反扑、顶部信号',
+  '上吊线': '长下影线出现在上涨末端，看似承接实则出货，警惕反转',
+  '射击之星': '长上影线出现在上涨末端，上方抛压沉重，见顶信号',
+  '墓碑十字': '开盘收盘都在最低点的十字星，上方抛压极重',
+  '倾盆大雨': '大阳线后低开大阴线，多头被全面压制，顶部反转',
+  '黑三兵': '三根连续下跌小阴线，阴跌趋势确立',
+  '空方炮': '阴-阳-阴序列，反弹被再次打压，空方占优',
+  '看跌尽头线': '次日小实体完全在首根长下影范围内，探底失败跌势未尽',
+  '兄弟剃平头': '顶部两根K线最高价同一水平，多头无法再创新高',
+  '二级倒锤头': '极高价位区连续两个倒锤头，上攻乏力滞涨见顶',
+  '乌云盖顶(日)': '上涨末端长阴线吞没前阳，强烈见顶信号',
+  '双顶破位(M头)': '两个相近高点后跌破颈线，顶部确认',
+  '下降旗形破位': '急跌后窄幅向下整理跌破下沿，看跌持续',
+  '下降三角形破位': '水平支撑+高点下移跌破下轨，看跌',
+  '上升楔形': '双线上倾但速度减缓，跌破下沿看跌反转',
+}
+
 export interface KlineSummaryData {
   // meta (from backend)
   timeframe?: string
@@ -503,6 +553,41 @@ export function KlineSummaryDialog({
                   }
                 />
               )}
+
+              {/* 组合形态标签(自研同花顺形态 + TA-Lib 标准形态,带解释) */}
+              {(effectiveSummary?.kline_patterns || []).length > 0 && effectiveSummary.kline_patterns!.map((p, idx) => {
+                const name = p.cn_name || p.name || ''
+                const tone = p.signal === '看涨' ? 'bullish' : p.signal === '看跌' ? 'bearish' : 'neutral'
+                const explain = TALIB_PATTERN_EXPLAIN[name] || p.description || ''
+                return (
+                  <HoverPopover
+                    key={`${name}-${idx}`}
+                    title={`${name}（K线形态）`}
+                    content={
+                      <div className="space-y-2 max-w-[280px]">
+                        <div>
+                          <span className="font-medium text-foreground">是什么：</span>
+                          {p.source === 'talib'
+                            ? `TA-Lib 标准形态（${p.name}），信号强度 ${p.strength ?? '--'}（100=标准，200=强）。`
+                            : `同花顺教学体系形态，出现位置：${p.position || '--'}。`}
+                        </div>
+                        {explain && (
+                          <div>
+                            <span className="font-medium text-foreground">含义：</span>
+                            {explain}
+                          </div>
+                        )}
+                        <div className="text-[10px] text-muted-foreground/70">
+                          信号方向：{p.signal === '看涨' ? '看涨' : p.signal === '看跌' ? '看跌' : '中性'}。形态需结合趋势/量能/资金面确认，不构成独立买卖依据。
+                        </div>
+                      </div>
+                    }
+                    trigger={
+                      <TechnicalBadge label={name} tone={tone as any} help />
+                    }
+                  />
+                )
+              })}
             </div>
 
             <div className="flex flex-wrap gap-2 text-[11px]">
