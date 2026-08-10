@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from src.core.marketdata_client import md_quote_rows
+from src.core.quote_period import classify_quote_period
 from src.models.market import MarketCode
 
 router = APIRouter()
@@ -48,8 +49,12 @@ def _quote_to_response(symbol: str, market: MarketCode, quote: dict | None) -> d
             "pe_ratio": None,
             "total_market_value": None,
             "circulating_market_value": None,
+            "quote_time": None,
+            "quote_date": None,
+            "daily_pnl_period": "unknown",
         }
 
+    quote_date = quote.get("quote_date")
     return {
         "symbol": symbol,
         "market": market.value,
@@ -68,6 +73,9 @@ def _quote_to_response(symbol: str, market: MarketCode, quote: dict | None) -> d
         "pe_ratio": quote.get("pe_ratio"),
         "total_market_value": quote.get("total_market_value"),
         "circulating_market_value": quote.get("circulating_market_value"),
+        "quote_time": quote.get("quote_time"),
+        "quote_date": quote_date,
+        "daily_pnl_period": classify_quote_period(quote_date, market.value),
     }
 
 

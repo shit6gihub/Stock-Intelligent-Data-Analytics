@@ -59,8 +59,11 @@ export interface DashboardAccountSummary {
   total_market_value: number
   total_pnl: number
   total_pnl_pct: number
-  /** 今日盈亏(账户内所有持仓 daily_pnl 汇总,元) */
+  /** 行情源所属交易日的盈亏汇总(元) */
   total_daily_pnl: number
+  daily_pnl_period: 'today' | 'previous_trading_day' | 'mixed' | 'unknown'
+  daily_pnl_label: string
+  daily_pnl_date: string | null
   total_assets: number
   positions: DashboardPosition[]
 }
@@ -72,8 +75,11 @@ export interface DashboardPortfolioSummary {
     total_cost: number
     total_pnl: number
     total_pnl_pct: number
-    /** 今日盈亏(全账户汇总,元) */
+    /** 行情源所属交易日的全账户盈亏汇总(元) */
     total_daily_pnl: number
+    daily_pnl_period: 'today' | 'previous_trading_day' | 'mixed' | 'unknown'
+    daily_pnl_label: string
+    daily_pnl_date: string | null
     available_funds: number
     total_assets: number
   }

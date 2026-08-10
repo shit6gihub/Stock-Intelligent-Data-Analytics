@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from marketdata.http import market_get
 from marketdata.symbol import Symbol
@@ -14,6 +16,11 @@ logger = logging.getLogger(__name__)
 _URL = "http://qt.gtimg.cn/q="
 _HOST = "qt.gtimg.cn"
 _MIN_INTERVAL_S = 0.15
+_MARKET_TIMEZONES = {
+    "CN": "Asia/Shanghai",
+    "HK": "Asia/Hong_Kong",
+    "US": "America/New_York",
+}
 
 
 def _to_float(value: str | None) -> float | None:
@@ -24,6 +31,18 @@ def _to_float(value: str | None) -> float | None:
         return None
     try:
         return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_quote_time(value: str | None, market: str) -> datetime | None:
+    text = str(value or "").strip()
+    if len(text) < 14:
+        return None
+    try:
+        parsed = datetime.strptime(text[:14], "%Y%m%d%H%M%S")
+        timezone = _MARKET_TIMEZONES.get(market)
+        return parsed.replace(tzinfo=ZoneInfo(timezone)) if timezone else parsed
     except (TypeError, ValueError):
         return None
 
@@ -71,6 +90,7 @@ def _parse_line(line: str, market: str) -> Quote | None:
             pe_ratio=pe_ratio,
             circulating_market_value=circulating,
             total_market_value=total,
+            quote_time=_parse_quote_time(parts[30], market),
         )
     except (ValueError, IndexError) as e:
         logger.debug(f"解析腾讯行情失败: {e}")

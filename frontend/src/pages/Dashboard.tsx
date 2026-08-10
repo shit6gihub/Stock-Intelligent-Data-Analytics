@@ -314,8 +314,16 @@ export default function DashboardPage() {
       ? (diag.total_unrealized_pnl / (diag.total_market_value - diag.total_unrealized_pnl)) * 100
       : null
 
-  // 今日盈亏(组合速览条 hero):来自 portfolioSummary.total.total_daily_pnl(与 Stocks 页同源字段)
+  // 行情所属交易日盈亏(组合速览条 hero):标签由后端依据真实报价日期给出。
   const dailyPnl = portfolioSummary?.total?.total_daily_pnl ?? null
+  const dailyPnlLabel = useMemo(() => {
+    const total = portfolioSummary?.total
+    if (!total) return '当日盈亏'
+    const date = total.daily_pnl_date?.slice(5)
+    return date && total.daily_pnl_period === 'previous_trading_day'
+      ? `${total.daily_pnl_label} (${date})`
+      : total.daily_pnl_label || '当日盈亏'
+  }, [portfolioSummary])
   const dailyPnlPct = useMemo(() => {
     if (!portfolioSummary || dailyPnl == null) return null
     const basis = portfolioSummary.total.total_market_value - dailyPnl
@@ -370,16 +378,16 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* 组合速览条:今日盈亏 hero + 累计浮盈 + 60日超额 + 仓位% + mini 净值走势 */}
+      {/* 组合速览条:最近行情日盈亏 hero + 累计浮盈 + 60日超额 + 仓位% + mini 净值走势 */}
       <div className="card mb-3 p-4">
         {!hasHoldings ? (
           <div className="py-4 text-center text-[12px] text-muted-foreground">
-            {loading ? '加载中…' : '暂无持仓,添加持仓后这里展示今日盈亏与组合走势'}
+            {loading ? '加载中…' : '暂无持仓,添加持仓后这里展示持仓盈亏与组合走势'}
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
             <div>
-              <div className="text-[11px] text-muted-foreground">今日盈亏</div>
+              <div className="text-[11px] text-muted-foreground">{dailyPnlLabel}</div>
               <div className={`font-mono text-[22px] font-bold leading-tight ${moveColor(dailyPnl)}`}>{fmtMoney(dailyPnl)}</div>
               {dailyPnlPct != null && <div className={`font-mono text-[11px] ${moveColor(dailyPnlPct)}`}>{pct(dailyPnlPct)}</div>}
             </div>

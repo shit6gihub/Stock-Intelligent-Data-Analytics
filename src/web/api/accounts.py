@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from src.web.database import get_db
 from src.web.models import Account, PriceAlertRule, Position, Stock
 from src.core.marketdata_client import md_quote_rows
+from src.core.quote_period import classify_quote_period, summarize_daily_pnl_period
 from src.collectors.market_http import TTLCache
 from src.models.market import MarketCode
 
@@ -406,6 +407,10 @@ def get_portfolio_summary(
                 "total_cost": 0,
                 "total_pnl": 0,
                 "total_pnl_pct": 0,
+                "total_daily_pnl": 0,
+                "daily_pnl_period": "unknown",
+                "daily_pnl_label": "当日盈亏",
+                "daily_pnl_date": None,
                 "available_funds": 0,
                 "total_assets": 0,
             }
@@ -433,12 +438,14 @@ def get_portfolio_summary(
     grand_total_cost = 0
     grand_available_funds = 0
     grand_daily_pnl = 0
+    grand_daily_pnl_periods: list[tuple[str, str | None]] = []
 
     for acc in accounts:
         positions_data = []
         acc_market_value = 0
         acc_cost = 0
         acc_daily_pnl = 0
+        acc_daily_pnl_periods: list[tuple[str, str | None]] = []
 
         positions_sorted = sorted(
             list(acc.positions or []),
@@ -453,6 +460,9 @@ def get_portfolio_summary(
             current_price = quote["current_price"] if quote else None
             change_pct = quote["change_pct"] if quote else None
             prev_close = quote.get("prev_close") if quote else None
+            quote_time = quote.get("quote_time") if quote else None
+            quote_date = quote.get("quote_date") if quote else None
+            daily_pnl_period = classify_quote_period(quote_date, stock.market)
 
             # 根据市场确定汇率
             is_foreign = stock.market in ("HK", "US")
@@ -474,6 +484,9 @@ def get_portfolio_summary(
                 daily_pnl = (current_price - prev_close) * pos.quantity * rate
                 daily_pnl_pct = (current_price - prev_close) / prev_close * 100
                 acc_daily_pnl += daily_pnl
+                observation = (daily_pnl_period, quote_date)
+                acc_daily_pnl_periods.append(observation)
+                grand_daily_pnl_periods.append(observation)
 
             cost = pos.cost_price * pos.quantity
             cost_cny = cost * rate  # 假设成本价也是原币种
@@ -507,6 +520,9 @@ def get_portfolio_summary(
                 "pnl_pct": round(pnl_pct, 2) if pnl_pct else None,
                 "daily_pnl": round(daily_pnl, 2) if daily_pnl is not None else None,
                 "daily_pnl_pct": round(daily_pnl_pct, 2) if daily_pnl_pct is not None else None,
+                "daily_pnl_period": daily_pnl_period,
+                "quote_time": quote_time,
+                "quote_date": quote_date,
                 "exchange_rate": rate if is_foreign else None,
             })
 
@@ -530,6 +546,7 @@ def get_portfolio_summary(
             "total_daily_pnl": round(acc_daily_pnl, 2),
             "total_assets": round(acc_total_assets, 2),
             "positions": positions_data,
+            **summarize_daily_pnl_period(acc_daily_pnl_periods),
         })
 
         grand_total_market_value += acc_market_value
@@ -553,8 +570,11 @@ def get_portfolio_summary(
             quotes_dict[symbol] = {
                 "current_price": quote.get("current_price"),
                 "change_pct": quote.get("change_pct"),
+                "quote_time": quote.get("quote_time"),
+                "quote_date": quote.get("quote_date"),
             }
 
+    total_daily_pnl_meta = summarize_daily_pnl_period(grand_daily_pnl_periods)
     return {
         "accounts": account_summaries,
         "total": {
@@ -565,6 +585,7 @@ def get_portfolio_summary(
             "total_daily_pnl": round(grand_daily_pnl, 2),
             "available_funds": round(grand_available_funds, 2),
             "total_assets": round(grand_total_assets, 2),
+            **total_daily_pnl_meta,
         },
         "exchange_rates": {
             "HKD_CNY": hkd_rate,

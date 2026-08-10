@@ -72,7 +72,26 @@ interface Position {
   pnl_pct: number | null
   daily_pnl: number | null
   daily_pnl_pct: number | null
+  daily_pnl_period: DailyPnlPeriod
+  quote_time: string | null
+  quote_date: string | null
   exchange_rate: number | null  // 汇率（仅港股）
+}
+
+type DailyPnlPeriod = 'today' | 'previous_trading_day' | 'mixed' | 'unknown'
+
+interface DailyPnlMeta {
+  daily_pnl_period: DailyPnlPeriod
+  daily_pnl_label: string
+  daily_pnl_date: string | null
+}
+
+interface QuoteSnapshot {
+  current_price: number | null
+  change_pct: number | null
+  quote_time: string | null
+  quote_date: string | null
+  daily_pnl_period: DailyPnlPeriod
 }
 
 interface AccountSummary {
@@ -84,6 +103,9 @@ interface AccountSummary {
   total_pnl: number
   total_pnl_pct: number
   total_daily_pnl: number
+  daily_pnl_period: DailyPnlPeriod
+  daily_pnl_label: string
+  daily_pnl_date: string | null
   total_assets: number
   positions: Position[]
 }
@@ -96,6 +118,9 @@ interface PortfolioSummary {
     total_pnl: number
     total_pnl_pct: number
     total_daily_pnl: number
+    daily_pnl_period: DailyPnlPeriod
+    daily_pnl_label: string
+    daily_pnl_date: string | null
     available_funds: number
     total_assets: number
   }
@@ -103,7 +128,7 @@ interface PortfolioSummary {
     HKD_CNY: number
     USD_CNY?: number
   }
-  quotes?: Record<string, { current_price: number | null; change_pct: number | null }>
+  quotes?: Record<string, QuoteSnapshot>
 }
 
 interface AgentConfig {
@@ -137,6 +162,9 @@ interface QuoteResponse {
   market: string
   current_price: number | null
   change_pct: number | null
+  quote_time: string | null
+  quote_date: string | null
+  daily_pnl_period: DailyPnlPeriod
 }
 
 interface StockForm {
@@ -224,9 +252,51 @@ const emptyAccountForm: AccountForm = { name: '', available_funds: '0' }
 
 const round2 = (value: number) => Math.round(value * 100) / 100
 
+const summarizeDailyPnlPeriod = (
+  observations: Array<{ period: DailyPnlPeriod; date: string | null }>,
+): DailyPnlMeta => {
+  if (observations.length === 0) {
+    return { daily_pnl_period: 'unknown', daily_pnl_label: '当日盈亏', daily_pnl_date: null }
+  }
+  const periods = new Set(observations.map(item => item.period))
+  const dates = new Set(observations.map(item => item.date).filter((value): value is string => !!value))
+  if (periods.size === 1 && periods.has('today')) {
+    return {
+      daily_pnl_period: 'today',
+      daily_pnl_label: '今日盈亏',
+      daily_pnl_date: dates.size === 1 ? [...dates][0] : null,
+    }
+  }
+  if (periods.size === 1 && periods.has('previous_trading_day') && dates.size === 1) {
+    return {
+      daily_pnl_period: 'previous_trading_day',
+      daily_pnl_label: '上一交易日盈亏',
+      daily_pnl_date: [...dates][0],
+    }
+  }
+  return {
+    daily_pnl_period: periods.size > 1 || dates.size > 1 ? 'mixed' : 'unknown',
+    daily_pnl_label: dates.size > 0 ? '最近交易日盈亏' : '当日盈亏',
+    daily_pnl_date: null,
+  }
+}
+
+const dailyPnlDisplayLabel = (meta: DailyPnlMeta, compact = false): string => {
+  const date = meta.daily_pnl_date ? meta.daily_pnl_date.slice(5) : ''
+  if (compact) {
+    if (meta.daily_pnl_period === 'today') return '今日'
+    if (meta.daily_pnl_period === 'previous_trading_day') return date ? `上一交易日 ${date}` : '上一交易日'
+    if (meta.daily_pnl_period === 'mixed') return '最近交易日'
+    return '当日'
+  }
+  return date && meta.daily_pnl_period === 'previous_trading_day'
+    ? `${meta.daily_pnl_label} (${date})`
+    : meta.daily_pnl_label
+}
+
 const mergePortfolioQuotes = (
   portfolio: PortfolioSummary | null,
-  quotes: Record<string, { current_price: number | null; change_pct: number | null }>
+  quotes: Record<string, QuoteSnapshot>
 ): PortfolioSummary | null => {
   if (!portfolio) return null
 
@@ -237,16 +307,21 @@ const mergePortfolioQuotes = (
   let grandCost = 0
   let grandAvailable = 0
   let grandDailyPnl = 0
+  const grandDailyPnlObservations: Array<{ period: DailyPnlPeriod; date: string | null }> = []
 
   const accounts = portfolio.accounts.map(account => {
     let accMarketValue = 0
     let accCost = 0
     let accDailyPnl = 0
+    const accDailyPnlObservations: Array<{ period: DailyPnlPeriod; date: string | null }> = []
 
     const positions = account.positions.map(pos => {
       const quote = quotes[`${pos.market}:${pos.symbol}`]
       const current_price = quote?.current_price ?? pos.current_price ?? null
       const change_pct = quote?.change_pct ?? pos.change_pct ?? null
+      const quote_time = quote?.quote_time ?? pos.quote_time ?? null
+      const quote_date = quote?.quote_date ?? pos.quote_date ?? null
+      const daily_pnl_period = quote?.daily_pnl_period ?? pos.daily_pnl_period ?? 'unknown'
       const rate = pos.market === 'HK' ? hkdRate : pos.market === 'US' ? usdRate : 1
 
       const cost = pos.cost_price * pos.quantity * rate
@@ -273,6 +348,9 @@ const mergePortfolioQuotes = (
           daily_pnl = round2((current_price - prev) * pos.quantity * rate)
           daily_pnl_pct = round2(change_pct)
           accDailyPnl += daily_pnl
+          const observation = { period: daily_pnl_period, date: quote_date }
+          accDailyPnlObservations.push(observation)
+          grandDailyPnlObservations.push(observation)
         }
       }
 
@@ -287,6 +365,9 @@ const mergePortfolioQuotes = (
         pnl_pct,
         daily_pnl,
         daily_pnl_pct,
+        daily_pnl_period,
+        quote_time,
+        quote_date,
         exchange_rate: pos.market === 'HK' || pos.market === 'US' ? rate : null,
       }
     })
@@ -308,6 +389,7 @@ const mergePortfolioQuotes = (
       total_pnl_pct: round2(accPnlPct),
       total_daily_pnl: round2(accDailyPnl),
       total_assets: round2(accTotalAssets),
+      ...summarizeDailyPnlPeriod(accDailyPnlObservations),
       positions,
     }
   })
@@ -327,6 +409,7 @@ const mergePortfolioQuotes = (
       total_daily_pnl: round2(grandDailyPnl),
       available_funds: round2(grandAvailable),
       total_assets: round2(grandTotalAssets),
+      ...summarizeDailyPnlPeriod(grandDailyPnlObservations),
     },
   }
 }
@@ -346,7 +429,7 @@ export default function StocksPage() {
   const [expandedAccounts, setExpandedAccounts] = useState<Set<number>>(new Set())
 
   // Quotes for all stocks (used in stock list)
-  const [quotes, setQuotes] = useState<Record<string, { current_price: number | null; change_pct: number | null }>>({})
+  const [quotes, setQuotes] = useState<Record<string, QuoteSnapshot>>({})
   const [quotesLoading, setQuotesLoading] = useState(false)
   // Keyed by `${market}:${symbol}` to avoid cross-market symbol collisions
   const [klineSummaries, setKlineSummaries] = useState<Record<string, KlineSummary>>({})
@@ -643,11 +726,14 @@ export default function StocksPage() {
         method: 'POST',
         body: JSON.stringify({ items }),
       })
-      const map: Record<string, { current_price: number | null; change_pct: number | null }> = {}
+      const map: Record<string, QuoteSnapshot> = {}
       for (const item of data) {
         map[`${item.market}:${item.symbol}`] = {
           current_price: item.current_price ?? null,
           change_pct: item.change_pct ?? null,
+          quote_time: item.quote_time ?? null,
+          quote_date: item.quote_date ?? null,
+          daily_pnl_period: item.daily_pnl_period ?? 'unknown',
         }
       }
       setQuotes(map)
@@ -1688,7 +1774,7 @@ export default function StocksPage() {
                   ) : (
                     <ArrowDownRight className="w-4 h-4 text-emerald-500" />
                   )}
-                  <span className="text-[12px]">今日盈亏</span>
+                  <span className="text-[12px]">{dailyPnlDisplayLabel(portfolio.total)}</span>
                 </div>
                 <div className={`text-[20px] font-bold font-mono ${isUp ? 'text-rose-500' : 'text-emerald-500'}`}>
                   {isUp ? '+' : ''}{formatMoney(dayPnl)}
@@ -1896,7 +1982,12 @@ export default function StocksPage() {
                       </div>
                     </div>
                     <div className="text-left md:text-right">
-                      <div className="text-[10px] md:text-[11px] text-muted-foreground">今日</div>
+                      <div
+                        className="text-[10px] md:text-[11px] text-muted-foreground"
+                        title={dailyPnlDisplayLabel(account)}
+                      >
+                        {dailyPnlDisplayLabel(account, true)}
+                      </div>
                       <div className={`text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap ${account.total_daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
                         {account.total_daily_pnl >= 0 ? '+' : ''}{formatMoney(account.total_daily_pnl)}
                       </div>
@@ -1939,7 +2030,12 @@ export default function StocksPage() {
                               <th className="text-right px-4 py-2 text-[11px] font-semibold text-muted-foreground">持仓</th>
                               <th className="text-right px-4 py-2 text-[11px] font-semibold text-muted-foreground">市值</th>
                               <th className="text-right px-4 py-2 text-[11px] font-semibold text-muted-foreground">盈亏</th>
-                              <th className="text-right px-4 py-2 text-[11px] font-semibold text-muted-foreground">今日</th>
+                              <th
+                                className="text-right px-4 py-2 text-[11px] font-semibold text-muted-foreground"
+                                title={dailyPnlDisplayLabel(account)}
+                              >
+                                {dailyPnlDisplayLabel(account, true)}
+                              </th>
                               <th className="text-center px-4 py-2 text-[11px] font-semibold text-muted-foreground">风格</th>
                               <th className="text-left px-4 py-2 text-[11px] font-semibold text-muted-foreground">Agent</th>
                               <th className="text-center px-4 py-2 text-[11px] font-semibold text-muted-foreground">操作</th>
@@ -2044,7 +2140,10 @@ export default function StocksPage() {
                                       </div>
                                     ) : '—'}
                                   </td>
-                                  <td className={`px-4 py-2.5 text-right font-mono text-[12px] ${pos.daily_pnl != null ? (pos.daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500') : ''}`}>
+                                  <td
+                                    className={`px-4 py-2.5 text-right font-mono text-[12px] ${pos.daily_pnl != null ? (pos.daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500') : ''}`}
+                                    title={pos.quote_time ? `行情时间：${pos.quote_time}` : undefined}
+                                  >
                                     {pos.daily_pnl != null ? (
                                       <div className="flex flex-col items-end">
                                         <span>{pos.daily_pnl >= 0 ? '+' : ''}{formatMoney(pos.daily_pnl)}</span>
@@ -2225,7 +2324,11 @@ export default function StocksPage() {
                                   )}
                                 </div>
                                 <div className="min-w-0">
-                                  <div className="text-[10px] text-muted-foreground">今日</div>
+                                  <div className="text-[10px] text-muted-foreground">
+                                    {dailyPnlDisplayLabel(summarizeDailyPnlPeriod([
+                                      { period: pos.daily_pnl_period, date: pos.quote_date },
+                                    ]), true)}
+                                  </div>
                                   <div className={`font-mono whitespace-nowrap ${pos.daily_pnl != null ? (pos.daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500') : 'text-muted-foreground'}`}>
                                     {pos.daily_pnl != null ? `${pos.daily_pnl >= 0 ? '+' : ''}${formatMoney(pos.daily_pnl)}` : '—'}
                                   </div>
