@@ -458,7 +458,7 @@ async def trigger_stock_agent(
         _nm = getattr(trigger_stock, "name", "") or _sym
         _mkt = getattr(trigger_stock, "market", "CN")
 
-        def _notify(ok: bool, detail: str, started: float) -> None:
+        def _notify(ok: bool, detail: str, started: float, status: str = "") -> None:
             try:
                 from src.core.notify_center import notify_task_done
 
@@ -471,6 +471,7 @@ async def trigger_stock_agent(
                     trace_id=trace_id,
                     duration_ms=int((time.monotonic() - started) * 1000),
                     link=f"/portfolio?symbol={_sym}&market={_mkt}",
+                    status=status,
                 )
             except Exception:
                 logger.exception("写入站内通知失败: %s %s", agent_name, _sym)
@@ -478,7 +479,7 @@ async def trigger_stock_agent(
         def _runner():
             _started = time.monotonic()
             try:
-                asyncio.run(trigger_agent_for_stock(
+                outcome = asyncio.run(trigger_agent_for_stock(
                     agent_name,
                     trigger_stock,
                     stock_agent_id=sa_id,
@@ -488,8 +489,13 @@ async def trigger_stock_agent(
                     trace_id=trace_id,
                     force_refresh=force_refresh,
                 ))
-                logger.info(f"Agent {agent_name} 后台执行完成 - {_sym}")
-                _notify(True, "", _started)
+                if outcome.get("skipped"):
+                    detail = str(outcome.get("content") or outcome.get("message") or "本次任务已跳过")
+                    logger.info(f"Agent {agent_name} 后台执行已跳过 - {_sym}: {detail}")
+                    _notify(True, detail, _started, status="skipped")
+                else:
+                    logger.info(f"Agent {agent_name} 后台执行完成 - {_sym}")
+                    _notify(True, "", _started)
             except Exception as exc:
                 logger.exception(f"Agent {agent_name} 后台执行失败 - {_sym}")
                 _notify(False, str(exc)[:500], _started)

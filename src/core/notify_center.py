@@ -168,10 +168,14 @@ def notify_task_done(
     trace_id: str = "",
     duration_ms: int | None = None,
     link: str = "",
+    status: str = "",
 ) -> int | None:
     """后台任务收尾统一入口: 成功/失败都写站内, 失败额外外发。"""
     dur = f"（耗时 {duration_ms / 1000:.1f}s）" if duration_ms else ""
-    if ok:
+    if status == "skipped":
+        title = f"⏭️ {task_label} 已跳过{dur}"
+        level = "warning"
+    elif ok:
         title = f"✅ {task_label} 已完成{dur}"
         level = "success"
     else:

@@ -34,6 +34,20 @@ interface NotificationItem {
   created_at: string
 }
 
+interface AgentRunDetail {
+  status: string
+  result: string
+  error: string
+  duration_ms: number
+  model_label: string
+  trigger_source: string
+  created_at: string
+}
+
+interface NotificationDetail extends NotificationItem {
+  task: AgentRunDetail | null
+}
+
 type FilterKey = 'all' | 'unread' | 'failed'
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -76,6 +90,28 @@ function normalizeInternalLink(link: string): string {
   return value.startsWith('/') && !value.startsWith('//') ? value : ''
 }
 
+function MarkdownBlock({ content }: { content: string }) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-border/40 bg-background/40 p-4 text-[13px] leading-6 text-foreground">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          table: ({ children }) => <table className="my-3 min-w-full border-collapse text-[12px]">{children}</table>,
+          th: ({ children }) => <th className="border border-border/50 bg-accent/50 px-3 py-2 text-left font-medium">{children}</th>,
+          td: ({ children }) => <td className="border border-border/50 px-3 py-2 align-top">{children}</td>,
+          a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2">{children}</a>,
+          code: ({ children }) => <code className="rounded bg-accent/70 px-1 py-0.5 text-[12px]">{children}</code>,
+          ul: ({ children }) => <ul className="my-2 list-disc space-y-1 pl-5">{children}</ul>,
+          ol: ({ children }) => <ol className="my-2 list-decimal space-y-1 pl-5">{children}</ol>,
+          p: ({ children }) => <p className="my-2 first:mt-0 last:mb-0">{children}</p>,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  )
+}
+
 function EmptyState({ filtered }: { filtered: boolean }) {
   return (
     <div className="flex min-h-[280px] flex-col items-center justify-center px-6 text-center">
@@ -97,6 +133,9 @@ export default function NotificationsPage() {
   const [category, setCategory] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [detail, setDetail] = useState<NotificationDetail | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -120,6 +159,31 @@ export default function NotificationsPage() {
 
   useEffect(() => { void load() }, [load])
 
+  useEffect(() => {
+    if (!selectedId) {
+      setDetail(null)
+      setDetailError('')
+      return
+    }
+    let cancelled = false
+    setDetailLoading(true)
+    setDetailError('')
+    fetchAPI<NotificationDetail>(`/notifications/${selectedId}`)
+      .then(result => {
+        if (!cancelled) setDetail(result)
+      })
+      .catch(e => {
+        if (!cancelled) {
+          setDetail(null)
+          setDetailError(e instanceof Error ? e.message : '任务详情加载失败')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setDetailLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [selectedId])
+
   const unread = useMemo(() => items.filter(item => !item.read).length, [items])
   const failed = useMemo(() => items.filter(item => item.push_status === 'failed').length, [items])
   const categories = useMemo(() => Array.from(new Set(items.map(item => item.category).filter(Boolean))), [items])
@@ -130,6 +194,8 @@ export default function NotificationsPage() {
     return true
   }), [category, filter, items])
   const selected = items.find(item => item.id === selectedId) || null
+  const selectedDetail = detail?.id === selectedId ? detail : null
+  const task = selectedDetail?.task || null
 
   const selectItem = useCallback(async (item: NotificationItem) => {
     setSelectedId(item.id)
@@ -348,24 +414,45 @@ export default function NotificationsPage() {
               )}
 
               <div className="mt-5">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <span className="text-[11px] font-medium text-muted-foreground">任务执行详情</span>
+                  {task && (
+                    <div className="flex flex-wrap items-center justify-end gap-1.5 text-[10px]">
+                      <span className={`rounded-full px-2 py-0.5 font-medium ${
+                        task.status === 'success'
+                          ? 'bg-emerald-500/10 text-emerald-500'
+                          : task.status === 'skipped'
+                            ? 'bg-amber-500/10 text-amber-500'
+                            : 'bg-rose-500/10 text-rose-500'
+                      }`}>
+                        {task.status === 'success' ? '执行成功' : task.status === 'skipped' ? '已跳过' : '执行失败'}
+                      </span>
+                      {task.duration_ms > 0 && <span className="rounded-full bg-accent/60 px-2 py-0.5 text-muted-foreground">耗时 {(task.duration_ms / 1000).toFixed(1)}s</span>}
+                      {task.model_label && <span className="max-w-[220px] truncate rounded-full bg-accent/60 px-2 py-0.5 text-muted-foreground" title={task.model_label}>{task.model_label}</span>}
+                    </div>
+                  )}
+                </div>
+                {detailLoading ? (
+                  <div className="flex min-h-28 items-center justify-center rounded-xl border border-border/40 bg-background/30 text-[12px] text-muted-foreground">
+                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />正在读取本次任务结果…
+                  </div>
+                ) : detailError ? (
+                  <div className="rounded-xl border border-rose-500/25 bg-rose-500/8 p-4 text-[12px] text-rose-500">{detailError}</div>
+                ) : task?.error ? (
+                  <div className="rounded-xl border border-rose-500/25 bg-rose-500/8 p-4 font-mono text-[12px] leading-6 text-rose-400 whitespace-pre-wrap break-words">{task.error}</div>
+                ) : task?.result ? (
+                  <MarkdownBlock content={task.result} />
+                ) : selected.trace_id ? (
+                  <div className="rounded-xl border border-dashed border-border/60 px-4 py-6 text-center text-[12px] text-muted-foreground">已有任务追踪编号，但未找到对应的执行结果。</div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-border/60 px-4 py-6 text-center text-[12px] text-muted-foreground">该类通知没有关联 Agent 执行记录。</div>
+                )}
+              </div>
+
+              <div className="mt-5">
                 <div className="mb-2 text-[11px] font-medium text-muted-foreground">通知正文</div>
                 {selected.body ? (
-                  <div className="overflow-x-auto rounded-xl border border-border/40 bg-background/40 p-4 text-[13px] leading-6 text-foreground">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        table: ({ children }) => <table className="my-3 min-w-full border-collapse text-[12px]">{children}</table>,
-                        th: ({ children }) => <th className="border border-border/50 bg-accent/50 px-3 py-2 text-left font-medium">{children}</th>,
-                        td: ({ children }) => <td className="border border-border/50 px-3 py-2 align-top">{children}</td>,
-                        a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2">{children}</a>,
-                        code: ({ children }) => <code className="rounded bg-accent/70 px-1 py-0.5 text-[12px]">{children}</code>,
-                        ul: ({ children }) => <ul className="my-2 list-disc space-y-1 pl-5">{children}</ul>,
-                        ol: ({ children }) => <ol className="my-2 list-decimal space-y-1 pl-5">{children}</ol>,
-                      }}
-                    >
-                      {selected.body}
-                    </ReactMarkdown>
-                  </div>
+                  <MarkdownBlock content={selected.body} />
                 ) : (
                   <div className="rounded-xl border border-dashed border-border/60 px-4 py-8 text-center text-[12px] text-muted-foreground">该通知没有正文。</div>
                 )}

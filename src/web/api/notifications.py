@@ -2,13 +2,13 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from src.core.notify_center import push_notification
 from src.web.database import get_db
-from src.web.models import Notification
+from src.web.models import AgentRun, Notification
 
 router = APIRouter()
 
@@ -28,6 +28,20 @@ class NotificationOut(BaseModel):
     created_at: str = ""
 
 
+class AgentRunDetail(BaseModel):
+    status: str = ""
+    result: str = ""
+    error: str = ""
+    duration_ms: int = 0
+    model_label: str = ""
+    trigger_source: str = ""
+    created_at: str = ""
+
+
+class NotificationDetailOut(NotificationOut):
+    task: AgentRunDetail | None = None
+
+
 def _normalize_link(link: str | None) -> str:
     """兼容旧版个股通知链接。
 
@@ -40,13 +54,29 @@ def _normalize_link(link: str | None) -> str:
     return value
 
 
-def _to_out(n: Notification) -> NotificationOut:
+def _run_status(run: AgentRun | None) -> str:
+    if not run:
+        return ""
+    result = str(run.result or "")
+    if run.status == "success" and "跳过" in result and "交易时段" in result:
+        return "skipped"
+    return str(run.status or "")
+
+
+def _to_out(n: Notification, run: AgentRun | None = None) -> NotificationOut:
+    title = n.title or ""
+    body = n.body or ""
+    level = n.level or "info"
+    if _run_status(run) == "skipped":
+        title = title.replace("✅ ", "⏭️ ", 1).replace(" 已完成", " 已跳过", 1)
+        body = str(run.result or body)
+        level = "warning"
     return NotificationOut(
         id=n.id,
         category=n.category or "system",
-        level=n.level or "info",
-        title=n.title or "",
-        body=n.body or "",
+        level=level,
+        title=title,
+        body=body,
         link=_normalize_link(n.link),
         source=n.source or "",
         trace_id=n.trace_id or "",
@@ -77,8 +107,58 @@ def list_notifications(
     if category:
         q = q.filter(Notification.category == category)
     rows = q.order_by(Notification.id.desc()).limit(limit).all()
+    trace_ids = [str(row.trace_id) for row in rows if row.trace_id]
+    run_by_trace: dict[str, AgentRun] = {}
+    if trace_ids:
+        runs = (
+            db.query(AgentRun)
+            .filter(AgentRun.trace_id.in_(trace_ids))
+            .order_by(AgentRun.id.desc())
+            .all()
+        )
+        for run in runs:
+            run_by_trace.setdefault(str(run.trace_id or ""), run)
     unread = db.query(Notification).filter(Notification.read_at.is_(None)).count()
-    return {"items": [_to_out(r).model_dump() for r in rows], "unread": unread}
+    return {
+        "items": [
+            _to_out(row, run_by_trace.get(str(row.trace_id or ""))).model_dump()
+            for row in rows
+        ],
+        "unread": unread,
+    }
+
+
+@router.get("/{nid}", response_model=NotificationDetailOut)
+def get_notification_detail(nid: int, db: Session = Depends(get_db)):
+    """读取通知及其 trace_id 关联的 Agent 完整执行结果。"""
+    notification = db.query(Notification).filter(Notification.id == nid).first()
+    if not notification:
+        raise HTTPException(status_code=404, detail="通知不存在")
+
+    run = None
+    if notification.trace_id:
+        run = (
+            db.query(AgentRun)
+            .filter(AgentRun.trace_id == notification.trace_id)
+            .order_by(AgentRun.id.desc())
+            .first()
+        )
+
+    payload = _to_out(notification, run).model_dump()
+    payload["task"] = (
+        AgentRunDetail(
+            status=_run_status(run),
+            result=run.result or "",
+            error=run.error or "",
+            duration_ms=int(run.duration_ms or 0),
+            model_label=run.model_label or "",
+            trigger_source=run.trigger_source or "",
+            created_at=run.created_at.isoformat() if run.created_at else "",
+        ).model_dump()
+        if run
+        else None
+    )
+    return payload
 
 
 @router.post("/{nid}/read")
