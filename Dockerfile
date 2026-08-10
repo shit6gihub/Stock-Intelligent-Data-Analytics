@@ -12,8 +12,11 @@ WORKDIR /app/frontend
 # 安装 pnpm
 RUN npm install -g pnpm
 
-# 复制依赖文件
-COPY frontend/package.json frontend/pnpm-lock.yaml ./
+# 复制根依赖与 workspace 清单，确保本地包依赖（如 ECharts）进入冻结安装
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+COPY frontend/packages/api/package.json ./packages/api/package.json
+COPY frontend/packages/base-ui/package.json ./packages/base-ui/package.json
+COPY frontend/packages/biz-ui/package.json ./packages/biz-ui/package.json
 
 # 安装依赖
 RUN pnpm install --frozen-lockfile
