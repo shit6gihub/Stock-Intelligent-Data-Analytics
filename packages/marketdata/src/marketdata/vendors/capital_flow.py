@@ -52,7 +52,8 @@ class EastmoneyCapitalFlowVendor(CapitalFlowVendor):
         sym = symbols[0]
 
         params = {
-            "lmt": "0",
+            # lmt=0 会被东财服务器断连(海外节点更明显);固定拉 5 条足够(5日主力净额)
+            "lmt": "5",
             "klt": "101",
             "secid": sym.to_eastmoney_secid(),
             "fields1": "f1,f2,f3,f7",
