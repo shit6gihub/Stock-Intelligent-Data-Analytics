@@ -501,11 +501,41 @@ class IntradayMonitorAgent(BaseAgent):
                     if abs(inflow) >= 1e8
                     else f"{inflow / 1e4:+.0f}万"
                 )
+                # 主力净流入(方向明确: +流入 / -流出)
+                direction = "流入" if inflow > 0 else ("流出" if inflow < 0 else "平衡")
                 lines.append(
-                    f"- 资金：{flow.get('status')}，主力净流入{inflow_str}（{inflow_pct:+.1f}%）"
+                    f"- 资金：主力净{direction} {inflow_str}（占比{inflow_pct:+.1f}%）"
                 )
+                # 分项净流入(超大单/大单, 有值才显示)
+                super_net = flow.get("super_net_inflow")
+                big_net = flow.get("big_net_inflow")
+                if super_net is not None or big_net is not None:
+                    parts = []
+                    if super_net is not None:
+                        sn = float(super_net)
+                        parts.append(
+                            f"超大单净{('流入' if sn > 0 else '流出' if sn < 0 else '平衡')} "
+                            f"{sn / 1e8:+.2f}亿" if abs(sn) >= 1e8 else
+                            f"超大单净{('流入' if sn > 0 else '流出' if sn < 0 else '平衡')} {sn / 1e4:+.0f}万"
+                        )
+                    if big_net is not None:
+                        bn = float(big_net)
+                        if abs(bn) >= 1e8:
+                            parts.append(
+                                f"大单净{('流入' if bn > 0 else '流出' if bn < 0 else '平衡')} {bn / 1e8:+.2f}亿"
+                            )
+                        else:
+                            parts.append(
+                                f"大单净{('流入' if bn > 0 else '流出' if bn < 0 else '平衡')} {bn / 1e4:+.0f}万"
+                            )
+                    lines.append(f"  - 分项：{'，'.join(parts)}")
                 if flow.get("trend_5d") and flow.get("trend_5d") != "无数据":
                     lines.append(f"- 5日资金：{flow.get('trend_5d')}")
+                # 判断规则: 主力净流入+分项同向 = 真流入; 主力净流入但超大单流出 = 分歧
+                if inflow > 0 and super_net is not None and float(super_net) < 0:
+                    lines.append(
+                        "  - ⚠️ 主力净流入但超大单净流出(分歧): 可能是大单拉抬、超大单出货,谨慎追涨"
+                    )
             except Exception:
                 lines.append("- ⚠️ 资金数据解析失败(数据源返回异常),资金面留空")
         else:
