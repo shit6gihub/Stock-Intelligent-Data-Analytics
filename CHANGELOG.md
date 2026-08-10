@@ -66,6 +66,7 @@
 - 接入国内数据网关（115.190.177.213:8100，Debian12 + FastAPI）：香港节点东财资金流字段被风控断连（push2 ulist f62 间歇 RemoteDisconnected），网关用东财 push2delay 域名稳定返回今日实时四档资金流（主力/超大/大/中/小单）；`capital_flow_collector` 优先调网关（今日实时，含数据基准日标注），失败回退悟道/Engine（T-1）；`CN_GATEWAY_DISABLE=1` 测试禁用开关；验证神剑股份今日主力净流入 5781 万（与券商同源，不再是 T-1 的 2.62 亿）；全量 515 测试通过。
 - 资金流双模式接入（大陆/海外）：`CN_FLOW_MODE=direct` 大陆本地直连东财 push2delay（不依赖网关）；`gateway` 海外走国内网关代理；`auto`（默认）先直连失败走网关自动检测；生产在韩国首尔节点，auto 模式实测直连 push2delay 可用、网关作兜底。
 - 预测引擎隔夜事件源接入同花顺快讯（免key 7×24 新闻流）：根因是 wudao API 免费额度 50/50 用完 → `official_announcements` 拉取失败 → FCC 禁令类隔夜新闻没进模型 → 预测方向失准；新增同花顺快讯源按股票名/代码匹配（东财行情 f58 拿名称），覆盖公告源不含的财经新闻（FCC 禁令/行业政策/涨价）；兜底链 wudao公告→同花顺快讯→东财公告；验证克明食品增持利好 → 修正 +1.25%。
+- TradingAgents 资金流接入今日实时（双模式网关）：之前 `md.capital_flow`（东财/新浪 T-1）与今日实时网关是两条独立路径；新增 `_fetch_ta_capital_flow` 优先走 CapitalFlowCollector 今日实时（direct/gateway/auto 双模式）失败回退引擎；TradingAgents 多 Agent 分析资金面不再用 T-1 数据；验证神剑股份主力 5781 万/超大单 4615 万。
 
 ### update
 
