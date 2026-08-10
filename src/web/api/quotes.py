@@ -208,10 +208,17 @@ _MINUTE_CACHE: dict = {}  # {symbol_market: (ts, points)}
 _MINUTE_TTL = 15.0  # 分时变动快, 短缓存
 
 
-def _tencent_minute(symbol: str, market: str) -> list[dict] | None:
-    """腾讯分时接口(https://web.ifzq.gtimg.cn)。返回 [{t, price, avg, volume}]。"""
+def _tencent_minute(symbol: str, market: str) -> tuple[list[dict] | None, float | None]:
+    """腾讯分时接口。返回 (points, prev_close) — prev_close 为昨收(±分界线用)。"""
+    # 指数代码识别(2026-08-10 修复): 000001=上证指数(非平安银行!), 399001=深证成指
+    # 指数约定: 沪指以 000 开头(sh), 深指以 399 开头(sz); 个股 000 开头是深市(sz)
     prefix = {"CN": "sh" if symbol.startswith(("6", "9")) else "sz",
               "HK": "hk", "US": ""}.get(market, "sh")
+    if market == "CN":
+        if symbol in ("000001", "000300", "000016", "000905", "000852"):
+            prefix = "sh"   # 上证指数/沪深300/上证50/中证500/中证1000
+        elif symbol.startswith("399"):
+            prefix = "sz"   # 深证成指/创业板指(399 开头已是 sz, 保持)
     code = f"{prefix}{symbol}" if market != "US" else symbol
     url = f"https://web.ifzq.gtimg.cn/appstock/app/minute/query?code={code}"
     try:
@@ -222,7 +229,18 @@ def _tencent_minute(symbol: str, market: str) -> list[dict] | None:
             d = _json.load(resp)
         data = (d.get("data") or {}).get(code, {}).get("data", {}).get("data")
         if not data:
-            return None
+            return None, None
+        # 昨收: qt list[4](指数与个股通用: [3]=现价 [4]=昨收 [5]=今开)
+        prev_close = None
+        try:
+            qt = (d.get("data") or {}).get(code, {}).get("qt", {})
+            qt_list = qt.get(code) if isinstance(qt, dict) else None
+            if isinstance(qt_list, list) and len(qt_list) > 4 and qt_list[4]:
+                prev_close = float(qt_list[4])
+            elif isinstance(qt_list, dict):
+                prev_close = float(qt_list.get("preclose") or qt_list.get("pre_close") or 0) or None
+        except (TypeError, ValueError):
+            pass
         # 字段: "0930 1308.66 173 22639818.00" = 时间 价格 累计量(手) 累计额(元)
         # ⚠️ 第3/4列本身已经是"当日累计"值, 不可再累加(旧版 cum_vol += vol 是 bug,
         #    会把累计量当增量二次累加, 导致均价分母膨胀、均价线整体失真)
@@ -239,21 +257,21 @@ def _tencent_minute(symbol: str, market: str) -> list[dict] | None:
             bar_vol = max(cum_vol - prev_cum_vol, 0.0)  # 本分钟增量成交量(手)
             prev_cum_vol = cum_vol
             points.append({"t": t, "price": price, "avg": round(avg, 2), "volume": int(bar_vol)})
-        return points
+        return points, prev_close
     except Exception as e:
         logger.debug(f"腾讯分时失败 {symbol}: {e}")
-        return None
+        return None, None
 
 
 @router.get("/minute/{symbol}")
 async def get_minute(symbol: str, market: str = "CN"):
-    """分时走势(盘中实时)。腾讯优先, 失败返回空。"""
+    """分时走势(盘中实时)。腾讯优先, 失败返回空。含昨收(±分界线)。"""
     cache_key = f"{market}:{symbol}"
     cached = _MINUTE_CACHE.get(cache_key)
     if cached and (_time.time() - cached[0]) < _MINUTE_TTL:
-        return {"symbol": symbol, "market": market, "points": cached[1]}
-    points = _tencent_minute(symbol, market)
+        return {"symbol": symbol, "market": market, "points": cached[1], "prev_close": cached[2]}
+    points, prev_close = _tencent_minute(symbol, market)
     if points is None:
         points = []
-    _MINUTE_CACHE[cache_key] = (_time.time(), points)
-    return {"symbol": symbol, "market": market, "points": points}
+    _MINUTE_CACHE[cache_key] = (_time.time(), points, prev_close)
+    return {"symbol": symbol, "market": market, "points": points, "prev_close": prev_close}

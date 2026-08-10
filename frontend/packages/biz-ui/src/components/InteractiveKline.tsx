@@ -33,6 +33,7 @@ type MinuteResponse = {
   symbol: string
   market: string
   points: MinutePoint[]
+  prev_close?: number | null
 }
 
 type HoverTipRow = {
@@ -182,8 +183,11 @@ export default function InteractiveKline(props: {
   // 分时模式(内嵌进K线图组件, 与日/周/月同一组切换器)
   const [mode, setMode] = useState<'minute' | 'kline'>('kline')
   const [minutePoints, setMinutePoints] = useState<MinutePoint[]>([])
+  const [minutePrevClose, setMinutePrevClose] = useState<number | null>(null)
   const [minuteLoading, setMinuteLoading] = useState(false)
   const [minuteError, setMinuteError] = useState<string>('')
+  const minuteRef = useRef<{ pts: MinutePoint[]; prev: number | null }>({ pts: [], prev: null })
+  minuteRef.current = { pts: minutePoints, prev: minutePrevClose }
 
   const loadMinute = async () => {
     if (!props.symbol) return
@@ -194,9 +198,11 @@ export default function InteractiveKline(props: {
         `/quotes/minute/${encodeURIComponent(props.symbol)}?market=${encodeURIComponent(props.market)}`
       )
       setMinutePoints(res.points || [])
+      setMinutePrevClose(res.prev_close ?? null)
     } catch (e) {
       setMinuteError(e instanceof Error ? e.message : '加载分时失败')
       setMinutePoints([])
+      setMinutePrevClose(null)
     } finally {
       setMinuteLoading(false)
     }
@@ -654,10 +660,21 @@ export default function InteractiveKline(props: {
           let avgPath = ''
           let lo = 0
           let hi = 0
+          // ±分界线: 昨收作为零轴基准(2026-08-10 修复), y 轴以昨收为对称中心
+          const prevC = minutePrevClose ?? pts[0]?.price ?? 0
           if (pts.length > 1) {
             const vals = pts.flatMap(p => [p.price, p.avg])
-            lo = Math.min(...vals)
-            hi = Math.max(...vals)
+            const dayLo = Math.min(...vals)
+            const dayHi = Math.max(...vals)
+            // 以昨收为中心, 上下各取 max(今日常规范围, 昨收±2.5%) 对称
+            const baseRange = Math.max(
+              (dayHi - dayLo) / 2,
+              Math.abs(dayHi - prevC),
+              Math.abs(prevC - dayLo),
+              prevC * 0.025,
+            )
+            lo = prevC - baseRange
+            hi = prevC + baseRange
             const range = hi - lo || 1
             const stepX = (W - PAD * 2) / (pts.length - 1)
             const build = (get: (p: MinutePoint) => number) =>
@@ -671,6 +688,10 @@ export default function InteractiveKline(props: {
             pricePath = build(p => p.price)
             avgPath = build(p => p.avg)
           }
+          // 昨收基准线 y 坐标
+          const prevY = prevC
+            ? PAD + (1 - (prevC - lo) / (hi - lo || 1)) * (H - PAD * 2)
+            : null
           const first = pts[0]
           const last = pts[pts.length - 1]
           const up = !!last && !!first && last.price >= first.price
@@ -705,6 +726,12 @@ export default function InteractiveKline(props: {
                     <text x={PAD} y={PAD - 8} className="fill-muted-foreground" fontSize="11">{hi.toFixed(2)}</text>
                     <text x={PAD} y={H - PAD + 16} className="fill-muted-foreground" fontSize="11">{lo.toFixed(2)}</text>
                     <text x={W - PAD - 30} y={H - PAD + 16} className="fill-muted-foreground" fontSize="11">{last?.t}</text>
+                    {prevY !== null && (
+                      <>
+                        <line x1={PAD} y1={prevY} x2={W - PAD} y2={prevY} stroke="#94a3b8" strokeWidth={1} strokeDasharray="5 4" opacity={0.9} />
+                        <text x={W - PAD - 4} y={prevY - 5} className="fill-slate-500" fontSize="10" textAnchor="end">昨收 {prevC.toFixed(2)}</text>
+                      </>
+                    )}
                     <path d={avgPath} fill="none" stroke="#f59e0b" strokeWidth={1.2} opacity={0.85} />
                     <path d={pricePath} fill="none" stroke={up ? '#f43f5e' : '#10b981'} strokeWidth={1.6} />
                   </svg>
