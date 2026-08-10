@@ -135,6 +135,29 @@ async def _hot_stocks_live_or_snapshot(
             return data
     except Exception as e:
         logger.warning(f"discovery stocks live failed ({mkt}/{mode}): {type(e).__name__}: {e!r}")
+    # 网关兜底(2026-08-10): 海外节点东财 push2 502, 走国内网关 push2delay 拿真实榜单
+    try:
+        import requests as _req
+        gw_items = _req.get(
+            f"http://115.190.177.213:8100/cn/hot-stocks",
+            params={"mode": mode, "limit": limit},
+            timeout=6,
+        ).json().get("items") or []
+        if gw_items:
+            return [
+                {
+                    "symbol": it.get("symbol"),
+                    "market": "CN",
+                    "name": it.get("name"),
+                    "price": it.get("price"),
+                    "change_pct": it.get("change_pct"),
+                    "turnover": it.get("turnover"),
+                    "volume": it.get("volume"),
+                }
+                for it in gw_items
+            ]
+    except Exception as e:
+        logger.warning(f"discovery stocks gateway fallback failed: {e!r}")
     # Snapshot fallback: ensures UI is still usable when live source timeout/unavailable.
     return _latest_snapshot_stocks(db, mkt, limit=max(limit, 40))
 

@@ -12,6 +12,8 @@ interface MarketFlow {
   board_count: number
   source?: string
   timestamp?: string
+  inflow_boards?: { name: string; net_inflow: number; change_pct?: number | null }[]
+  outflow_boards?: { name: string; net_inflow: number; change_pct?: number | null }[]
 }
 
 interface IndexDetail {
@@ -146,24 +148,58 @@ export default function IndexDetailPage() {
 
           {/* 大盘资金流(同花顺源, 东财502替代) */}
           {marketFlow && (
-            <div className="card-subtle p-3 mb-3 flex flex-wrap items-center gap-x-6 gap-y-2">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-primary" />
-                <span className="text-[12px] font-semibold">大盘资金流</span>
-                <span className="text-[10px] text-muted-foreground">同花顺 · {marketFlow.board_count ?? '--'}板块</span>
+            <div className="card-subtle p-3 mb-3">
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="h-4 w-4 text-primary" />
+                  <span className="text-[12px] font-semibold">大盘资金流</span>
+                  <span className="text-[10px] text-muted-foreground">同花顺 · {marketFlow.board_count ?? '--'}板块</span>
+                </div>
+                <div className="flex items-center gap-4 text-[12px]">
+                  <span className="text-muted-foreground">总流入 <b className="text-red-500 font-mono">{(marketFlow.total_inflow ?? 0).toFixed(1)}亿</b></span>
+                  <span className="text-muted-foreground">总流出 <b className="text-green-500 font-mono">{(marketFlow.total_outflow ?? 0).toFixed(1)}亿</b></span>
+                  <span className="text-muted-foreground">净流入
+                    <b className={`font-mono ${(marketFlow.net_inflow ?? 0) >= 0 ? 'text-red-500' : 'text-green-500'}`}>
+                      {(marketFlow.net_inflow ?? 0) >= 0 ? '+' : ''}{(marketFlow.net_inflow ?? 0).toFixed(1)}亿
+                    </b>
+                  </span>
+                </div>
+                {marketFlow.timestamp && (
+                  <span className="ml-auto text-[10px] text-muted-foreground">更新 {marketFlow.timestamp?.slice(11, 16)}</span>
+                )}
               </div>
-              <div className="flex items-center gap-4 text-[12px]">
-                <span className="text-muted-foreground">总流入 <b className="text-red-500 font-mono">{(marketFlow.total_inflow ?? 0).toFixed(1)}亿</b></span>
-                <span className="text-muted-foreground">总流出 <b className="text-green-500 font-mono">{(marketFlow.total_outflow ?? 0).toFixed(1)}亿</b></span>
-                <span className="text-muted-foreground">净流入
-                  <b className={`font-mono ${(marketFlow.net_inflow ?? 0) >= 0 ? 'text-red-500' : 'text-green-500'}`}>
-                    {(marketFlow.net_inflow ?? 0) >= 0 ? '+' : ''}{(marketFlow.net_inflow ?? 0).toFixed(1)}亿
-                  </b>
-                </span>
-              </div>
-              {marketFlow.timestamp && (
-                <span className="ml-auto text-[10px] text-muted-foreground">更新 {marketFlow.timestamp?.slice(11, 16)}</span>
-              )}
+
+              {/* 板块资金明细: 流入榜 / 流出榜 */}
+              {(marketFlow.inflow_boards?.length || marketFlow.outflow_boards?.length) ? (
+                <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {marketFlow.inflow_boards?.length ? (
+                    <div>
+                      <div className="text-[11px] font-semibold text-red-500 mb-1">🔥 资金流入板块</div>
+                      <div className="space-y-0.5">
+                        {marketFlow.inflow_boards.map(b => (
+                          <div key={b.name} className="flex justify-between text-[11px]">
+                            <span className="text-muted-foreground truncate">{b.name}</span>
+                            <span className="font-mono text-red-500">+{b.net_inflow.toFixed(1)}亿</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {marketFlow.outflow_boards?.length ? (
+                    <div>
+                      <div className="text-[11px] font-semibold text-green-500 mb-1">💧 资金流出板块</div>
+                      <div className="space-y-0.5">
+                        {marketFlow.outflow_boards.map(b => (
+                          <div key={b.name} className="flex justify-between text-[11px]">
+                            <span className="text-muted-foreground truncate">{b.name}</span>
+                            <span className="font-mono text-green-500">{b.net_inflow.toFixed(1)}亿</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           )}
 

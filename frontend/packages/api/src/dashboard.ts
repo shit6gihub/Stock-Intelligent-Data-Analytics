@@ -34,6 +34,8 @@ export interface DashboardMarketCapitalFlow {
   board_count: number
   source?: string
   timestamp?: string
+  inflow_boards?: { name: string; net_inflow: number; change_pct?: number | null }[]
+  outflow_boards?: { name: string; net_inflow: number; change_pct?: number | null }[]
 }
 
 export interface DashboardMarketStatus {
