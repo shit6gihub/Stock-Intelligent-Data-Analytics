@@ -60,3 +60,19 @@ def test_format():
     out = format_rotation(r)
     assert "大宗商品轮动" in out
     assert "金属狂潮" in out
+
+
+def test_conflict_overrides_rotation():
+    """地缘冲突优先于普通轮动(战争打断轮动剧本)。"""
+    r = detect_rotation_stage(["以伊开战,中东局势升级", "原油暴涨5%", "黄金大涨"])
+    assert r["stage"] == "地缘冲突"
+    assert r.get("conflict") is True
+    assert "石油" in "".join(r["sectors"])
+    assert "黄金" in "".join(r["sectors"])
+    assert any("五波传导" in h for h in r["hints"])
+
+
+def test_conflict_energy_combined():
+    """冲突+能源事件 → 仍判地缘冲突(优先级)。"""
+    r = detect_rotation_stage(["铜价上涨", "伊朗遭导弹袭击"])
+    assert r["stage"] == "地缘冲突"

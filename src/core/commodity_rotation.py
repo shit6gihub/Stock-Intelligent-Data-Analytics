@@ -26,6 +26,16 @@ STAGE_SECTORS = {
     STAGE_GOLD: ["黄金", "贵金属", "军工", "高股息"],
 }
 
+# 地缘冲突阶段(2026-08-10 学习文《以伊开战五波冲击》,优先级高于普通轮动)
+STAGE_CONFLICT = "地缘冲突"
+STAGE_SECTORS[STAGE_CONFLICT] = ["石油", "油气", "黄金", "军工", "国防"]
+
+# 冲突关键词(命中即认为进入地缘冲突模式)
+CONFLICT_KEYWORDS = [
+    "开战", "战争", "冲突", "袭击", "导弹", "轰炸", "制裁", "战火",
+    "军事行动", "地缘", "中东", "以伊", "伊朗", "以色列", "俄乌", "巴以",
+]
+
 # 商品关键词 → 所属阶段
 COMMODITY_KEYWORDS = {
     "原油": STAGE_ENERGY, "石油": STAGE_ENERGY, "煤炭": STAGE_ENERGY, "天然气": STAGE_ENERGY,
@@ -60,6 +70,23 @@ def detect_rotation_stage(events: list[str]) -> dict:
             "next_sectors": STAGE_SECTORS[STAGE_METAL],
             "hints": [],
         }
+
+    # 地缘冲突优先(战争冲击可打断正常轮动,直接进入避险/能源模式)
+    for ev in events:
+        for kw in CONFLICT_KEYWORDS:
+            if kw in ev:
+                return {
+                    "stage": STAGE_CONFLICT,
+                    "sectors": STAGE_SECTORS[STAGE_CONFLICT],
+                    "next_stage": STAGE_GOLD,
+                    "next_sectors": STAGE_SECTORS[STAGE_GOLD],
+                    "hints": [
+                        "⚠️ 地缘冲突爆发 → 五波传导: 能源(油气/油服)→大宗(有色/化工)→通胀→货币→避险(黄金/军工)",
+                        "冲突当天能源+避险先动,持续性看供给是否真中断",
+                        "与商品轮动联动: 冲突优先级高于轮动剧本,防御思维为主",
+                    ],
+                    "conflict": True,
+                }
 
     # 统计各阶段命中次数
     stage_hits: dict[str, int] = {}
