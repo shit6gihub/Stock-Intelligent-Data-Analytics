@@ -161,3 +161,45 @@ def test_double_bottom_breakout():
     # 双底要求两个低点接近(10.0 vs 10.1)且突破颈线
     # 颈线=中间反弹高点≈13.0,收盘13.9>13.0 ✓
     assert any("双底" in n for n in names), f"应识别双底突破,实际 {names}"
+
+
+# ============ 八大进场信号测试(2026-08-10 学习文) ============
+
+def test_morning_star():
+    """早晨之星: 长阴→星线→长阳(低位)。"""
+    from src.core.kline_pattern import detect_patterns
+    bars = make_bars([
+        (10, 10.2, 9.9, 10.1, 1), (10.1, 10.3, 10.0, 10.2, 1), (10.2, 10.4, 10.1, 10.3, 1),
+        (10.0, 10.1, 8.0, 8.1, 2),   # 长阴
+        (8.1, 8.2, 8.0, 8.1, 0.5),   # 星线
+        (8.2, 10.5, 8.1, 10.4, 2),   # 长阳
+    ])
+    hits = detect_patterns(bars)
+    names = [h.name for h in hits]
+    assert "早晨之星" in names, f"应识别早晨之星,实际 {names}"
+
+
+def test_double_hammer_bottom():
+    """大锤和小锤: 底部连续两根长下影。"""
+    from src.core.kline_pattern import detect_patterns
+    bars = make_bars([
+        (10, 10.2, 9.9, 10.1, 1), (10.1, 10.3, 10.0, 10.2, 1), (10.2, 10.4, 10.1, 10.3, 1),
+        (10.3, 10.5, 8.0, 10.4, 1.5),  # 长下影1
+        (10.4, 10.6, 8.1, 10.5, 1.5),  # 长下影2(低点接近)
+    ])
+    hits = detect_patterns(bars)
+    names = [h.name for h in hits]
+    assert any(n in ("大锤和小锤", "双针探底", "金针探底") for n in names), f"应识别底部锤子类形态,实际 {names}"
+
+
+def test_bullish_engulfing_small_yin():
+    """大阳包小阴: 大阳吞没前日小阴。"""
+    from src.core.kline_pattern import detect_patterns
+    bars = make_bars([
+        (10, 10.2, 9.9, 10.1, 1), (10.1, 10.3, 10.0, 10.2, 1),
+        (10.0, 10.1, 9.6, 9.7, 1),  # 小阴
+        (9.4, 10.8, 9.3, 10.7, 2),  # 大阳包住
+    ])
+    hits = detect_patterns(bars)
+    names = [h.name for h in hits]
+    assert "大阳包小阴" in names, f"应识别大阳包小阴,实际 {names}"

@@ -79,7 +79,7 @@ def _change_pct(bar) -> float:
 
 def detect_patterns(bars: list, lookback: int = 30) -> list[PatternHit]:
     """识别 K 线形态。bars: 日K序列(升序,需含 open/high/low/close/volume)。"""
-    if len(bars) < 5:
+    if len(bars) < 3:
         return []
     seq = bars[-lookback:]
     hits: list[PatternHit] = []
@@ -189,10 +189,118 @@ def detect_patterns(bars: list, lookback: int = 30) -> list[PatternHit]:
     # ================= 看跌形态(八大看跌K线形态,2026-08-10 学习) =================
     _detect_bearish_patterns(bars, hits)
 
+    # ================= 八大进场信号(2026-08-10 学习文,底部看涨/抄底) =================
+    _detect_entry_signals(bars, hits)
+
     # ================= 经典反转/持续形态(同花顺《K线形态大全》20 种,可量化部分) =================
     _detect_classic_patterns(bars, hits)
 
     return hits
+
+
+def _detect_entry_signals(bars: list, hits: list[PatternHit]) -> None:
+    """八大进场信号: 早晨之星/底部十字星/底部强势大阳线/底部大长腿/大锤小锤/大阳包小阴/大阴后两小阳/进击两阳线。"""
+    if len(bars) < 3:
+        return
+    # 低位判断: 形态启动前价格处于窗口低位(进场信号都出现在底部)
+    w_low = min(b.low for b in bars)
+    w_high = max(b.high for b in bars)
+    # 用最近5日最低价判断(形态出现时价格已反弹,但最低点仍在低位区)
+    recent_low = min(b.low for b in bars[-5:]) if len(bars) >= 5 else bars[-1].low
+    in_low_zone = recent_low <= w_low + (w_high - w_low) * 0.55
+
+    # ---- 早晨之星: 长阴→星线→长阳 ----
+    if len(bars) >= 3:
+        b1, b2, b3 = bars[-3], bars[-2], bars[-1]
+        if (not _is_yang(b1) and _is_yang(b3) and
+                _body_len(b1) >= MIN_BODY and _body_len(b3) >= MIN_BODY and
+                _body_len(b2) < _body_len(b1) * 0.3 and
+                b3.close > b1.open and in_low_zone):
+            hits.append(PatternHit(
+                name="早晨之星", signal="看涨", position="低位",
+                description="下跌末端长阴→星线→长阳,多空反转,经典抄底信号",
+                bars=[-3, -2, -1],
+            ))
+
+    # ---- 底部十字星: 下跌末端十字星 ----
+    last = bars[-1]
+    # 十字星前需有明确下跌(前5日从高点跌超5%),排除横盘
+    prev_high = max(b.high for b in bars[-6:-1]) if len(bars) >= 6 else None
+    has_decline = prev_high is not None and prev_high > 0 and (last.close - prev_high) / prev_high * 100 < -5.0
+    if (_body_len(last) < 0.3 and _shadow_bottom(last) > 0 and
+            abs(_shadow_top(last) - _shadow_bottom(last)) / max(_shadow_top(last), _shadow_bottom(last)) < 0.5 and
+            in_low_zone and _body_len(last) < 1.0 and has_decline):
+        hits.append(PatternHit(
+            name="底部十字星", signal="看涨", position="低位",
+            description="下跌末端十字星,多空平衡,趋势转折点",
+            bars=[-1],
+        ))
+
+    # ---- 底部强势大阳线: 底部放量大阳线 ----
+    if _change_pct(last) >= BIG_YANG_PCT and in_low_zone:
+        hits.append(PatternHit(
+            name="底部强势大阳线", signal="看涨", position="低位",
+            description=f"底部区域放量大阳线({_change_pct(last):.1f}%),强势上涨启动",
+            bars=[-1],
+        ))
+
+    # ---- 底部大长腿: 底部极长下影(大长腿) ----
+    if _is_long_lower_shadow(last) and _shadow_bottom(last) >= _body_len(last) * 3 and in_low_zone:
+        hits.append(PatternHit(
+            name="底部大长腿", signal="看涨", position="低位",
+            description="底部极长下影线(下影>=实体3倍),空方抛压枯竭,下方有承接",
+            bars=[-1],
+        ))
+
+    # ---- 大锤和小锤: 底部连续两根长下影(双重支撑) ----
+    if len(bars) >= 2:
+        b1, b2 = bars[-2], bars[-1]
+        # 锤子线: 下影>=实体3倍 且 下影绝对值>实体(不依赖 MIN_BODY,实体小是锤子常态)
+        def _is_hammer(b):
+            return _shadow_bottom(b) >= max(_body_len(b) * 3, MIN_BODY)
+        if (_is_hammer(b1) and _is_hammer(b2) and
+                abs(b1.low - b2.low) / max(b1.low, b2.low) < 0.05 and in_low_zone):
+            hits.append(PatternHit(
+                name="大锤和小锤", signal="看涨", position="低位",
+                description="底部连续两根长下影锤子线,双重支撑,底部稳固",
+                bars=[-2, -1],
+            ))
+
+    # ---- 大阳包小阴: 大阳线完全吞没前日小阴线 ----
+    if len(bars) >= 2:
+        b1, b2 = bars[-2], bars[-1]
+        if (not _is_yang(b1) and _is_yang(b2) and
+                _body_len(b2) >= _body_len(b1) * 1.5 and
+                b2.open <= b1.close and b2.close >= b1.open and in_low_zone):
+            hits.append(PatternHit(
+                name="大阳包小阴", signal="看涨", position="低位",
+                description="大阳线完全吞没前日小阴线,多方碾压空方,底部反转",
+                bars=[-2, -1],
+            ))
+
+    # ---- 大阴后两小阳: 大阴线后两根小阳线(空头宣泄休整) ----
+    if len(bars) >= 3:
+        b1, b2, b3 = bars[-3], bars[-2], bars[-1]
+        if (not _is_yang(b1) and _body_len(b1) >= MIN_BODY * 2 and
+                _is_yang(b2) and _is_yang(b3) and
+                _body_len(b2) < _body_len(b1) and _body_len(b3) < _body_len(b1) and
+                in_low_zone):
+            hits.append(PatternHit(
+                name="大阴后两小阳", signal="看涨", position="低位",
+                description="大阴线后两根小阳线,空头宣泄进入休整期,企稳信号",
+                bars=[-3, -2, -1],
+            ))
+
+    # ---- 进击两阳线: 两根连续阳线(第二根更强) ----
+    if len(bars) >= 2:
+        b1, b2 = bars[-2], bars[-1]
+        if (_is_yang(b1) and _is_yang(b2) and
+                b2.close > b1.close and _body_len(b2) >= _body_len(b1) and in_low_zone):
+            hits.append(PatternHit(
+                name="进击两阳线", signal="看涨", position="低位",
+                description="两根连续阳线且第二根更强,多方强势进攻",
+                bars=[-2, -1],
+            ))
 
 
 def _detect_classic_patterns(bars: list, hits: list[PatternHit]) -> None:
