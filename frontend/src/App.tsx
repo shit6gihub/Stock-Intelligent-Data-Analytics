@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
-import { TrendingUp, Bot, ScrollText, Settings, List, Database, Clock, LayoutDashboard, Github, BellRing, Sparkles, Activity, LineChart, FileText, BookOpen } from 'lucide-react'
+import { TrendingUp, Bot, ScrollText, Settings, List, Database, Clock, LayoutDashboard, Github, BellRing, Sparkles, Activity, LineChart, FileText, BookOpen, Shield } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
 import { appApi, fetchAPI, isAuthenticated } from '@panwatch/api'
 import DashboardPage from '@/pages/Dashboard'
@@ -18,6 +18,7 @@ import PaperTradingPage from '@/pages/PaperTrading'
 import LoginPage from '@/pages/Login'
 import ForecastPage from '@/pages/Forecast'
 import IndexDetailPage from '@/pages/IndexDetail'
+import ShadowAccountPage from '@/pages/ShadowAccount'
 import LogsModal from '@panwatch/biz-ui/components/logs-modal'
 import AmbientBackground from '@panwatch/biz-ui/components/AmbientBackground'
 import NotificationBell from '@panwatch/biz-ui/components/notification-bell'
@@ -38,6 +39,7 @@ const navItems = [
   { to: '/agents', icon: Bot, label: 'Agent' },
   { to: '/reports', icon: FileText, label: '报告' },
   { to: '/strategies', icon: BookOpen, label: '策略库' },
+  { to: '/shadow', icon: Shield, label: '影子账户' },
   { to: '/history', icon: Clock, label: '历史' },
   { to: '/datasources', icon: Database, label: '数据源' },
   { to: '/settings', icon: Settings, label: '设置' },
@@ -276,6 +278,7 @@ function App() {
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/reports" element={<ReportsPage />} />
           <Route path="/strategies" element={<StrategiesPage />} />
+          <Route path="/shadow" element={<ShadowAccountPage />} />
           <Route path="/paper-trading" element={<PaperTradingPage />} />
           <Route path="/alerts" element={<PriceAlertsPage />} />
           <Route path="/datasources" element={<DataSourcesPage />} />
