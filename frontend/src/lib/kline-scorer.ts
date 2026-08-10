@@ -110,6 +110,25 @@ export function buildKlineSuggestion(s: KlineSummaryData, holding?: boolean): Kl
     }
   }
 
+  // K线组合形态(同花顺教学体系,2026-08-10 接入)
+  const klinePatterns = s.kline_patterns || []
+  for (const p of klinePatterns) {
+    const name = p.name || ''
+    const signal = p.signal || ''
+    const pos = p.position || ''
+    const details = `周期${tf} ${asof} · 位置:${pos || '--'}`
+    if (signal === '看涨') {
+      // 强底部信号(金针/双针/揭竿而起) +2,趋势延续 +1
+      const strong = ['金针探底', '双针探底', '揭竿而起', '涨停双响炮'].includes(name)
+      addItem(`${name}，看涨形态`, strong ? 2 : 1, name, details)
+    } else if (signal === '看跌') {
+      const strong = ['三只乌鸦', '黄昏之星', '倾盆大雨'].includes(name)
+      addItem(`${name}，看跌形态`, strong ? -2 : -1, name, details)
+    } else {
+      addItem(`${name}`, 0, name, details)
+    }
+  }
+
   const holdingFlag = holding === true
   let action: Action
   if (holdingFlag) {

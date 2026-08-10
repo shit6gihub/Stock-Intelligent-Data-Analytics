@@ -156,7 +156,7 @@ CHAT_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_kline_patterns",
-            "description": "识别某只股票的K线组合形态（金针探底/双针探底/红三兵/涨停双响炮/揭竿而起/上升三法/小步上扬/放量突破等）。基于同花顺K线形态教学体系。用于回答「XX股票K线什么形态」「有没有金针探底/红三兵」「技术形态怎么样」等问题。返回形态名称+信号方向+特征描述。",
+            "description": "识别某只股票的K线组合形态（金针探底/双针探底/红三兵/涨停双响炮/揭竿而起/上升三法/小步上扬/放量突破/三只乌鸦/空方炮/黄昏之星等）。基于同花顺K线形态教学体系。用于回答「XX股票K线什么形态」「有没有金针探底/红三兵」「技术形态怎么样」等问题。返回形态名称+信号方向+特征描述。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -164,6 +164,21 @@ CHAT_TOOLS = [
                     "market": {"type": "string", "description": "市场：CN(默认)/HK/US", "default": "CN"},
                 },
                 "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_auction_data",
+            "description": "获取A股集合竞价数据（9:25后当日竞价已生成）：竞价全景（竞价涨停/跌停/涨停委买额/成交额/昨炸板反馈/昨涨停反馈）、竞价最强个股（按bidStrength/金额/涨幅）、竞价主线题材、弱转强/被核风险。用于回答「集合竞价怎么样」「今天竞价最强是谁」「竞价主线是什么」「竞价有超预期的吗」「昨高标被核了吗」「今天弱转强的是谁」等竞价相关问题。注意：9:25前当日竞价数据未生成，会明确提示。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "scene": {"type": "string", "description": "竞价场景：overview(竞价全景，默认)/strongest(最强个股)/theme(主线题材)/weak_to_strong(弱转强)/risk(被核风险)/watchlist(盯盘名单)"},
+                    "limit": {"type": "integer", "description": "返回条数，默认 10", "default": 10},
+                },
+                "required": [],
             },
         },
     },
@@ -297,6 +312,10 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
             symbol = args.get("symbol", "")
             market = args.get("market", "CN")
             return await _fetch_kline_pattern_context(symbol, market)
+        elif name == "get_auction_data":
+            scene = args.get("scene", "overview")
+            limit = int(args.get("limit", 10) or 10)
+            return await _fetch_auction_context(scene, limit)
         else:
             return f"未知工具: {name}"
     except Exception as e:
@@ -517,6 +536,111 @@ async def _fetch_kline_pattern_context(symbol: str, market: str) -> str:
     except Exception as e:
         logger.debug(f"获取K线形态失败: {e}")
         return f"K线形态识别失败: {e}"
+
+
+async def _fetch_auction_context(scene: str, limit: int = 10) -> str:
+    """集合竞价数据(悟道 MCP 竞价工具,9:25 后当日数据就绪)。"""
+    try:
+        from src.collectors.wudao_mcp_client import WudaoMCPClient
+
+        cli = WudaoMCPClient()
+        cli._initialize()
+        lines: list[str] = []
+        scene = (scene or "overview").strip() or "overview"
+
+        if scene in ("strongest", "watchlist"):
+            # 竞价最强个股(市值归一化 bidStrength)
+            res = cli.call_tool("auction_market_scan", {"sortBy": "bidStrength", "limit": limit})
+            text = res.get("text") if isinstance(res, dict) else ""
+            if text:
+                lines.append("【竞价最强个股】\n" + str(text))
+            else:
+                rows = res.get("rows") or res.get("data") or []
+                if rows:
+                    lines.append("【竞价最强个股】")
+                    for r in rows[:limit]:
+                        if isinstance(r, dict):
+                            name = r.get("name") or r.get("stockName") or r.get("code") or ""
+                            strength = r.get("bidStrength") or r.get("bidAmountPercentile") or ""
+                            amt = r.get("bidAmount") or r.get("limitBuyAmount") or ""
+                            line = f"- {name}"
+                            if strength:
+                                line += f" 强度:{strength}"
+                            if amt:
+                                line += f" 金额:{amt}"
+                            lines.append(line)
+        elif scene == "theme":
+            res = cli.call_tool("auction_theme_signal", {"limit": limit})
+            text = res.get("text") if isinstance(res, dict) else ""
+            if text:
+                lines.append("【竞价主线题材】\n" + str(text))
+            else:
+                groups = (res.get("data") or res.get("signalGroup") or [])
+                if groups:
+                    lines.append("【竞价主线题材】")
+                    for g in groups[:limit]:
+                        if isinstance(g, dict):
+                            name = g.get("theme") or g.get("name") or ""
+                            desc = g.get("description") or g.get("signal") or ""
+                            lines.append(f"- {name}: {desc}")
+        elif scene == "weak_to_strong":
+            res = cli.call_tool("auction_weak_to_strong", {"limit": limit})
+            text = res.get("text") if isinstance(res, dict) else ""
+            if text:
+                lines.append("【竞价弱转强】\n" + str(text))
+            else:
+                rows = res.get("rows") or res.get("data") or []
+                if rows:
+                    lines.append("【竞价弱转强】")
+                    for r in rows[:limit]:
+                        if isinstance(r, dict):
+                            name = r.get("name") or r.get("stockName") or r.get("code") or ""
+                            score = r.get("wtsScore") or ""
+                            origin = r.get("origin") or ""
+                            lines.append(f"- {name} wtsScore:{score} 来源:{origin}")
+        elif scene == "risk":
+            # 昨高标被核风险
+            res = cli.call_tool("auction_limitup_feedback", {"focus": "risk", "groupBy": "streak"})
+            text = res.get("text") if isinstance(res, dict) else ""
+            if text:
+                lines.append("【竞价被核风险】\n" + str(text))
+            else:
+                summary = (res.get("data") or {}).get("summary") or res.get("summary") or {}
+                if summary:
+                    break_rate = summary.get("breakRate") or summary.get("break_rate") or ""
+                    lines.append(f"【竞价被核风险】炸板率:{break_rate}")
+                rows = (res.get("data") or {}).get("risk") or res.get("risk") or []
+                if rows:
+                    for r in rows[:limit]:
+                        if isinstance(r, dict):
+                            name = r.get("name") or r.get("stockName") or r.get("code") or ""
+                            lines.append(f"- {name}")
+        else:
+            # overview: 竞价全景(六个桶)
+            res = cli.call_tool("auction_opening_snapshot", {"limit": limit})
+            text = res.get("text") if isinstance(res, dict) else ""
+            if text:
+                lines.append("【竞价全景】\n" + str(text))
+            else:
+                data = res.get("data") or {}
+                summary = data.get("summary") or {}
+                if summary:
+                    lines.append("【竞价全景】")
+                    for k, v in summary.items():
+                        lines.append(f"- {k}: {v}")
+                for bucket in ("limitUpOpen", "limitDownOpen", "topLimitBuyAmount", "topBidAmount", "prevBrokenFeedback", "prevLimitUpFeedback"):
+                    rows = data.get(bucket) or []
+                    if rows:
+                        lines.append(f"  [{bucket}] " + ", ".join(
+                            str(r.get("name") or r.get("stockName") or r.get("code") or "") for r in rows[:5] if isinstance(r, dict)
+                        ))
+
+        if not lines:
+            return "暂无集合竞价数据(9:25 前当日竞价未生成,或数据源未就绪),建议 9:25 后重试。"
+        return "\n".join(lines)
+    except Exception as e:
+        logger.debug(f"获取集合竞价失败: {e}")
+        return f"集合竞价数据获取失败: {e}"
 
 
 @router.get("/suggested-questions")

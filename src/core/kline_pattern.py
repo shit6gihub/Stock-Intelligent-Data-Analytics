@@ -79,7 +79,7 @@ def _change_pct(bar) -> float:
 
 def detect_patterns(bars: list, lookback: int = 30) -> list[PatternHit]:
     """识别 K 线形态。bars: 日K序列(升序,需含 open/high/low/close/volume)。"""
-    if len(bars) < 5:
+    if len(bars) < 3:
         return []
     seq = bars[-lookback:]
     hits: list[PatternHit] = []
@@ -189,7 +189,228 @@ def detect_patterns(bars: list, lookback: int = 30) -> list[PatternHit]:
     # ================= 看跌形态(八大看跌K线形态,2026-08-10 学习) =================
     _detect_bearish_patterns(bars, hits)
 
+    # ================= 八大进场信号(2026-08-10 学习文,底部看涨/抄底) =================
+    _detect_entry_signals(bars, hits)
+
+    # ================= 经典反转/持续形态(同花顺《K线形态大全》20 种,可量化部分) =================
+    _detect_classic_patterns(bars, hits)
+
     return hits
+
+
+def _detect_entry_signals(bars: list, hits: list[PatternHit]) -> None:
+    """八大进场信号: 早晨之星/底部十字星/底部强势大阳线/底部大长腿/大锤小锤/大阳包小阴/大阴后两小阳/进击两阳线。"""
+    if len(bars) < 3:
+        return
+    # 低位判断: 形态启动前价格处于窗口低位(进场信号都出现在底部)
+    w_low = min(b.low for b in bars)
+    w_high = max(b.high for b in bars)
+    # 用最近5日最低价判断(形态出现时价格已反弹,但最低点仍在低位区)
+    recent_low = min(b.low for b in bars[-5:]) if len(bars) >= 5 else bars[-1].low
+    in_low_zone = recent_low <= w_low + (w_high - w_low) * 0.55
+
+    # ---- 早晨之星: 长阴→星线→长阳 ----
+    if len(bars) >= 3:
+        b1, b2, b3 = bars[-3], bars[-2], bars[-1]
+        if (not _is_yang(b1) and _is_yang(b3) and
+                _body_len(b1) >= MIN_BODY and _body_len(b3) >= MIN_BODY and
+                _body_len(b2) < _body_len(b1) * 0.3 and
+                b3.close > b1.open and in_low_zone):
+            hits.append(PatternHit(
+                name="早晨之星", signal="看涨", position="低位",
+                description="下跌末端长阴→星线→长阳,多空反转,经典抄底信号",
+                bars=[-3, -2, -1],
+            ))
+
+    # ---- 底部十字星: 下跌末端十字星 ----
+    last = bars[-1]
+    # 十字星前需有明确下跌(前5日从高点跌超5%),排除横盘
+    prev_high = max(b.high for b in bars[-6:-1]) if len(bars) >= 6 else None
+    has_decline = prev_high is not None and prev_high > 0 and (last.close - prev_high) / prev_high * 100 < -5.0
+    if (_body_len(last) < 0.3 and _shadow_bottom(last) > 0 and
+            abs(_shadow_top(last) - _shadow_bottom(last)) / max(_shadow_top(last), _shadow_bottom(last)) < 0.5 and
+            in_low_zone and _body_len(last) < 1.0 and has_decline):
+        hits.append(PatternHit(
+            name="底部十字星", signal="看涨", position="低位",
+            description="下跌末端十字星,多空平衡,趋势转折点",
+            bars=[-1],
+        ))
+
+    # ---- 底部强势大阳线: 底部放量大阳线 ----
+    if _change_pct(last) >= BIG_YANG_PCT and in_low_zone:
+        hits.append(PatternHit(
+            name="底部强势大阳线", signal="看涨", position="低位",
+            description=f"底部区域放量大阳线({_change_pct(last):.1f}%),强势上涨启动",
+            bars=[-1],
+        ))
+
+    # ---- 底部大长腿: 底部极长下影(大长腿) ----
+    if _is_long_lower_shadow(last) and _shadow_bottom(last) >= _body_len(last) * 3 and in_low_zone:
+        hits.append(PatternHit(
+            name="底部大长腿", signal="看涨", position="低位",
+            description="底部极长下影线(下影>=实体3倍),空方抛压枯竭,下方有承接",
+            bars=[-1],
+        ))
+
+    # ---- 大锤和小锤: 底部连续两根长下影(双重支撑) ----
+    if len(bars) >= 2:
+        b1, b2 = bars[-2], bars[-1]
+        # 锤子线: 下影>=实体3倍 且 下影绝对值>实体(不依赖 MIN_BODY,实体小是锤子常态)
+        def _is_hammer(b):
+            return _shadow_bottom(b) >= max(_body_len(b) * 3, MIN_BODY)
+        if (_is_hammer(b1) and _is_hammer(b2) and
+                abs(b1.low - b2.low) / max(b1.low, b2.low) < 0.05 and in_low_zone):
+            hits.append(PatternHit(
+                name="大锤和小锤", signal="看涨", position="低位",
+                description="底部连续两根长下影锤子线,双重支撑,底部稳固",
+                bars=[-2, -1],
+            ))
+
+    # ---- 大阳包小阴: 大阳线完全吞没前日小阴线 ----
+    if len(bars) >= 2:
+        b1, b2 = bars[-2], bars[-1]
+        if (not _is_yang(b1) and _is_yang(b2) and
+                _body_len(b2) >= _body_len(b1) * 1.5 and
+                b2.open <= b1.close and b2.close >= b1.open and in_low_zone):
+            hits.append(PatternHit(
+                name="大阳包小阴", signal="看涨", position="低位",
+                description="大阳线完全吞没前日小阴线,多方碾压空方,底部反转",
+                bars=[-2, -1],
+            ))
+
+    # ---- 大阴后两小阳: 大阴线后两根小阳线(空头宣泄休整) ----
+    if len(bars) >= 3:
+        b1, b2, b3 = bars[-3], bars[-2], bars[-1]
+        if (not _is_yang(b1) and _body_len(b1) >= MIN_BODY * 2 and
+                _is_yang(b2) and _is_yang(b3) and
+                _body_len(b2) < _body_len(b1) and _body_len(b3) < _body_len(b1) and
+                in_low_zone):
+            hits.append(PatternHit(
+                name="大阴后两小阳", signal="看涨", position="低位",
+                description="大阴线后两根小阳线,空头宣泄进入休整期,企稳信号",
+                bars=[-3, -2, -1],
+            ))
+
+    # ---- 进击两阳线: 两根连续阳线(第二根更强) ----
+    if len(bars) >= 2:
+        b1, b2 = bars[-2], bars[-1]
+        if (_is_yang(b1) and _is_yang(b2) and
+                b2.close > b1.close and _body_len(b2) >= _body_len(b1) and in_low_zone):
+            hits.append(PatternHit(
+                name="进击两阳线", signal="看涨", position="低位",
+                description="两根连续阳线且第二根更强,多方强势进攻",
+                bars=[-2, -1],
+            ))
+
+
+def _detect_classic_patterns(bars: list, hits: list[PatternHit]) -> None:
+    """经典形态(可量化部分): 双底/双顶/上升下降三角形/对称三角形/上升下降楔形/旗形/通道。
+
+    头肩顶底/圆弧/菱形/杯柄需要更长窗口+颈线拟合,留作后续增强。
+    """
+    if len(bars) < 15:
+        return
+
+    # ---- 双底(W底): 两个相近低点 + 中间反弹,突破颈线 ----
+    low1 = min(b.low for b in bars[-20:-10])
+    low2 = min(b.low for b in bars[-10:])
+    if abs(low1 - low2) / max(low1, low2) < 0.02:
+        # 找两个低点的位置,颈线 = 两点之间的反弹高点
+        idx1 = min(range(len(bars) - 20, len(bars) - 10), key=lambda i: bars[i].low)
+        idx2 = min(range(len(bars) - 10, len(bars)), key=lambda i: bars[i].low)
+        lo, hi = min(idx1, idx2), max(idx1, idx2)
+        neck = max(b.high for b in bars[lo + 1:hi])
+        last = bars[-1]
+        if last.close > neck:  # 突破颈线
+            hits.append(PatternHit(
+                name="双底突破(W底)", signal="看涨", position="低位",
+                description=f"两个相近低点({low1:.2f}/{low2:.2f})构成W底,收盘突破颈线({neck:.2f}),底部确认",
+                bars=[-20, -1],
+                extra={"neck": neck},
+            ))
+
+    # ---- 双顶(M头): 两个相近高点 + 跌破颈线 ----
+    high1 = max(b.high for b in bars[-20:-10])
+    high2 = max(b.high for b in bars[-10:])
+    if abs(high1 - high2) / max(high1, high2) < 0.02:
+        idx1 = max(range(len(bars) - 20, len(bars) - 10), key=lambda i: bars[i].high)
+        idx2 = max(range(len(bars) - 10, len(bars)), key=lambda i: bars[i].high)
+        lo, hi = min(idx1, idx2), max(idx1, idx2)
+        neck = min(b.low for b in bars[lo + 1:hi])
+        last = bars[-1]
+        if last.close < neck:  # 跌破颈线
+            hits.append(PatternHit(
+                name="双顶破位(M头)", signal="看跌", position="高位",
+                description=f"两个相近高点({high1:.2f}/{high2:.2f})构成M头,收盘跌破颈线({neck:.2f}),顶部确认",
+                bars=[-20, -1],
+                extra={"neck": neck},
+            ))
+
+    # ---- 上升三角形: 水平阻力 + 上升支撑,放量突破 ----
+    if len(bars) >= 20:
+        recent = bars[-20:]
+        highs = [b.high for b in recent]
+        lows = [b.low for b in recent]
+        # 阻力水平(高点集中) + 支撑上升(低点抬升)
+        res_avg = sum(highs[-5:]) / 5
+        res_spread = (max(highs[-5:]) - min(highs[-5:])) / res_avg if res_avg else 0
+        lows_half1 = sum(lows[:10]) / 10
+        lows_half2 = sum(lows[10:]) / 10
+        last = bars[-1]
+        if res_spread < 0.015 and lows_half2 > lows_half1 * 1.01 and last.close > res_avg:
+            hits.append(PatternHit(
+                name="上升三角形突破", signal="看涨", position="趋势中",
+                description=f"水平阻力({res_avg:.2f}) + 低点抬升,放量突破上轨,看涨",
+                bars=[-20, -1],
+            ))
+
+    # ---- 下降三角形: 水平支撑 + 下降阻力,跌破 ----
+    if len(bars) >= 20:
+        recent = bars[-20:]
+        highs = [b.high for b in recent]
+        lows = [b.low for b in recent]
+        sup_avg = sum(lows[-5:]) / 5
+        sup_spread = (max(lows[-5:]) - min(lows[-5:])) / sup_avg if sup_avg else 0
+        highs_half1 = sum(highs[:10]) / 10
+        highs_half2 = sum(highs[10:]) / 10
+        last = bars[-1]
+        if sup_spread < 0.015 and highs_half2 < highs_half1 * 0.99 and last.close < sup_avg:
+            hits.append(PatternHit(
+                name="下降三角形破位", signal="看跌", position="趋势中",
+                description=f"水平支撑({sup_avg:.2f}) + 高点下移,跌破下轨,看跌",
+                bars=[-20, -1],
+            ))
+
+    # ---- 上升旗形: 急升后向上平行通道整理,突破上沿 ----
+    if len(bars) >= 15:
+        recent = bars[-15:]
+        lows = [b.low for b in recent]
+        highs = [b.high for b in recent]
+        # 旗形: 高点低点都小幅上移但幅度收窄(斜率小)
+        low_slope = (lows[-1] - lows[0]) / lows[0] if lows[0] else 0
+        high_slope = (highs[-1] - highs[0]) / highs[0] if highs[0] else 0
+        last = bars[-1]
+        if 0 < low_slope < 0.06 and 0 < high_slope < 0.06 and last.close > max(highs[:-1]):
+            hits.append(PatternHit(
+                name="上升旗形突破", signal="看涨", position="趋势中",
+                description="急升后窄幅向上整理(旗形),突破上沿,看涨持续",
+                bars=[-15, -1],
+            ))
+
+    # ---- 下降旗形: 急跌后向下平行通道整理,跌破下沿 ----
+    if len(bars) >= 15:
+        recent = bars[-15:]
+        lows = [b.low for b in recent]
+        highs = [b.high for b in recent]
+        low_slope = (lows[-1] - lows[0]) / lows[0] if lows[0] else 0
+        high_slope = (highs[-1] - highs[0]) / highs[0] if highs[0] else 0
+        last = bars[-1]
+        if -0.06 < low_slope < 0 and -0.06 < high_slope < 0 and last.close < min(lows[:-1]):
+            hits.append(PatternHit(
+                name="下降旗形破位", signal="看跌", position="趋势中",
+                description="急跌后窄幅向下整理(旗形),跌破下沿,看跌持续",
+                bars=[-15, -1],
+            ))
 
 
 def _detect_bearish_patterns(bars: list, hits: list[PatternHit]) -> None:
