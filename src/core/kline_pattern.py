@@ -186,7 +186,126 @@ def detect_patterns(bars: list, lookback: int = 30) -> list[PatternHit]:
                 extra={"break_high": prior_high, "vol_ratio": round(last.volume / avg_vol, 2) if avg_vol else 0},
             ))
 
+    # ================= 看跌形态(八大看跌K线形态,2026-08-10 学习) =================
+    _detect_bearish_patterns(bars, hits)
+
     return hits
+
+
+def _detect_bearish_patterns(bars: list, hits: list[PatternHit]) -> None:
+    """看跌形态: 三只乌鸦/黑三兵/空方炮/倾盆大雨/黄昏之星/看跌尽头线/兄弟剃平头/二级倒锤头。"""
+    if len(bars) < 5:
+        return
+    # 高位判断: 形态出现前价格处于窗口高位(看跌形态出现在上涨末端)
+    w_low = min(b.low for b in bars)
+    w_high = max(b.high for b in bars)
+    # 用形态启动前的位置: 前5日最高收盘价 vs 窗口(形态启动前应处于上涨末端高位)
+    pre_closes = [b.close for b in bars[-6:-1]]
+    pre_peak = max(pre_closes) if pre_closes else bars[-1].close
+    # 涨幅门槛: 形态启动前需有明确上涨(前5日从低点涨超3%),排除横盘/下跌
+    pre_low = min(pre_closes) if pre_closes else bars[-1].close
+    has_rally = (pre_low > 0 and (pre_peak - pre_low) / pre_low * 100 > 3.0)
+    in_high_zone = has_rally and pre_peak >= w_low + (w_high - w_low) * 0.6
+
+    # ---- 三只乌鸦: 顶部三根连续阴线(中/长阴) ----
+    if len(bars) >= 3:
+        b1, b2, b3 = bars[-3], bars[-2], bars[-1]
+        if (not _is_yang(b1) and not _is_yang(b2) and not _is_yang(b3) and
+                b1.close > b2.close > b3.close and
+                _body_len(b3) >= MIN_BODY and _body_len(b1) >= MIN_BODY and
+                in_high_zone):
+            hits.append(PatternHit(
+                name="三只乌鸦", signal="看跌", position="高位",
+                description="上涨趋势顶部连续三根阴线收盘递减,空头持续打压,强烈看跌信号",
+                bars=[-3, -2, -1],
+            ))
+
+    # ---- 黑三兵: 三根连续下跌小阴线(实体小) ----
+    if len(bars) >= 3:
+        b1, b2, b3 = bars[-3], bars[-2], bars[-1]
+        if (not _is_yang(b1) and not _is_yang(b2) and not _is_yang(b3) and
+                b1.close > b2.close > b3.close and
+                all(_body_len(b) < MIN_BODY * 2 for b in (b1, b2, b3)) and
+                in_high_zone):
+            hits.append(PatternHit(
+                name="黑三兵", signal="看跌", position="高位",
+                description="三根连续下跌的小阴线,阴跌趋势确立,弱势信号",
+                bars=[-3, -2, -1],
+            ))
+
+    # ---- 空方炮: 阴-阳-阴 序列 ----
+    if len(bars) >= 3:
+        b1, b2, b3 = bars[-3], bars[-2], bars[-1]
+        if (not _is_yang(b1) and _is_yang(b2) and not _is_yang(b3) and
+                b3.close < b1.close and in_high_zone):
+            hits.append(PatternHit(
+                name="空方炮", signal="看跌", position="高位",
+                description="阴-阳-阴序列,反弹被再次打压,空方占优,跌势延续",
+                bars=[-3, -2, -1],
+            ))
+
+    # ---- 倾盆大雨: 大阳线后低开大阴线 ----
+    if len(bars) >= 2:
+        b1, b2 = bars[-2], bars[-1]
+        if (_is_yang(b1) and not _is_yang(b2) and
+                _body_len(b1) >= MIN_BODY and _body_len(b2) >= MIN_BODY and
+                b2.open < b1.close and b2.close <= b1.open and
+                b2.close < b1.close * 0.98 and in_high_zone):
+            hits.append(PatternHit(
+                name="倾盆大雨", signal="看跌", position="高位",
+                description="大阳线后低开大阴线,多头被全面压制,顶部反转信号",
+                bars=[-2, -1],
+            ))
+
+    # ---- 黄昏之星: 长阳→星线→长阴 ----
+    if len(bars) >= 3:
+        b1, b2, b3 = bars[-3], bars[-2], bars[-1]
+        if (_is_yang(b1) and not _is_yang(b3) and
+                _body_len(b2) < _body_len(b1) * 0.3 and
+                _body_len(b1) >= MIN_BODY and _body_len(b3) >= MIN_BODY and
+                b3.close < b1.close * 0.98 and in_high_zone):
+            hits.append(PatternHit(
+                name="黄昏之星", signal="看跌", position="高位",
+                description="长阳→星线(十字/小实体)→长阴,经典顶部反转形态",
+                bars=[-3, -2, -1],
+            ))
+
+    # ---- 看跌尽头线: 次日小实体完全位于首根长下影范围内 ----
+    if len(bars) >= 2:
+        b1, b2 = bars[-2], bars[-1]
+        if (_shadow_bottom(b1) >= _body_len(b1) * SHADOW_RATIO and
+                _body_len(b2) < _body_len(b1) * 0.5 and
+                b2.high <= b1.low + (b1.open if _is_yang(b1) else b1.close) and
+                in_high_zone):
+            hits.append(PatternHit(
+                name="看跌尽头线", signal="看跌", position="高位",
+                description="次日小实体K线完全位于首根长下影线范围之内,探底失败跌势未尽",
+                bars=[-2, -1],
+            ))
+
+    # ---- 兄弟剃平头: 两根或多根最高价同一水平 ----
+    if len(bars) >= 2:
+        b1, b2 = bars[-2], bars[-1]
+        if (abs(b1.high - b2.high) / max(b1.high, b2.high) < 0.005 and
+                not _is_yang(b2) and in_high_zone):
+            hits.append(PatternHit(
+                name="兄弟剃平头", signal="看跌", position="高位",
+                description="顶部两根K线最高价同一水平,多头无法再创新高,顶部确认",
+                bars=[-2, -1],
+            ))
+
+    # ---- 二级倒锤头: 连续两个倒锤头(上影长) ----
+    if len(bars) >= 2:
+        b1, b2 = bars[-2], bars[-1]
+        if (_body_len(b1) >= MIN_BODY and _body_len(b2) >= MIN_BODY and
+                _shadow_top(b1) >= _body_len(b1) * 2 and
+                _shadow_top(b2) >= _body_len(b2) * 2 and
+                in_high_zone):
+            hits.append(PatternHit(
+                name="二级倒锤头", signal="看跌", position="高位",
+                description="上涨趋势极高价位区连续两个倒锤头线,上攻乏力滞涨见顶",
+                bars=[-2, -1],
+            ))
 
 
 def format_patterns(hits: list[PatternHit]) -> str:

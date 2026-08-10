@@ -81,3 +81,58 @@ def test_no_pattern_on_flat():
 def test_format_empty():
     from src.core.kline_pattern import format_patterns
     assert "未识别到" in format_patterns([])
+
+
+# ============ 看跌形态测试(2026-08-10 第二篇学习文) ============
+
+def test_three_crows():
+    """三只乌鸦: 顶部三根连续阴线。"""
+    from src.core.kline_pattern import detect_patterns
+    # 前 3 根上涨背景 + 顶部三连阴(实体中等,收在相对高位)
+    bars = make_bars([
+        (10, 10.5, 9.9, 10.4, 1), (10.4, 11.0, 10.3, 10.9, 1), (10.9, 11.5, 10.8, 11.4, 1),
+        (11.4, 11.5, 10.6, 10.7, 1.5), (10.7, 10.8, 9.9, 10.0, 1.5), (10.0, 10.1, 9.3, 9.4, 1.5),
+    ])
+    hits = detect_patterns(bars)
+    names = [h.name for h in hits]
+    assert "三只乌鸦" in names, f"应识别三只乌鸦,实际 {names}"
+
+
+def test_bearish_engulfing_rain():
+    """倾盆大雨: 大阳线后低开大阴线。"""
+    from src.core.kline_pattern import detect_patterns
+    bars = make_bars([
+        (10, 10.3, 9.9, 10.2, 1), (10.2, 10.5, 10.1, 10.4, 1), (10.4, 10.7, 10.3, 10.6, 1),
+        (10.6, 11.5, 10.5, 11.4, 2),   # 大阳线(实体0.8)
+        (11.0, 11.1, 10.3, 10.4, 2),    # 低开大阴线(实体0.6,收在窗口中部偏上)
+    ])
+    hits = detect_patterns(bars)
+    names = [h.name for h in hits]
+    assert "倾盆大雨" in names, f"应识别倾盆大雨,实际 {names}"
+
+
+def test_evening_star():
+    """黄昏之星: 长阳→星线→长阴。"""
+    from src.core.kline_pattern import detect_patterns
+    bars = make_bars([
+        (10, 10.3, 9.9, 10.2, 1), (10.2, 10.5, 10.1, 10.4, 1),
+        (10.4, 11.5, 10.3, 11.4, 2),   # 长阳
+        (11.4, 11.45, 11.35, 11.4, 1),  # 星线(小实体)
+        (11.2, 11.3, 10.6, 10.7, 2),    # 长阴(跌但仍在相对高位)
+    ])
+    hits = detect_patterns(bars)
+    names = [h.name for h in hits]
+    assert "黄昏之星" in names, f"应识别黄昏之星,实际 {names}"
+
+
+def test_short_black_three():
+    """黑三兵: 三根连续下跌小阴线(不在高位不识别)。"""
+    from src.core.kline_pattern import detect_patterns
+    # 底部横盘后三连阴(前5日无上涨 → 不识别)
+    bars = make_bars([
+        (8.0, 8.05, 7.95, 8.0, 1), (8.0, 8.05, 7.95, 8.0, 1), (8.0, 8.05, 7.95, 8.0, 1),
+        (7.9, 7.95, 7.85, 7.9, 1), (7.85, 7.9, 7.8, 7.85, 1), (7.8, 7.85, 7.75, 7.8, 1),
+    ])
+    hits = detect_patterns(bars)
+    names = [h.name for h in hits]
+    assert "黑三兵" not in names, f"低位不应识别黑三兵,实际 {names}"
