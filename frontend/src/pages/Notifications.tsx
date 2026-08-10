@@ -267,7 +267,7 @@ export default function NotificationsPage() {
   const selectedPush = selected ? (PUSH_META[selected.push_status] || null) : null
 
   return (
-    <div className="mx-auto w-full max-w-[1480px] space-y-5">
+    <div className="mx-auto w-full max-w-[1480px] space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-[20px] font-bold tracking-tight text-foreground md:text-[22px]">
@@ -296,44 +296,53 @@ export default function NotificationsPage() {
         <div className="rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-[12px] text-rose-500">{error}</div>
       )}
 
-      <div className="grid grid-cols-3 gap-2 md:max-w-xl md:gap-3">
-        {([
-          ['all', '全部通知', items.length],
-          ['unread', '未读', unread],
-          ['failed', '推送失败', failed],
-        ] as [FilterKey, string, number][]).map(([key, label, value]) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setFilter(key)}
-            className={`rounded-xl border px-3 py-3 text-left transition-colors ${
-              filter === key ? 'border-primary/35 bg-primary/10' : 'border-border/50 bg-card hover:bg-accent/40'
-            }`}
-          >
-            <div className="text-[11px] text-muted-foreground">{label}</div>
-            <div className="mt-0.5 text-[19px] font-semibold text-foreground">{value}</div>
-          </button>
-        ))}
-      </div>
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/50 bg-card/70 p-1.5">
+        <div className="flex shrink-0 items-center gap-1 rounded-lg bg-background/45 p-1">
+          {([
+            ['all', '全部', items.length],
+            ['unread', '未读', unread],
+            ['failed', '推送失败', failed],
+          ] as [FilterKey, string, number][]).map(([key, label, value]) => (
+            <button
+              key={key}
+              type="button"
+              title={key === 'all' ? '全部通知' : label}
+              onClick={() => setFilter(key)}
+              className={`inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-[11px] font-medium transition-colors ${
+                filter === key
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
+              }`}
+            >
+              <span>{label}</span>
+              <span className={`min-w-[18px] rounded-full px-1.5 py-0.5 text-center text-[9px] leading-3 ${filter === key ? 'bg-white/18 text-white' : 'bg-accent text-foreground'}`}>
+                {value}
+              </span>
+            </button>
+          ))}
+        </div>
 
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        <button
-          type="button"
-          onClick={() => setCategory('')}
-          className={`whitespace-nowrap rounded-full px-3 py-1.5 text-[11px] transition-colors ${!category ? 'bg-primary text-primary-foreground' : 'bg-accent/50 text-muted-foreground hover:text-foreground'}`}
-        >
-          全部类型
-        </button>
-        {categories.map(value => (
+        <span className="hidden h-5 w-px bg-border/60 sm:block" />
+
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           <button
-            key={value}
             type="button"
-            onClick={() => setCategory(value)}
-            className={`whitespace-nowrap rounded-full px-3 py-1.5 text-[11px] transition-colors ${category === value ? 'bg-primary text-primary-foreground' : 'bg-accent/50 text-muted-foreground hover:text-foreground'}`}
+            onClick={() => setCategory('')}
+            className={`h-7 whitespace-nowrap rounded-md px-2.5 text-[11px] transition-colors ${!category ? 'bg-primary/12 font-medium text-primary' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
           >
-            {CATEGORY_LABELS[value] || value}
+            全部类型
           </button>
-        ))}
+          {categories.map(value => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setCategory(value)}
+              className={`h-7 whitespace-nowrap rounded-md px-2.5 text-[11px] transition-colors ${category === value ? 'bg-primary/12 font-medium text-primary' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
+            >
+              {CATEGORY_LABELS[value] || value}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="grid min-h-[560px] overflow-hidden rounded-2xl border border-border/50 bg-card lg:grid-cols-[minmax(320px,0.82fr)_minmax(0,1.45fr)]">
