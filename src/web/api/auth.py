@@ -1,8 +1,15 @@
-"""认证 API - 简单的单用户 JWT 认证"""
+"""认证 API - 多用户 JWT 认证(2026-08-10 阶段1)
+
+- users 表(UUID 主键), role: owner|member
+- 兼容旧单用户: 首次启动自动从 AppSettings 迁移旧账号为 owner
+- JWT payload: user_id + role + ver(踢人用)
+- 权限依赖: get_current_user(登录) / require_owner(仅管理员)
+"""
 import os
 import hashlib
 import hmac
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -13,7 +20,7 @@ from sqlalchemy.orm import Session
 import jwt
 
 from src.web.database import get_db, SessionLocal
-from src.web.models import AppSettings
+from src.web.models import AppSettings, User
 
 router = APIRouter()
 security = HTTPBearer(auto_error=False)
@@ -26,7 +33,7 @@ JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "12"))
 ENV_AUTH_USERNAME = os.getenv("AUTH_USERNAME")
 ENV_AUTH_PASSWORD = os.getenv("AUTH_PASSWORD")
 
-# 设置项 key
+# 设置项 key(旧单用户兼容)
 AUTH_USERNAME_KEY = "auth_username"
 PASSWORD_HASH_KEY = "auth_password_hash"
 JWT_SECRET_KEY = "jwt_secret"
@@ -75,6 +82,7 @@ class SetupRequest(BaseModel):
 class TokenResponse(BaseModel):
     token: str
     expires_at: str
+    user: Optional[dict] = None
 
 
 def hash_password(password: str) -> str:
@@ -88,123 +96,125 @@ def verify_password(password: str, stored: str) -> bool:
     """校验 scrypt，并兼容旧版 SHA-256 哈希。"""
     if stored.startswith("scrypt$"):
         try:
-            _, salt_hex, digest_hex = stored.split("$", 2)
-            digest = hashlib.scrypt(password.encode("utf-8"), salt=bytes.fromhex(salt_hex), n=2**14, r=8, p=1)
+            _, salt_hex, digest_hex = stored.split("$")
+            salt = bytes.fromhex(salt_hex)
+            digest = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=2**14, r=8, p=1)
             return hmac.compare_digest(digest.hex(), digest_hex)
-        except (ValueError, TypeError):
+        except Exception:
             return False
+    # 旧版 SHA-256(无盐, 兼容迁移前数据)
     return hmac.compare_digest(hashlib.sha256(password.encode("utf-8")).hexdigest(), stored)
 
 
-def get_token_version(db: Session) -> int:
-    setting = db.query(AppSettings).filter(AppSettings.key == AUTH_TOKEN_VERSION_KEY).first()
-    return int(setting.value) if setting and setting.value.isdigit() else 1
+# ── 用户管理(多用户核心) ──────────────────────────────────────────────
 
+def get_or_create_owner(db: Session) -> User:
+    """确保存在 owner 用户。
 
-def bump_token_version(db: Session) -> int:
-    version = get_token_version(db) + 1
-    setting = db.query(AppSettings).filter(AppSettings.key == AUTH_TOKEN_VERSION_KEY).first()
-    if setting:
-        setting.value = str(version)
-    else:
-        db.add(AppSettings(key=AUTH_TOKEN_VERSION_KEY, value=str(version), description="认证 Token 版本"))
+    首次启动: 从环境变量或旧单用户(AppSettings)迁移账号为 owner;
+    若都没有, 创建默认 admin/admin123。
+    """
+    owner = db.query(User).filter(User.role == "owner").first()
+    if owner:
+        return owner
+
+    # 1. 环境变量优先
+    if ENV_AUTH_USERNAME and ENV_AUTH_PASSWORD:
+        user = User(
+            id=str(uuid.uuid4()),
+            username=ENV_AUTH_USERNAME,
+            password_hash=hash_password(ENV_AUTH_PASSWORD),
+            role="owner",
+        )
+        db.add(user)
+        db.commit()
+        return user
+
+    # 2. 旧单用户迁移(AppSettings)
+    setting_username = db.query(AppSettings).filter(AppSettings.key == AUTH_USERNAME_KEY).first()
+    setting_hash = db.query(AppSettings).filter(AppSettings.key == PASSWORD_HASH_KEY).first()
+    if setting_username and setting_hash and setting_hash.value:
+        user = User(
+            id=str(uuid.uuid4()),
+            username=setting_username.value,
+            password_hash=setting_hash.value,  # 复用已有哈希(scrypt或旧sha256均可验)
+            role="owner",
+        )
+        db.add(user)
+        db.commit()
+        return user
+
+    # 3. 兜底默认账号(首次部署)
+    user = User(
+        id=str(uuid.uuid4()),
+        username="admin",
+        password_hash=hash_password("admin123"),
+        role="owner",
+    )
+    db.add(user)
     db.commit()
-    return version
+    return user
 
 
-def create_token(expires_hours: int = JWT_EXPIRE_HOURS, token_version: int = 1) -> tuple[str, datetime]:
-    """创建 JWT token"""
+def get_user_by_username(db: Session, username: str) -> User | None:
+    return db.query(User).filter(User.username == username).first()
+
+
+def get_user_by_id(db: Session, user_id: str) -> User | None:
+    return db.query(User).filter(User.id == user_id).first()
+
+
+def create_user(db: Session, username: str, password: str, role: str = "member") -> User:
+    """创建用户(owner 调用)。"""
+    user = User(
+        id=str(uuid.uuid4()),
+        username=username,
+        password_hash=hash_password(password),
+        role=role,
+    )
+    db.add(user)
+    db.commit()
+    return user
+
+
+# ── Token ─────────────────────────────────────────────────────────────
+
+def create_token(user: User, expires_hours: int = JWT_EXPIRE_HOURS) -> tuple[str, datetime]:
+    """创建 JWT token, 含 user_id + role + ver(踢人用)。"""
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(hours=expires_hours)
     payload = {
         "exp": expires_at,
         "iat": now,
-        "sub": "user",
+        "sub": user.id,
+        "username": user.username,
+        "role": user.role,
         "jti": secrets.token_hex(16),
-        "ver": token_version,
+        "ver": user.token_version,
     }
     token = jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
     return token, expires_at
 
 
-def verify_token(token: str, db: Session | None = None) -> bool:
-    """验证 JWT token"""
+def decode_token(token: str) -> dict | None:
+    """解码 JWT, 失败返回 None。"""
     try:
-        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
-        if db is not None and int(payload.get("ver", 0)) != get_token_version(db):
-            return False
-        return True
+        return jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
-        return False
+        return None
     except jwt.InvalidTokenError:
-        return False
+        return None
 
 
-def get_stored_username(db: Session) -> Optional[str]:
-    """获取存储的用户名"""
-    setting = db.query(AppSettings).filter(AppSettings.key == AUTH_USERNAME_KEY).first()
-    return setting.value if setting else None
-
-
-def set_stored_username(db: Session, username: str):
-    """设置用户名"""
-    setting = db.query(AppSettings).filter(AppSettings.key == AUTH_USERNAME_KEY).first()
-    if setting:
-        setting.value = username
-    else:
-        setting = AppSettings(key=AUTH_USERNAME_KEY, value=username, description="认证用户名")
-        db.add(setting)
-    db.commit()
-
-
-def get_password_hash(db: Session) -> Optional[str]:
-    """获取存储的密码哈希"""
-    setting = db.query(AppSettings).filter(AppSettings.key == PASSWORD_HASH_KEY).first()
-    return setting.value if setting else None
-
-
-def set_password_hash(db: Session, password_hash: str):
-    """设置密码哈希"""
-    setting = db.query(AppSettings).filter(AppSettings.key == PASSWORD_HASH_KEY).first()
-    if setting:
-        setting.value = password_hash
-    else:
-        setting = AppSettings(key=PASSWORD_HASH_KEY, value=password_hash, description="认证密码哈希")
-        db.add(setting)
-    db.commit()
-
-
-def init_auth_from_env(db: Session) -> bool:
-    """从环境变量初始化认证（Docker 部署用）
-
-    Returns:
-        True if initialized from env, False otherwise
-    """
-    if not ENV_AUTH_USERNAME or not ENV_AUTH_PASSWORD:
-        return False
-
-    # 如果已有账号，不覆盖
-    if get_password_hash(db):
-        return False
-
-    # 从环境变量创建账号
-    set_stored_username(db, ENV_AUTH_USERNAME)
-    set_password_hash(db, hash_password(ENV_AUTH_PASSWORD))
-    return True
-
+# ── 权限依赖 ──────────────────────────────────────────────────────────
 
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: Session = Depends(get_db),
-):
-    """验证当前用户（用作依赖）"""
-    # 检查是否已设置密码
-    password_hash = get_password_hash(db)
-    if not password_hash:
-        # 未设置密码，允许访问（初始状态）
-        return None
+) -> User:
+    """验证当前用户(用作依赖), 返回 User 对象。"""
+    owner = get_or_create_owner(db)  # 确保 owner 存在
 
-    # 已设置密码，需要验证 token
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -212,84 +222,180 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if not verify_token(credentials.credentials, db):
+    payload = decode_token(credentials.credentials)
+    if not payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="登录已过期",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return "user"
+    user = get_user_by_id(db, payload.get("sub", ""))
+    if not user:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户不存在")
+    if not user.is_active:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "账号已禁用")
+    if user.token_version != int(payload.get("ver", 0)):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "登录已失效, 请重新登录")
+
+    return user
 
 
-@router.get("/status")
-async def auth_status(db: Session = Depends(get_db)):
-    """获取认证状态"""
-    password_hash = get_password_hash(db)
+async def require_owner(user: User = Depends(get_current_user)) -> User:
+    """仅 owner 可用(用户管理/系统设置)。"""
+    if user.role != "owner":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "仅管理员可操作")
+    return user
+
+
+def user_to_dict(user: User) -> dict:
     return {
-        "initialized": password_hash is not None,
+        "id": user.id,
+        "username": user.username,
+        "role": user.role,
+        "is_active": user.is_active,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
     }
 
 
-@router.post("/setup", response_model=TokenResponse)
-async def setup_password(data: SetupRequest, db: Session = Depends(get_db)):
-    """首次设置用户名和密码"""
-    if get_password_hash(db):
-        raise HTTPException(400, "已设置过账号，请使用登录接口")
+# ── API ───────────────────────────────────────────────────────────────
 
-    if not data.username or len(data.username) < 2:
-        raise HTTPException(400, "用户名长度至少 2 位")
-
-    if len(data.password) < 8:
-        raise HTTPException(400, "密码长度至少 8 位")
-
-    set_stored_username(db, data.username)
-    password_hash = hash_password(data.password)
-    set_password_hash(db, password_hash)
-
-    token, expires_at = create_token(token_version=get_token_version(db))
-    return TokenResponse(token=token, expires_at=expires_at.isoformat())
+@router.get("/status")
+async def auth_status(db: Session = Depends(get_db)):
+    """获取认证状态(前端判断是否需要初始化)。"""
+    owner = get_or_create_owner(db)
+    return {
+        "initialized": True,
+        "user": user_to_dict(owner),
+        "multi_user": True,
+    }
 
 
 @router.post("/login", response_model=TokenResponse)
 async def login(data: LoginRequest, db: Session = Depends(get_db)):
-    """登录"""
-    stored_hash = get_password_hash(db)
-    stored_username = get_stored_username(db)
-    if not stored_hash or not stored_username:
-        raise HTTPException(400, "请先设置账号")
-
-    if data.username != stored_username:
+    """登录(多用户)。"""
+    get_or_create_owner(db)  # 确保 owner 存在(兼容首次部署)
+    user = get_user_by_username(db, data.username.strip())
+    if not user or not verify_password(data.password, user.password_hash):
         raise HTTPException(401, "用户名或密码错误")
+    if not user.is_active:
+        raise HTTPException(403, "账号已禁用")
 
-    if not verify_password(data.password, stored_hash):
-        raise HTTPException(401, "用户名或密码错误")
+    token, expires_at = create_token(user)
+    return TokenResponse(
+        token=token,
+        expires_at=expires_at.isoformat(),
+        user=user_to_dict(user),
+    )
 
-    if not stored_hash.startswith("scrypt$"):
-        set_password_hash(db, hash_password(data.password))
 
-    token, expires_at = create_token(token_version=get_token_version(db))
-    return TokenResponse(token=token, expires_at=expires_at.isoformat())
+@router.get("/me")
+async def get_me(user: User = Depends(get_current_user)):
+    """获取当前用户信息。"""
+    return {"user": user_to_dict(user)}
 
 
 @router.post("/change-password")
 async def change_password(
     data: SetupRequest,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    _: str = Depends(get_current_user),
 ):
-    """修改密码，同时使既有 Token 失效。"""
+    """修改自己的密码, 同时使该用户既有 Token 失效。"""
     if len(data.password) < 8:
         raise HTTPException(400, "密码长度至少 8 位")
 
-    password_hash = hash_password(data.password)
-    set_password_hash(db, password_hash)
-    bump_token_version(db)
+    user.password_hash = hash_password(data.password)
+    user.token_version += 1  # 踢掉旧 token
+    db.commit()
 
     return {"message": "密码已更新"}
 
 
-@router.get("/me")
-async def get_me(user: str = Depends(get_current_user)):
-    """获取当前用户信息"""
-    return {"user": user or "guest"}
+# ── 用户管理 API(仅 owner) ─────────────────────────────────────────────
+
+class UserCreateRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "member"
+
+
+@router.get("/users")
+async def list_users(owner: User = Depends(require_owner), db: Session = Depends(get_db)):
+    """用户列表(仅 owner)。"""
+    users = db.query(User).order_by(User.created_at).all()
+    return {"users": [user_to_dict(u) for u in users]}
+
+
+@router.post("/users")
+async def create_user_api(
+    data: UserCreateRequest,
+    owner: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    """创建子账号(仅 owner)。"""
+    if len(data.username.strip()) < 2:
+        raise HTTPException(400, "用户名长度至少 2 位")
+    if len(data.password) < 8:
+        raise HTTPException(400, "密码长度至少 8 位")
+    if data.role not in ("owner", "member"):
+        raise HTTPException(400, "角色必须是 owner 或 member")
+    if get_user_by_username(db, data.username.strip()):
+        raise HTTPException(400, "用户名已存在")
+
+    user = create_user(db, data.username.strip(), data.password, data.role)
+    return {"user": user_to_dict(user)}
+
+
+class UserUpdateRequest(BaseModel):
+    password: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+@router.patch("/users/{user_id}")
+async def update_user_api(
+    user_id: str,
+    data: UserUpdateRequest,
+    owner: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    """修改用户(仅 owner): 改密/改角色/禁用。"""
+    target = get_user_by_id(db, user_id)
+    if not target:
+        raise HTTPException(404, "用户不存在")
+    if target.id == owner.id and data.is_active is False:
+        raise HTTPException(400, "不能禁用自己")
+
+    if data.password:
+        if len(data.password) < 8:
+            raise HTTPException(400, "密码长度至少 8 位")
+        target.password_hash = hash_password(data.password)
+        target.token_version += 1  # 踢掉该用户旧 token
+    if data.role and data.role in ("owner", "member"):
+        target.role = data.role
+    if data.is_active is not None:
+        target.is_active = data.is_active
+    db.commit()
+
+    return {"user": user_to_dict(target)}
+
+
+@router.delete("/users/{user_id}")
+async def delete_user_api(
+    user_id: str,
+    owner: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    """删除用户(仅 owner)。不能删自己。"""
+    target = get_user_by_id(db, user_id)
+    if not target:
+        raise HTTPException(404, "用户不存在")
+    if target.id == owner.id:
+        raise HTTPException(400, "不能删除自己")
+    if target.role == "owner":
+        raise HTTPException(400, "不能删除其他管理员")
+
+    db.delete(target)
+    db.commit()
+    return {"message": "用户已删除"}

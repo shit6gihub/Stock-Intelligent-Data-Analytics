@@ -17,6 +17,29 @@ from sqlalchemy.sql import func
 from src.web.database import Base
 
 
+class User(Base):
+    """多用户账号(2026-08-10 阶段1)。
+
+    - UUID 主键(后续独立账号系统/多服务合并无痛)
+    - role: owner(管理员) / member(普通)
+    - provider/external_id 预留: 后续对接 SSO/企业微信组织
+    - permissions 预留: 权限点字符串数组, 后续 RBAC 扩展
+    """
+    __tablename__ = "users"
+
+    id = Column(String(36), primary_key=True)  # UUID
+    username = Column(String(64), unique=True, nullable=False, index=True)
+    password_hash = Column(String(256), nullable=False)
+    role = Column(String(16), default="member", nullable=False)  # owner | member
+    permissions = Column(JSON, default=list)  # 预留: ["user:manage", ...]
+    provider = Column(String(16), default="local")  # 预留: local | wecom | ldap
+    external_id = Column(String(128), nullable=True)  # 预留: 第三方用户ID
+    is_active = Column(Boolean, default=True, nullable=False)
+    token_version = Column(Integer, default=1, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class AIService(Base):
     """AI 服务商（base_url + api_key）"""
 
