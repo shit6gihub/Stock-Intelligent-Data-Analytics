@@ -3,14 +3,15 @@ import logging
 import time
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from datetime import datetime, timedelta, timezone
 
 from src.web.database import get_db
-from src.web.models import Account, PriceAlertRule, Position, Stock
+from src.web.api.auth import get_current_user
+from src.web.models import Account, PriceAlertRule, Position, Stock, User
 from src.core.marketdata_client import md_quote_rows
 from src.core.quote_period import classify_quote_period, summarize_daily_pnl_period
 from src.collectors.market_http import TTLCache
@@ -162,24 +163,29 @@ class PositionReorderRequest(BaseModel):
 # ========== Account Endpoints ==========
 
 @router.get("/accounts", response_model=list[AccountResponse])
-def list_accounts(db: Session = Depends(get_db)):
-    """获取所有账户"""
-    return db.query(Account).order_by(Account.id).all()
+def list_accounts(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """获取当前用户的账户(含全局共享)"""
+    return db.query(Account).filter(
+        or_(Account.user_id == user.id, Account.user_id.is_(None))
+    ).order_by(Account.id).all()
 
 
 @router.get("/accounts/{account_id}", response_model=AccountResponse)
-def get_account(account_id: int, db: Session = Depends(get_db)):
+def get_account(account_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """获取单个账户"""
-    account = db.query(Account).filter(Account.id == account_id).first()
+    account = db.query(Account).filter(
+        Account.id == account_id,
+        or_(Account.user_id == user.id, Account.user_id.is_(None)),
+    ).first()
     if not account:
         raise HTTPException(404, "账户不存在")
     return account
 
 
 @router.post("/accounts", response_model=AccountResponse)
-def create_account(data: AccountCreate, db: Session = Depends(get_db)):
+def create_account(data: AccountCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """创建账户"""
-    account = Account(name=data.name, available_funds=data.available_funds)
+    account = Account(name=data.name, available_funds=data.available_funds, user_id=user.id)
     db.add(account)
     db.commit()
     db.refresh(account)
@@ -188,9 +194,12 @@ def create_account(data: AccountCreate, db: Session = Depends(get_db)):
 
 
 @router.put("/accounts/{account_id}", response_model=AccountResponse)
-def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(get_db)):
+def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """更新账户"""
-    account = db.query(Account).filter(Account.id == account_id).first()
+    account = db.query(Account).filter(
+        Account.id == account_id,
+        or_(Account.user_id == user.id, Account.user_id.is_(None)),
+    ).first()
     if not account:
         raise HTTPException(404, "账户不存在")
 
@@ -226,10 +235,13 @@ def delete_account(account_id: int, db: Session = Depends(get_db)):
 def list_positions(
     account_id: int | None = None,
     stock_id: int | None = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    """获取持仓列表，可按账户或股票筛选"""
-    query = db.query(Position)
+    """获取持仓列表，可按账户或股票筛选(仅当前用户的)"""
+    query = db.query(Position).filter(
+        or_(Position.user_id == user.id, Position.user_id.is_(None))
+    )
     if account_id:
         query = query.filter(Position.account_id == account_id)
     if stock_id:
@@ -255,10 +267,13 @@ def list_positions(
 
 
 @router.post("/positions", response_model=PositionResponse)
-def create_position(data: PositionCreate, db: Session = Depends(get_db)):
+def create_position(data: PositionCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """创建持仓"""
-    # 检查账户和股票是否存在
-    account = db.query(Account).filter(Account.id == data.account_id).first()
+    # 检查账户和股票是否存在(仅自己的)
+    account = db.query(Account).filter(
+        Account.id == data.account_id,
+        or_(Account.user_id == user.id, Account.user_id.is_(None)),
+    ).first()
     if not account:
         raise HTTPException(400, "账户不存在")
 
@@ -286,6 +301,7 @@ def create_position(data: PositionCreate, db: Session = Depends(get_db)):
         invested_amount=data.invested_amount,
         sort_order=int(max_order) + 1,
         trading_style=data.trading_style,
+        user_id=user.id,
     )
     db.add(position)
     db.commit()
@@ -308,9 +324,12 @@ def create_position(data: PositionCreate, db: Session = Depends(get_db)):
 
 
 @router.put("/positions/{position_id}", response_model=PositionResponse)
-def update_position(position_id: int, data: PositionUpdate, db: Session = Depends(get_db)):
+def update_position(position_id: int, data: PositionUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """更新持仓"""
-    position = db.query(Position).filter(Position.id == position_id).first()
+    position = db.query(Position).filter(
+        Position.id == position_id,
+        or_(Position.user_id == user.id, Position.user_id.is_(None)),
+    ).first()
     if not position:
         raise HTTPException(404, "持仓不存在")
 
@@ -344,9 +363,12 @@ def update_position(position_id: int, data: PositionUpdate, db: Session = Depend
 
 
 @router.delete("/positions/{position_id}")
-def delete_position(position_id: int, db: Session = Depends(get_db)):
+def delete_position(position_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """删除持仓"""
-    position = db.query(Position).filter(Position.id == position_id).first()
+    position = db.query(Position).filter(
+        Position.id == position_id,
+        or_(Position.user_id == user.id, Position.user_id.is_(None)),
+    ).first()
     if not position:
         raise HTTPException(404, "持仓不存在")
 
@@ -357,12 +379,15 @@ def delete_position(position_id: int, db: Session = Depends(get_db)):
 
 
 @router.put("/positions/reorder/batch")
-def reorder_positions(data: PositionReorderRequest, db: Session = Depends(get_db)):
+def reorder_positions(data: PositionReorderRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """批量更新持仓排序"""
     if not data.items:
         return {"updated": 0}
     ids = [int(x.id) for x in data.items]
-    rows = db.query(Position).filter(Position.id.in_(ids)).all()
+    rows = db.query(Position).filter(
+        Position.id.in_(ids),
+        or_(Position.user_id == user.id, Position.user_id.is_(None)),
+    ).all()
     row_map = {r.id: r for r in rows}
     updated = 0
     for item in data.items:
@@ -382,6 +407,7 @@ def get_portfolio_summary(
     account_id: int | None = None,
     include_quotes: bool = True,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """
     获取持仓汇总信息
@@ -393,11 +419,17 @@ def get_portfolio_summary(
         accounts: 账户列表及各账户持仓明细
         total: 所有账户汇总
     """
-    # 获取账户
+    # 获取账户(仅当前用户的)
     if account_id:
-        accounts = db.query(Account).filter(Account.id == account_id, Account.enabled == True).all()
+        accounts = db.query(Account).filter(
+            Account.id == account_id, Account.enabled == True,
+            or_(Account.user_id == user.id, Account.user_id.is_(None)),
+        ).all()
     else:
-        accounts = db.query(Account).filter(Account.enabled == True).all()
+        accounts = db.query(Account).filter(
+            Account.enabled == True,
+            or_(Account.user_id == user.id, Account.user_id.is_(None)),
+        ).all()
 
     if not accounts:
         return {
@@ -628,23 +660,26 @@ def _fetch_quotes_for_stocks(stocks: list[Stock]) -> dict:
 _PORTFOLIO_RESULT_CACHE = TTLCache(default_ttl_sec=600.0)
 
 
-def _holdings_signature(db: Session) -> str:
+def _holdings_signature(db: Session, user: User | None = None) -> str:
     """启用账户持仓的稳定指纹(stock_id + 合并后数量);仅查 DB,不拉行情/K 线。"""
-    rows = (
-        db.query(Position.stock_id, Position.quantity)
-        .join(Account, Account.id == Position.account_id)
-        .filter(Account.enabled == True)  # noqa: E712
-        .all()
-    )
+    q = db.query(Position.stock_id, Position.quantity).join(
+        Account, Account.id == Position.account_id
+    ).filter(Account.enabled == True)  # noqa: E712
+    if user is not None:
+        q = q.filter(or_(Account.user_id == user.id, Account.user_id.is_(None)))
+    rows = q.all()
     agg: dict[int, float] = {}
     for sid, qty in rows:
         agg[sid] = agg.get(sid, 0.0) + (qty or 0)
     return ";".join(f"{sid}:{agg[sid]:g}" for sid in sorted(agg))
 
 
-def _gather_holdings(db: Session) -> list[dict]:
+def _gather_holdings(db: Session, user: User | None = None) -> list[dict]:
     """汇总所有启用账户的真实持仓为统一列表(CNY 市值/浮盈 + fx),多账户同股合并。"""
-    accounts = db.query(Account).filter(Account.enabled == True).all()  # noqa: E712
+    q = db.query(Account).filter(Account.enabled == True)  # noqa: E712
+    if user is not None:
+        q = q.filter(or_(Account.user_id == user.id, Account.user_id.is_(None)))
+    accounts = q.all()
     stock_ids = {p.stock_id for acc in accounts for p in acc.positions}
     stocks = db.query(Stock).filter(Stock.id.in_(stock_ids)).all() if stock_ids else []
     stock_map = {s.id: s for s in stocks}
@@ -687,16 +722,17 @@ def _gather_holdings(db: Session) -> list[dict]:
 
 
 @router.get("/portfolio/diagnostics")
-def portfolio_diagnostics(db: Session = Depends(get_db)):
+def portfolio_diagnostics(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """真实持仓组合诊断:集中度(HHI)/最大单仓/市场分布/风险提示(只读)。"""
     from src.core.portfolio_diagnostics import diagnose_positions
 
-    return diagnose_positions(_gather_holdings(db))
+    return diagnose_positions(_gather_holdings(db, user))
 
 
 @router.get("/portfolio/benchmark")
 def portfolio_benchmark(
-    days: int = 60, benchmark: str = "000300", db: Session = Depends(get_db)
+    days: int = 60, benchmark: str = "000300", db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """真实持仓组合 vs 基准:超额收益/信息比率/相对回撤 + 归一化净值曲线。"""
     from src.core.portfolio_benchmark import (
@@ -706,7 +742,7 @@ def portfolio_benchmark(
 
     days = max(20, min(int(days), 250))
     bcode = benchmark or DEFAULT_BENCHMARK
-    sig = _holdings_signature(db)
+    sig = _holdings_signature(db, user)
     if not sig:
         return {"empty": True, "reason": "no_holdings"}
     ckey = f"bench:{days}:{bcode}:{sig}"
@@ -714,7 +750,7 @@ def portfolio_benchmark(
     if cached is not None:
         return cached
 
-    holdings = _gather_holdings(db)
+    holdings = _gather_holdings(db, user)
     if not holdings:
         return {"empty": True, "reason": "no_holdings"}
     res = build_portfolio_benchmark(holdings, days=days, benchmark_code=bcode)
@@ -726,10 +762,13 @@ def portfolio_benchmark(
 
 
 @router.get("/portfolio/todos")
-def portfolio_todos(db: Session = Depends(get_db)):
+def portfolio_todos(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """首页空态待办:持仓但未设提醒 / 提醒即将到期(可行动,盘后也不空)。"""
     todos: list[dict] = []
-    accounts = db.query(Account).filter(Account.enabled == True).all()  # noqa: E712
+    accounts = db.query(Account).filter(
+        Account.enabled == True,  # noqa: E712
+        or_(Account.user_id == user.id, Account.user_id.is_(None)),
+    ).all()
     held_ids = {p.stock_id for acc in accounts for p in acc.positions}
     if held_ids:
         ruled = {
@@ -777,13 +816,13 @@ def portfolio_todos(db: Session = Depends(get_db)):
 
 
 @router.get("/portfolio/attribution")
-def portfolio_attribution(days: int = 60, benchmark: str = "000300", db: Session = Depends(get_db)):
+def portfolio_attribution(days: int = 60, benchmark: str = "000300", db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """近 days 日各持仓对组合收益的贡献(谁拖累/贡献),降序。"""
     from src.core.portfolio_benchmark import DEFAULT_BENCHMARK, build_attribution
 
     days = max(20, min(int(days), 250))
     bcode = benchmark or DEFAULT_BENCHMARK
-    sig = _holdings_signature(db)
+    sig = _holdings_signature(db, user)
     if not sig:
         return {"items": []}
     ckey = f"attr:{days}:{bcode}:{sig}"
@@ -791,7 +830,7 @@ def portfolio_attribution(days: int = 60, benchmark: str = "000300", db: Session
     if cached is not None:
         return cached
 
-    holdings = _gather_holdings(db)
+    holdings = _gather_holdings(db, user)
     if not holdings:
         return {"items": []}
     items = build_attribution(holdings, days=days, benchmark_code=bcode)
@@ -802,13 +841,13 @@ def portfolio_attribution(days: int = 60, benchmark: str = "000300", db: Session
 
 
 @router.post("/portfolio/ai-review")
-async def portfolio_ai_review(model_id: int | None = None, db: Session = Depends(get_db)):
+async def portfolio_ai_review(model_id: int | None = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """组合 AI 体检:诊断+基准+归因 → 叙述结论 + 调仓建议(只读,不下单)。"""
     from src.core.portfolio_benchmark import build_attribution, build_portfolio_benchmark
     from src.core.portfolio_diagnostics import diagnose_positions
     from src.web.api.chat import _get_ai_client
 
-    holdings = _gather_holdings(db)
+    holdings = _gather_holdings(db, user)
     if not holdings:
         return {"empty": True, "reason": "no_holdings"}
 

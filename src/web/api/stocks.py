@@ -5,11 +5,12 @@ import time
 from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from src.web.database import get_db
+from src.web.api.auth import get_current_user
 from src.web.models import (
     Stock,
     StockAgent,
@@ -17,6 +18,7 @@ from src.web.models import (
     Position,
     PriceAlertRule,
     PriceAlertHit,
+    User,
 )
 from src.web.stock_list import search_stocks, refresh_stock_list
 from src.core.marketdata_client import md_quote_rows
@@ -178,15 +180,19 @@ def refresh_list():
 
 
 @router.get("", response_model=list[StockResponse])
-def list_stocks(db: Session = Depends(get_db)):
-    stocks = db.query(Stock).order_by(Stock.sort_order.asc(), Stock.id.asc()).all()
+def list_stocks(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    stocks = db.query(Stock).filter(
+        or_(Stock.user_id == user.id, Stock.user_id.is_(None))  # 自己的 + 全局
+    ).order_by(Stock.sort_order.asc(), Stock.id.asc()).all()
     return [_stock_to_response(s) for s in stocks]
 
 
 @router.get("/quotes")
-def get_quotes(db: Session = Depends(get_db)):
+def get_quotes(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """获取所有自选股的实时行情"""
-    stocks = db.query(Stock).all()
+    stocks = db.query(Stock).filter(
+        or_(Stock.user_id == user.id, Stock.user_id.is_(None))
+    ).all()
     if not stocks:
         return {}
 
@@ -219,15 +225,16 @@ def get_quotes(db: Session = Depends(get_db)):
 
 
 @router.post("", response_model=StockResponse)
-def create_stock(stock: StockCreate, db: Session = Depends(get_db)):
+def create_stock(stock: StockCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     existing = db.query(Stock).filter(
-        Stock.symbol == stock.symbol, Stock.market == stock.market
+        Stock.symbol == stock.symbol, Stock.market == stock.market,
+        or_(Stock.user_id == user.id, Stock.user_id.is_(None)),
     ).first()
     if existing:
         raise HTTPException(400, f"股票 {stock.symbol} 已存在")
 
     max_order = db.query(func.max(Stock.sort_order)).scalar() or 0
-    db_stock = Stock(**stock.model_dump(), sort_order=int(max_order) + 1)
+    db_stock = Stock(**stock.model_dump(), sort_order=int(max_order) + 1, user_id=user.id)
     db.add(db_stock)
     db.commit()
     db.refresh(db_stock)

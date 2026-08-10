@@ -12,6 +12,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import src.core.portfolio_benchmark as pb
+
+# 多用户改造后: 直接调用 API 函数需传 user(测试用 fake)
+from types import SimpleNamespace as _SimpleNamespace
+_FAKE_USER = _SimpleNamespace(id="test-user", role="owner", username="tester")
 from src.web import models as M
 from src.web.api import accounts as accounts_api
 from src.web.database import Base
@@ -58,11 +62,11 @@ def test_benchmark_result_cached(db, monkeypatch):
         calls["n"] += 1
         return {"excess_return": 1.23}
 
-    monkeypatch.setattr(accounts_api, "_gather_holdings", lambda d: list(_HOLDINGS))
+    monkeypatch.setattr(accounts_api, "_gather_holdings", lambda d, user=None: list(_HOLDINGS))
     monkeypatch.setattr(pb, "build_portfolio_benchmark", fake_build)
 
-    r1 = accounts_api.portfolio_benchmark(days=60, benchmark="000300", db=db)
-    r2 = accounts_api.portfolio_benchmark(days=60, benchmark="000300", db=db)
+    r1 = accounts_api.portfolio_benchmark(days=60, benchmark="000300", db=db, user=_FAKE_USER)
+    r2 = accounts_api.portfolio_benchmark(days=60, benchmark="000300", db=db, user=_FAKE_USER)
     assert calls["n"] == 1, f"第二次应命中缓存,实际计算 {calls['n']} 次"
     assert r1 == r2 == {"excess_return": 1.23}
 
@@ -76,11 +80,11 @@ def test_benchmark_empty_not_cached(db, monkeypatch):
         calls["n"] += 1
         return None
 
-    monkeypatch.setattr(accounts_api, "_gather_holdings", lambda d: list(_HOLDINGS))
+    monkeypatch.setattr(accounts_api, "_gather_holdings", lambda d, user=None: list(_HOLDINGS))
     monkeypatch.setattr(pb, "build_portfolio_benchmark", fake_build)
 
-    r1 = accounts_api.portfolio_benchmark(db=db)
-    accounts_api.portfolio_benchmark(db=db)
+    r1 = accounts_api.portfolio_benchmark(db=db, user=_FAKE_USER)
+    accounts_api.portfolio_benchmark(db=db, user=_FAKE_USER)
     assert calls["n"] == 2, "空结果不应缓存,应重算"
     assert r1.get("empty") is True
 
@@ -94,12 +98,12 @@ def test_benchmark_cache_invalidates_on_holdings_change(db, monkeypatch):
         calls["n"] += 1
         return {"excess_return": float(calls["n"])}
 
-    monkeypatch.setattr(accounts_api, "_gather_holdings", lambda d: list(_HOLDINGS))
+    monkeypatch.setattr(accounts_api, "_gather_holdings", lambda d, user=None: list(_HOLDINGS))
     monkeypatch.setattr(pb, "build_portfolio_benchmark", fake_build)
 
-    accounts_api.portfolio_benchmark(db=db)  # 计算 1,写缓存
+    accounts_api.portfolio_benchmark(db=db, user=_FAKE_USER)  # 计算 1,写缓存
     _add_position(db, "000001", 50)  # 持仓变化 → 指纹变
-    accounts_api.portfolio_benchmark(db=db)  # 应重算
+    accounts_api.portfolio_benchmark(db=db, user=_FAKE_USER)  # 应重算
     assert calls["n"] == 2, "持仓变化后缓存应失效"
 
 
@@ -112,10 +116,10 @@ def test_attribution_result_cached(db, monkeypatch):
         calls["n"] += 1
         return [{"symbol": "600519", "contribution_pct": 1.0}]
 
-    monkeypatch.setattr(accounts_api, "_gather_holdings", lambda d: list(_HOLDINGS))
+    monkeypatch.setattr(accounts_api, "_gather_holdings", lambda d, user=None: list(_HOLDINGS))
     monkeypatch.setattr(pb, "build_attribution", fake_attr)
 
-    r1 = accounts_api.portfolio_attribution(db=db)
-    r2 = accounts_api.portfolio_attribution(db=db)
+    r1 = accounts_api.portfolio_attribution(db=db, user=_FAKE_USER)
+    r2 = accounts_api.portfolio_attribution(db=db, user=_FAKE_USER)
     assert calls["n"] == 1, f"第二次应命中缓存,实际 {calls['n']} 次"
     assert r1 == r2

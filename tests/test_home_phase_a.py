@@ -14,6 +14,10 @@ from src.web.api import accounts as accounts_api
 from src.web.api import price_alerts as alerts_api
 from src.web.database import Base
 
+# 多用户改造后: 直接调用 API 函数需传 user(测试用 fake)
+from types import SimpleNamespace as _SimpleNamespace
+_FAKE_USER = _SimpleNamespace(id="test-user", role="owner", username="tester")
+
 
 @pytest.fixture
 def db():
@@ -51,7 +55,7 @@ def _seed(s):
 def test_todos_flags_holding_without_alert(db):
     """持仓但未设提醒的标的应进待办;已设提醒的不进。"""
     _, mt, pa, _ = _seed(db)
-    res = accounts_api.portfolio_todos(db=db)
+    res = accounts_api.portfolio_todos(db=db, user=_FAKE_USER)
     msgs = [t["message"] for t in res["todos"]]
     assert any("平安银行" in m for m in msgs), msgs
     assert not any("贵州茅台" in m for m in msgs), msgs
