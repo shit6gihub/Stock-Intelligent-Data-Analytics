@@ -45,13 +45,15 @@ export default function LoginPage() {
 
     setLoading(true)
     try {
-      const data = isSetup
-        ? await authApi.setup({ username, password })
-        : await authApi.login({ username, password })
+      const data = await authApi.login({ username, password })
 
       // 保存 token
       localStorage.setItem('token', data.token)
       localStorage.setItem('token_expires', data.expires_at)
+      // 保存用户信息(多用户)
+      if (data.user) {
+        localStorage.setItem('user', JSON.stringify(data.user))
+      }
 
       toast(isSetup ? '密码设置成功' : '登录成功', 'success')
       navigate('/')

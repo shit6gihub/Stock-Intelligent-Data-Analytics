@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { Check, Eye, EyeOff, Plus, Pencil, Trash2, Star, Send, Cpu, Play, Download, Upload, FileJson, BarChart3, User, Radar, RefreshCw, QrCode, MonitorUp } from 'lucide-react'
-import { fetchAPI, type AIService, type AIModel, type NotifyChannel } from '@panwatch/api'
+import { Check, Eye, EyeOff, Plus, Pencil, Trash2, Star, Send, Cpu, Play, Download, Upload, FileJson, BarChart3, User, Radar, RefreshCw, QrCode, MonitorUp, MailCheck } from 'lucide-react'
+import { fetchAPI, type AIService, type AIModel, type NotifyChannel, type UserInfo, type SubscriptionItem, authApi } from '@panwatch/api'
+import UserManagement from '@/components/UserManagement'
 import { useAvatar, saveAvatar, fileToAvatarDataUrl } from '@/hooks/use-avatar'
 import { Input } from '@panwatch/base-ui/components/ui/input'
 import { Label } from '@panwatch/base-ui/components/ui/label'
@@ -173,6 +174,10 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState<string | null>(null)
   const [saved, setSaved] = useState<string | null>(null)
   const [edited, setEdited] = useState<Record<string, string>>({})
+  // 多用户(2026-08-10 阶段5): 当前用户 + 订阅
+  const [currentUser, setCurrentUser] = useState<UserInfo | null>(null)
+  const [subscriptions, setSubscriptions] = useState<SubscriptionItem[]>([])
+  const [subLoading, setSubLoading] = useState(false)
   // 同花顺登录态
   const [thsSession, setThsSession] = useState<any>(null)
   const [thsQr, setThsQr] = useState<string>('')
@@ -427,6 +432,37 @@ export default function SettingsPage() {
   }
 
   useEffect(() => { load(); loadFeedbackStats() }, [])
+
+  // 多用户: 当前用户 + 订阅(2026-08-10 阶段5)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('user')
+      if (raw) setCurrentUser(JSON.parse(raw) as UserInfo)
+    } catch { /* ignore */ }
+    // 刷新用户信息(后端为准)
+    authApi.me().then(d => {
+      setCurrentUser(d.user)
+      localStorage.setItem('user', JSON.stringify(d.user))
+    }).catch(() => {})
+    // 订阅
+    setSubLoading(true)
+    authApi.listSubscriptions().then(d => {
+      setSubscriptions(d.subscriptions || [])
+    }).catch(() => {}).finally(() => setSubLoading(false))
+  }, [])
+
+  const toggleSubscription = async (reportType: string) => {
+    const target = subscriptions.find(s => s.report_type === reportType)
+    if (!target) return
+    const next = !target.enabled
+    setSubscriptions(prev => prev.map(s => s.report_type === reportType ? { ...s, enabled: next } : s))
+    try {
+      await authApi.updateSubscription(reportType, next)
+    } catch (e) {
+      setSubscriptions(prev => prev.map(s => s.report_type === reportType ? { ...s, enabled: !next } : s))
+      toast(e instanceof Error ? e.message : '更新失败', 'error')
+    }
+  }
 
   const onPickAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -1117,6 +1153,46 @@ export default function SettingsPage() {
             </div>
           )}
         </section>
+
+        {/* 多用户: 定时报告订阅 + 用户管理(2026-08-10 阶段5) */}
+        <section id="sec-subscriptions" className="card p-4 md:p-6 lg:col-span-12">
+          <div className="mb-3 flex items-center gap-2">
+            <h2 className="flex items-center gap-2 text-sm font-semibold">
+              <MailCheck className="h-4 w-4 text-primary" />
+              定时报告订阅
+            </h2>
+            <span className="text-[11px] text-muted-foreground">选择你要接收的定时推送</span>
+          </div>
+          {subLoading ? (
+            <div className="py-3 text-[12px] text-muted-foreground">加载中…</div>
+          ) : (
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {subscriptions.map(s => (
+                <div key={s.report_type} className="flex items-center justify-between rounded-lg border border-border/40 bg-accent/20 px-3 py-2.5">
+                  <div>
+                    <div className="text-[12px] font-medium">{s.label}</div>
+                    <div className="text-[10px] text-muted-foreground">{s.report_type}</div>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={s.enabled}
+                    onClick={() => toggleSubscription(s.report_type)}
+                    className={`relative h-5 w-9 rounded-full transition-colors ${s.enabled ? 'bg-primary' : 'bg-muted'}`}
+                  >
+                    <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${s.enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {currentUser?.role === 'owner' && (
+          <section id="sec-users" className="card p-4 md:p-6 lg:col-span-12">
+            <UserManagement currentUser={currentUser} />
+          </section>
+        )}
 
         {/* General Settings */}
         {settings.length > 0 && (
