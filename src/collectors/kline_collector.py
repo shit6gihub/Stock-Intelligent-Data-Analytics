@@ -396,6 +396,32 @@ def _detect_combined_patterns(klines: list[KlineData]) -> str | None:
         return None
 
 
+def _get_combined_patterns(klines: list[KlineData]) -> list[dict]:
+    """全部识别到的组合形态(含信号方向),供技术指标建议评分使用。
+
+    返回: [{name, signal, description, position}],看涨在前。
+    """
+    try:
+        from src.core.kline_pattern import detect_patterns
+
+        hits = detect_patterns(list(klines))
+        if not hits:
+            return []
+        result = []
+        for h in hits:
+            result.append({
+                "name": h.name,
+                "signal": h.signal,
+                "position": h.position,
+                "description": h.description,
+            })
+        # 看涨在前,看跌在后
+        result.sort(key=lambda x: 0 if x["signal"] == "看涨" else 1)
+        return result
+    except Exception:
+        return []
+
+
 def _find_cross_days(
     series1: list[float], series2: list[float], cross_type: str
 ) -> int | None:
@@ -794,4 +820,6 @@ class KlineCollector:
             "resistance": indicators.resistance,
             # K线形态
             "kline_pattern": indicators.kline_pattern,
+            # 组合形态列表(同花顺教学体系,含信号方向,供技术指标建议评分)
+            "kline_patterns": _get_combined_patterns(klines),
         }
