@@ -136,3 +136,28 @@ def test_short_black_three():
     hits = detect_patterns(bars)
     names = [h.name for h in hits]
     assert "黑三兵" not in names, f"低位不应识别黑三兵,实际 {names}"
+
+
+# ============ 经典形态测试(同花顺《K线形态大全》可量化部分) ============
+
+def _gen_series(rows):
+    """rows: [(o,h,l,c,v),...] → FakeBar 列表"""
+    return make_bars(rows)
+
+
+def test_double_bottom_breakout():
+    """双底突破(W底): 两个相近低点后突破颈线。"""
+    from src.core.kline_pattern import detect_patterns
+    # 20根: 下跌→低点10→反弹→低点10.1→突破
+    rows = [(20 - i * 0.1, 20 - i * 0.1 + 0.3, 20 - i * 0.1 - 0.3, 20 - i * 0.1, 1) for i in range(8)]
+    rows += [(12, 12.3, 10.0, 12.2, 1.5), (12.2, 12.5, 12.0, 12.4, 1),
+             (12.4, 12.6, 12.2, 12.5, 1), (12.5, 12.8, 12.3, 12.7, 1),
+             (12.7, 13.0, 12.5, 12.9, 1), (12.9, 13.1, 12.7, 13.0, 1),
+             (13.0, 13.2, 10.1, 13.1, 1.5), (13.1, 13.3, 12.9, 13.2, 1),
+             (13.2, 13.4, 13.0, 13.3, 1), (13.3, 13.5, 13.1, 13.4, 1),
+             (13.4, 13.6, 13.2, 13.5, 1.2), (13.5, 14.0, 13.3, 13.9, 1.5)]
+    hits = detect_patterns(_gen_series(rows))
+    names = [h.name for h in hits]
+    # 双底要求两个低点接近(10.0 vs 10.1)且突破颈线
+    # 颈线=中间反弹高点≈13.0,收盘13.9>13.0 ✓
+    assert any("双底" in n for n in names), f"应识别双底突破,实际 {names}"
