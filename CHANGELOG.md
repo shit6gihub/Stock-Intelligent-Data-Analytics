@@ -2,6 +2,17 @@
 
 本文件记录项目中每一次可提交变更。新记录按日期倒序添加，并归入 `fix`、`feature`、`update` 或 `doc` 类别。
 
+## v0.2.0 (2026-08-10) - 多用户系统
+
+### 🆕 多用户(团队 4-5 人)
+- **用户表+认证**: users 表(UUID 主键, role owner|member), 旧 admin 自动迁移为 owner, JWT 加 user_id/role, token_version 踢人
+- **用户管理 API**(仅 owner): 建子账号/禁用/启用/重置密码/删除
+- **数据隔离**: 持仓/自选/账户/渠道按 user_id 隔离(自己的+全局共享), 旧数据迁移归 owner
+- **预测并发**: predict 信号量(2并发)+ 结果缓存(30min), backtest 单并发
+- **推送隔离**: 渠道按用户, push_notification(user_id), 定时报告订阅(盘前/盘中/复盘/预测), cron 按订阅用户推送
+- **前端**: 登录存用户, Settings 用户管理页+订阅开关, 非 owner 无管理权限
+- 全量 524 测试通过
+
 ## 2026-08-10
 
 ### fix
