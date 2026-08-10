@@ -289,7 +289,14 @@ export default function ChatWidget() {
   }
 
   return (
-    <div className={`fixed bottom-0 right-0 z-50 w-full h-full md:bottom-5 md:max-w-[calc(100vw-2.5rem)] md:max-h-[calc(100vh-2.5rem)] md:rounded-xl bg-background border border-border/60 shadow-2xl flex flex-col overflow-hidden ${DESKTOP_SIZE_CLASSES[desktopSize]} ${DESKTOP_POSITION_CLASSES[desktopPosition]}`}>
+    <>
+      <button
+        type="button"
+        onClick={() => { setSettingsOpen(false); setOpen(false) }}
+        className="fixed inset-0 z-[55] hidden bg-black/25 backdrop-blur-[2px] md:block dark:bg-black/45"
+        aria-label="关闭 AI 助手背景遮罩"
+      />
+      <div className={`fixed bottom-0 right-0 z-[60] w-full h-full md:bottom-5 md:max-w-[calc(100vw-2.5rem)] md:max-h-[calc(100vh-2.5rem)] md:rounded-xl bg-background border border-border/60 shadow-2xl md:border-primary/30 md:ring-1 md:ring-white/10 md:shadow-[0_24px_90px_rgba(0,0,0,0.75)] flex flex-col overflow-hidden ${DESKTOP_SIZE_CLASSES[desktopSize]} ${DESKTOP_POSITION_CLASSES[desktopPosition]}`}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/40 bg-accent/20">
         <div className="flex items-center gap-2">
@@ -542,6 +549,7 @@ export default function ChatWidget() {
           </div>
         </>
       )}
-    </div>
+      </div>
+    </>
   )
 }
