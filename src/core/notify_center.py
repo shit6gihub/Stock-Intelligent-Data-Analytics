@@ -20,13 +20,23 @@ logger = logging.getLogger(__name__)
 _PUSH_LEVELS = {"info", "success", "warning", "error"}
 
 
-def _build_notifier():
-    """从 DB 启用渠道构建 NotifierManager，并返回不含密钥的渠道快照。"""
+def _build_notifier(user_id: str | None = None):
+    """从 DB 启用渠道构建 NotifierManager，并返回不含密钥的渠道快照。
+
+    多用户(2026-08-10): user_id 指定 → 该用户渠道 + 全局共享(NULL);
+    不指定 → 只推全局渠道(NULL)。
+    """
     from src.core.notifier import NotifierManager
+    from sqlalchemy import or_ as _or_
 
     db = SessionLocal()
     try:
-        channels = db.query(NotifyChannel).filter(NotifyChannel.enabled.is_(True)).all()
+        q = db.query(NotifyChannel).filter(NotifyChannel.enabled.is_(True))
+        if user_id is not None:
+            q = q.filter(_or_(NotifyChannel.user_id == user_id, NotifyChannel.user_id.is_(None)))
+        else:
+            q = q.filter(NotifyChannel.user_id.is_(None))
+        channels = q.all()
         if not channels:
             return None, []
         mgr = NotifierManager()
@@ -66,9 +76,11 @@ def push_notification(
     source: str = "",
     trace_id: str = "",
     also_push: bool | None = None,
+    user_id: str | None = None,
 ) -> int | None:
     """写一条站内通知, 并按级别决定是否外发。返回 notification id。
 
+    多用户(2026-08-10): user_id 指定 → 推该用户渠道+全局; None → 只推全局渠道。
     绝不抛异常 —— 通知失败不能拖垮业务主流程。
     """
     nid = None
@@ -104,7 +116,7 @@ def push_notification(
         _set_push_status(nid, "skipped", "级别不外发")
         return nid
 
-    mgr, channel_records = _build_notifier()
+    mgr, channel_records = _build_notifier(user_id=user_id)
     if mgr is None:
         init_errors = [str(item.get("error") or "") for item in channel_records if item.get("status") == "failed"]
         if channel_records:

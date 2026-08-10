@@ -40,6 +40,25 @@ class User(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+class ReportSubscription(Base):
+    """定时报告订阅(2026-08-10 阶段4): 每个用户可配置收哪些定时报告。
+
+    report_type: premarket(盘前) / intraday(盘中) / review(盘后复盘) / prediction(预测)
+    """
+    __tablename__ = "report_subscriptions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    report_type = Column(String(32), nullable=False)  # premarket | intraday | review | prediction
+    enabled = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "report_type", name="uq_user_report_type"),
+    )
+
+
 class AIService(Base):
     """AI 服务商（base_url + api_key）"""
 

@@ -12,6 +12,7 @@ from src.web.api import (
     providers,
     channels,
     datasources,
+    subscriptions,
     accounts,
     history,
     news,
@@ -98,6 +99,9 @@ app.include_router(
 )
 app.include_router(
     channels.router, prefix="/api/channels", tags=["channels"], dependencies=protected
+)
+app.include_router(
+    subscriptions.router, prefix="/api/subscriptions", tags=["subscriptions"], dependencies=protected
 )
 app.include_router(
     notifications.router,

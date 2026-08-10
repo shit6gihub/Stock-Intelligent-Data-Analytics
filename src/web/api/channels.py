@@ -2,14 +2,23 @@ from datetime import datetime
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from src.web.database import get_db
-from src.web.models import NotifyChannel
+from src.web.api.auth import get_current_user
+from src.web.models import NotifyChannel, User
 from src.core.notifier import NotifierManager, CHANNEL_TYPES
 
 router = APIRouter()
+
+
+def _user_channels_query(db: Session, user: User):
+    """当前用户可见渠道: 自己的 + 全局共享(NULL)。"""
+    return db.query(NotifyChannel).filter(
+        or_(NotifyChannel.user_id == user.id, NotifyChannel.user_id.is_(None))
+    )
 
 
 def _channel_test_content() -> str:
@@ -60,8 +69,8 @@ class ChannelResponse(BaseModel):
 
 
 @router.get("", response_model=list[ChannelResponse])
-def list_channels(db: Session = Depends(get_db)):
-    return db.query(NotifyChannel).order_by(NotifyChannel.id).all()
+def list_channels(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return _user_channels_query(db, user).order_by(NotifyChannel.id).all()
 
 
 @router.get("/types")
@@ -71,11 +80,13 @@ def list_channel_types():
 
 
 @router.post("", response_model=ChannelResponse)
-def create_channel(body: ChannelCreate, db: Session = Depends(get_db)):
+def create_channel(body: ChannelCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     _validate_channel(body.type, body.config)
     if body.is_default:
-        db.query(NotifyChannel).update({"is_default": False})
-    channel = NotifyChannel(**body.model_dump())
+        _user_channels_query(db, user).update({"is_default": False})
+    data = body.model_dump()
+    data["user_id"] = user.id  # 渠道归属当前用户
+    channel = NotifyChannel(**data)
     db.add(channel)
     db.commit()
     db.refresh(channel)
@@ -83,8 +94,8 @@ def create_channel(body: ChannelCreate, db: Session = Depends(get_db)):
 
 
 @router.put("/{channel_id}", response_model=ChannelResponse)
-def update_channel(channel_id: int, body: ChannelUpdate, db: Session = Depends(get_db)):
-    channel = db.query(NotifyChannel).filter(NotifyChannel.id == channel_id).first()
+def update_channel(channel_id: int, body: ChannelUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    channel = _user_channels_query(db, user).filter(NotifyChannel.id == channel_id).first()
     if not channel:
         raise HTTPException(404, "通知渠道不存在")
 
@@ -93,7 +104,7 @@ def update_channel(channel_id: int, body: ChannelUpdate, db: Session = Depends(g
     next_config = data.get("config", channel.config or {})
     _validate_channel(next_type, next_config)
     if data.get("is_default"):
-        db.query(NotifyChannel).update({"is_default": False})
+        _user_channels_query(db, user).update({"is_default": False})
 
     for key, value in data.items():
         setattr(channel, key, value)
@@ -104,8 +115,8 @@ def update_channel(channel_id: int, body: ChannelUpdate, db: Session = Depends(g
 
 
 @router.delete("/{channel_id}")
-def delete_channel(channel_id: int, db: Session = Depends(get_db)):
-    channel = db.query(NotifyChannel).filter(NotifyChannel.id == channel_id).first()
+def delete_channel(channel_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    channel = _user_channels_query(db, user).filter(NotifyChannel.id == channel_id).first()
     if not channel:
         raise HTTPException(404, "通知渠道不存在")
     db.delete(channel)
