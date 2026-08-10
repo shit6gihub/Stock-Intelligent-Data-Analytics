@@ -54,11 +54,13 @@ app = FastAPI(
 )
 
 # GZip 压缩(2026-08-10): 静态 JS 2.3MB 未压缩, 跨境弱网加载慢 → 压缩后 ~600KB
-# 注意: 必须在 ResponseWrapperMiddleware 之前(响应包装会拦截流)
+# ⚠️ 顺序关键: Starlette add_middleware 后加的在更外层(先执行)。
+# 正确: ResponseWrapper 先 add(内层, 先拿到后端原始响应并包装),
+#      GZip 后 add(外层, 最后压缩包装后的响应)。
+# 之前顺序反了(GZip内层), wrapper 收到压缩字节流 → JSON 解析失败 → 返回裸数据(设置页"都没了")。
+app.add_middleware(ResponseWrapperMiddleware)
 from starlette.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
-
-app.add_middleware(ResponseWrapperMiddleware)
 _cors_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:8000").split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
