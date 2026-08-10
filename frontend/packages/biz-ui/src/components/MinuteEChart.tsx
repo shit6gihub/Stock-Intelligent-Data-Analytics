@@ -193,7 +193,7 @@ export default function MinuteEChart({ points, prevClose, isIndex }: Props) {
             {
               name: '成交量',
               type: 'bar',
-              xAxisIndex: 1,
+              xAxisIndex: 0,
               yAxisIndex: 1,
               data: vols.map((v, i) => ({
                 value: v,
