@@ -158,6 +158,12 @@ class AgentScheduler:
                         notify_sent=bool(raw.get("notified", False)),
                         model_label=context.model_label,
                     )
+                    # 多用户定时报告推送(2026-08-10 阶段4):
+                    # agent 已通过全局渠道推送(owner), 再按订阅用户逐个推其个人渠道
+                    try:
+                        self._push_to_subscribers(agent_name, result)
+                    except Exception as e:
+                        logger.warning(f"[调度] 订阅推送失败: {e}")
                 logger.info(f"[调度] Agent 执行完成: {agent.display_name}")
         except Exception as e:
             logger.error(f"Agent [{agent_name}] 调度执行异常: {e}", exc_info=True)
@@ -174,6 +180,55 @@ class AgentScheduler:
     async def trigger_now(self, agent_name: str):
         """立即执行某个 Agent（手动触发）"""
         await self._run_agent(agent_name)
+
+    def _push_to_subscribers(self, agent_name: str, result) -> None:
+        """按订阅用户推送定时报告(2026-08-10 阶段4)。
+
+        报告类型映射: premarket_outlook→premarket, intraday_monitor→intraday,
+        afterhours/daily_report→review, prediction→prediction。
+        只推订阅了该类型且配置了个人渠道的用户。
+        """
+        report_type = {
+            "premarket_outlook": "premarket",
+            "intraday_monitor": "intraday",
+            "afterhours_review": "review",
+            "daily_report": "review",
+        }.get(agent_name)
+        if not report_type:
+            return
+        content = getattr(result, "notify_content", None) or getattr(result, "content", "") or ""
+        title = getattr(result, "title", "") or agent_name
+        if not content:
+            return
+        try:
+            from src.web.database import SessionLocal
+            from src.web.models import ReportSubscription, User
+            from src.core.notify_center import push_notification
+
+            db = SessionLocal()
+            try:
+                subs = db.query(ReportSubscription).filter(
+                    ReportSubscription.report_type == report_type,
+                    ReportSubscription.enabled.is_(True),
+                ).all()
+                users = {u.id: u for u in db.query(User).filter(User.is_active.is_(True)).all()}
+            finally:
+                db.close()
+            for sub in subs:
+                if sub.user_id not in users:
+                    continue
+                try:
+                    push_notification(
+                        title, content,
+                        category="report",
+                        level="info",
+                        user_id=sub.user_id,
+                    )
+                    logger.info(f"[调度] 订阅推送 {report_type} → 用户 {sub.user_id[:8]}")
+                except Exception as e:
+                    logger.warning(f"[调度] 订阅推送用户 {sub.user_id[:8]} 失败: {e}")
+        except Exception as e:
+            logger.warning(f"[调度] 订阅查询失败: {e}")
 
     def start(self):
         """启动调度器"""
