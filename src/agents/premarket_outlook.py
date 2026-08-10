@@ -423,6 +423,20 @@ class PremarketOutlookAgent(BaseAgent):
             lines.append("> 以上事件是'提前发现题材'的核心输入: 每个事件 → 受益板块 → 潜伏标的(未涨停)。不要用涨停池选股(那是追高)。")
             lines.append("")
 
+        # 大宗商品轮动前瞻(联动涨价题材: 能源→金属→农产品→黄金)
+        try:
+            from src.core.commodity_rotation import detect_rotation_stage, format_rotation
+
+            ev_texts = [e.get("content", "") for e in ev]
+            rotation = detect_rotation_stage(ev_texts)
+            if "未检测" not in rotation.get("stage", ""):
+                lines.append("## 大宗商品轮动(联动涨价题材)")
+                lines.append(format_rotation(rotation))
+                lines.append("> 轮动顺序: 能源冲锋→金属狂潮→农产压轴→黄金返场。按当前阶段提前埋伏下一幕题材,与上方事件流交叉验证。")
+                lines.append("")
+        except Exception as e:
+            logger.debug(f"商品轮动判断失败: {e}")
+
         # 未来催化日历(未来 3 天)
         cat = data.get("catalyst", {}) or {}
         cat_items = (cat.get("rows") or cat.get("items") or []) if isinstance(cat, dict) else []
