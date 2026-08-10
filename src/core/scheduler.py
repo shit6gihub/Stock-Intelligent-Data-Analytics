@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from typing import Callable, Awaitable
@@ -160,8 +161,9 @@ class AgentScheduler:
                     )
                     # 多用户定时报告推送(2026-08-10 阶段4):
                     # agent 已通过全局渠道推送(owner), 再按订阅用户逐个推其个人渠道
+                    # ⚠️ 用 to_thread 异步执行: 同步DB写+webhook推送不能阻塞事件循环
                     try:
-                        self._push_to_subscribers(agent_name, result)
+                        await asyncio.to_thread(self._push_to_subscribers, agent_name, result)
                     except Exception as e:
                         logger.warning(f"[调度] 订阅推送失败: {e}")
                 logger.info(f"[调度] Agent 执行完成: {agent.display_name}")

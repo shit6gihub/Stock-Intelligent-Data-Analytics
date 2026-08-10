@@ -29,9 +29,11 @@ engine = create_engine(
 def _set_sqlite_pragma(dbapi_conn, connection_record):
     cursor = dbapi_conn.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA busy_timeout=30000")
+    cursor.execute("PRAGMA busy_timeout=60000")
     cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.execute("PRAGMA foreign_keys=ON")
+    # 积极 checkpoint: 减少 WAL 膨胀, 降低锁竞争窗口
+    cursor.execute("PRAGMA wal_autocheckpoint=1000")
     cursor.close()
 
 
@@ -40,6 +42,21 @@ SessionLocal = sessionmaker(bind=engine)
 
 class Base(DeclarativeBase):
     pass
+
+
+# SQLite 写锁信号量(2026-08-11): WAL 模式读写不互斥, 但写-写互斥。
+# 多用户后写请求变多(订阅推送/定时任务), 并发写会互相等待超时 → database is locked。
+# 用信号量把并发写限制为 1, 排队而非冲突, 根治锁死。
+import threading as _threading
+_sqlite_write_lock = _threading.Semaphore(1)
+
+
+def acquire_write():
+    """写操作前调用: 排队等待写锁(最多30s, 与busy_timeout一致)。"""
+    acquired = _sqlite_write_lock.acquire(timeout=30)
+    if not acquired:
+        raise TimeoutError("数据库写入繁忙, 请稍后重试")
+    return _sqlite_write_lock
 
 
 def get_db():
