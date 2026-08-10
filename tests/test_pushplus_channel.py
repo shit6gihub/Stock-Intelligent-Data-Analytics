@@ -4,6 +4,7 @@ import pytest
 
 from src.core.notifier import NotifierManager
 from src.core.notify_center import _PUSH_LEVELS
+from src.web.api.channels import _channel_test_content
 
 
 def test_pushplus_requires_token():
@@ -18,6 +19,15 @@ def test_unknown_channel_is_rejected():
 
 def test_info_notifications_are_forwarded():
     assert "info" in _PUSH_LEVELS
+
+
+def test_channel_test_content_is_unique():
+    first = _channel_test_content()
+    second = _channel_test_content()
+
+    assert first != second
+    assert "测试时间：" in first
+    assert "测试编号：" in first
 
 
 def test_pushplus_accepts_string_success_code_and_returns_receipt(monkeypatch):

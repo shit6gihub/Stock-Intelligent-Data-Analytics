@@ -1,3 +1,6 @@
+from datetime import datetime
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -7,6 +10,16 @@ from src.web.models import NotifyChannel
 from src.core.notifier import NotifierManager, CHANNEL_TYPES
 
 router = APIRouter()
+
+
+def _channel_test_content() -> str:
+    """Build a unique test message so providers do not reject duplicates."""
+    sent_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    request_id = secrets.token_hex(3)
+    return (
+        "这是一条来自盯盘侠的测试通知，如果您收到此消息说明通知渠道配置正确。\n\n"
+        f"测试时间：{sent_at}\n测试编号：{request_id}"
+    )
 
 
 def _validate_channel(channel_type: str, config: dict) -> None:
@@ -115,7 +128,7 @@ async def test_channel(channel_id: int, db: Session = Depends(get_db)):
 
     result = await notifier.notify_with_result(
         title="测试通知",
-        content="这是一条来自盯盘侠的测试通知，如果您收到此消息说明通知渠道配置正确。",
+        content=_channel_test_content(),
         bypass_quiet_hours=True,
     )
 

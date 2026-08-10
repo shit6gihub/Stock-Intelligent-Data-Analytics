@@ -557,7 +557,10 @@ class NotifierManager:
             except Exception as exc:
                 raise RuntimeError("PushPlus 返回了无效 JSON") from exc
             if str(data.get("code")) != "200":
-                raise RuntimeError(f"PushPlus 发送失败: {data.get('msg')}")
+                message = str(data.get("msg") or "未知错误")
+                if message == "服务端验证错误":
+                    message += "（可能是重复消息，或 token/topic 参数无效）"
+                raise RuntimeError(f"PushPlus 发送失败: {message}")
             logger.info(f"PushPlus 通知发送成功: {title}")
             # data 为 PushPlus 消息流水号，可用于设置页确认 API 已接收。
             return {"accepted": True, "message_id": str(data.get("data") or "")[:128]}
