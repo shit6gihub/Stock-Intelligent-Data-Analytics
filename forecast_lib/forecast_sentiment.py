@@ -309,6 +309,49 @@ def fetch_sentiment(symbol: str, _run_id: int = 0) -> dict:
     except Exception as e:
         result["notes"].append(f"wudao公告失败: {e}")
 
+    # 1b. 同花顺快讯(2026-08-10 接入, 免key 7×24 新闻流, 替代 wudao 额度受限)
+    # 拉最近50条快讯, 按股票名称/代码匹配相关新闻(覆盖 FCC 禁令类财经新闻, 公告源不含)
+    try:
+        import urllib.request as _ur
+        sym_name = symbol.replace(".SZ", "").replace(".SH", "").replace(".BJ", "")
+        # 股票名称(东财行情)
+        name = ""
+        try:
+            secid = f"1.{sym_name}" if sym_name.startswith(("6", "5", "9")) else f"0.{sym_name}"
+            nq = _ur.Request(
+                f"https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f58",
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            nd = json.loads(_ur.urlopen(nq, timeout=6).read().decode())
+            name = (nd.get("data") or {}).get("f58") or ""
+        except Exception:
+            pass
+        news_url = "https://news.10jqka.com.cn/tapp/news/push/stock/?page=1&tag=&track=website&pagesize=50"
+        n_req = _ur.Request(news_url, headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://news.10jqka.com.cn/",
+        })
+        n_body = _ur.urlopen(n_req, timeout=10).read().decode("utf-8")
+        n_j = json.loads(n_body)
+        n_items = n_j.get("data", {}).get("list") or n_j.get("list") or []
+        # 匹配: 标题含股票名 或 代码
+        matched = []
+        for it in n_items:
+            title = it.get("title") or it.get("digest") or ""
+            if (name and name in title) or (sym_name in title):
+                matched.append({
+                    "source": "ths_news",
+                    "title": title,
+                    "date": (it.get("ctime") or ""),
+                    "text": (it.get("digest") or "")[:150],
+                })
+        for m in matched[:6]:
+            result["events"].append(m)
+        if matched:
+            result["notes"].append(f"同花顺快讯命中 {len(matched)} 条(名称:{name or sym_name})")
+    except Exception as e:
+        result["notes"].append(f"同花顺快讯失败: {e}")
+
     try:
         # 2. 东财公告(备用)
         import requests as _req
