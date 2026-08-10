@@ -37,11 +37,60 @@ def get_market_data():
     return _g()
 
 
-# 国内数据网关(2026-08-10): 115.190.177.213:8100, 东财 push2delay 今日实时资金流
-# 环境变量 CN_GATEWAY_DISABLE=1 可禁用(测试用); 默认启用
+# 国内数据网关(2026-08-10): 东财 push2delay 今日实时资金流
+# 双模式数据源接入(2026-08-10 用户需求):
+#   - 大陆本地部署: 直连东财 push2delay(无需网关, 大陆网络直通)
+#   - 海外/香港部署: 走国内网关代理(115.190.177.213:8100, 东财资金流字段海外被风控断连)
+# 自动检测: 默认先试直连(push2delay), 失败自动走网关; 可用环境变量强制指定模式:
+#   CN_FLOW_MODE=direct   强制直连(大陆部署, 不依赖网关)
+#   CN_FLOW_MODE=gateway  强制走网关(海外部署)
+#   CN_FLOW_MODE=auto     自动检测(默认)
 import os as _os
-CN_GATEWAY_BASE = "http://115.190.177.213:8100"
-_CN_GATEWAY_DISABLED = _os.getenv("CN_GATEWAY_DISABLE") == "1"
+
+_CN_FLOW_MODE = _os.getenv("CN_FLOW_MODE", "auto")
+CN_GATEWAY_BASE = _os.getenv("CN_GATEWAY_BASE", "http://115.190.177.213:8100")
+_CN_GATEWAY_DISABLED = _os.getenv("CN_GATEWAY_DISABLE") == "1"  # 测试用
+
+# 直连东财 push2delay(大陆网络直通; 海外会被断连)
+_DIRECT_FLOW_URL = "https://push2delay.eastmoney.com/api/qt/ulist.np/get"
+
+
+def _fetch_direct_flow(symbol: str) -> CapitalFlow | None:
+    """直连东财 push2delay 取今日实时资金流(大陆部署, 不依赖网关)。"""
+    try:
+        import requests
+        code = symbol.strip()
+        secid = f"1.{code}" if code.startswith(("6", "5", "9")) else f"0.{code}"
+        fields = "f2,f3,f12,f14,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87"
+        r = requests.get(
+            f"{_DIRECT_FLOW_URL}?secids={secid}&fields={fields}",
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                     "Referer": "https://data.eastmoney.com/"},
+            timeout=5,
+        )
+        if r.status_code != 200:
+            return None
+        d = r.json()
+        diff = (d.get("data") or {}).get("diff") or []
+        if not diff:
+            return None
+        it = diff[0]
+        if it.get("f62") is None:
+            return None
+        return CapitalFlow(
+            symbol=symbol,
+            name=it.get("f14") or "",
+            main_net_inflow=float(it.get("f62") or 0),
+            main_net_inflow_pct=float(it.get("f184") or 0) / 100.0,  # ×100 → %
+            super_net_inflow=float(it.get("f66") or 0),
+            big_net_inflow=float(it.get("f72") or 0),
+            mid_net_inflow=float(it.get("f78") or 0),
+            small_net_inflow=float(it.get("f84") or 0),
+            main_net_5d=None,
+            date=_today_cn(),  # 今日实时
+        )
+    except Exception:
+        return None
 
 
 def _fetch_cn_gateway_flow(symbol: str) -> CapitalFlow | None:
@@ -104,15 +153,23 @@ class CapitalFlowCollector:
             return cached
 
         capital_flow = None
-        # 0) 国内网关今日实时资金流(优先, 2026-08-10 接入)
+        # 0) 今日实时资金流(双模式: 大陆直连 / 海外走网关, 2026-08-10 接入)
         # 网关已含完整四档(超大/大/中/小)且为今日实时, 命中则直接返回
         try:
-            cf = _fetch_cn_gateway_flow(symbol)
+            cf = None
+            if _CN_FLOW_MODE == "direct":
+                cf = _fetch_direct_flow(symbol)
+            elif _CN_FLOW_MODE == "gateway":
+                cf = _fetch_cn_gateway_flow(symbol)
+            else:  # auto: 先直连(大陆快), 失败走网关(海外)
+                cf = _fetch_direct_flow(symbol)
+                if cf is None:
+                    cf = _fetch_cn_gateway_flow(symbol)
             if cf is not None:
                 _FLOW_CACHE.set(cache_key, cf)
                 return cf
         except Exception as e:
-            logger.debug(f"国内网关资金流失败, 回退悟道/Engine: {e}")
+            logger.debug(f"今日实时资金流失败, 回退悟道/Engine: {e}")
         # 1) 悟道盘中实时主力净额(优先)
         try:
             from src.collectors.wudao_mcp_client import WudaoMCPClient
