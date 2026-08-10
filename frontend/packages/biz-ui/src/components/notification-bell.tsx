@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bell, CheckCheck, Trash2, CheckCircle2, AlertCircle, Info, AlertTriangle } from 'lucide-react'
+import { Bell, CheckCheck, Trash2, CheckCircle2, AlertCircle, Info, AlertTriangle, ListChecks } from 'lucide-react'
 import { fetchAPI } from '@panwatch/api'
 
 export interface NotificationItem {
@@ -103,10 +103,8 @@ export function NotificationBell({ size = 'md' }: { size?: 'sm' | 'md' }) {
         setUnread(u => Math.max(0, u - 1))
       } catch { /* ignore */ }
     }
-    if (n.link) {
-      setOpen(false)
-      nav(n.link)
-    }
+    setOpen(false)
+    nav(`/notifications?id=${n.id}`)
   }
 
   const markAll = async () => {
@@ -207,6 +205,16 @@ export function NotificationBell({ size = 'md' }: { size?: 'sm' | 'md' }) {
                 </button>
               ))
             )}
+          </div>
+          <div className="border-t border-border/50 p-2">
+            <button
+              type="button"
+              onClick={() => { setOpen(false); nav('/notifications') }}
+              className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2 text-[12px] font-medium text-primary transition-colors hover:bg-primary/10"
+            >
+              <ListChecks className="h-3.5 w-3.5" />
+              打开通知管理中心
+            </button>
           </div>
         </div>
       )}
