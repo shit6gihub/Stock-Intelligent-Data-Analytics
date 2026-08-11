@@ -77,13 +77,22 @@ def _fetch_direct_flow(symbol: str) -> CapitalFlow | None:
         it = diff[0]
         if it.get("f62") is None:
             return None
+        # 开盘初期防 0 值误判: 东财接口刚开盘时 f62/f184/分项尚未初始化全为 0,
+        # 0 不是"主力资金平衡", 而是"数据未就绪"。全 0 → 视为失败, 回退其他源。
+        f62 = it.get("f62")
+        f184 = it.get("f184")
+        f66 = it.get("f66")
+        f72 = it.get("f72")
+        if f62 == 0 and f184 == 0 and f66 == 0 and f72 == 0:
+            logger.info(f"东财资金流字段未初始化(全0, 开盘初期?), 回退其他源: {symbol}")
+            return None
         return CapitalFlow(
             symbol=symbol,
             name=it.get("f14") or "",
-            main_net_inflow=float(it.get("f62") or 0),
-            main_net_inflow_pct=float(it.get("f184") or 0) / 100.0,  # ×100 → %
-            super_net_inflow=float(it.get("f66") or 0),
-            big_net_inflow=float(it.get("f72") or 0),
+            main_net_inflow=float(f62 or 0),
+            main_net_inflow_pct=float(f184 or 0) / 100.0,  # ×100 → %
+            super_net_inflow=float(f66 or 0),
+            big_net_inflow=float(f72 or 0),
             mid_net_inflow=float(it.get("f78") or 0),
             small_net_inflow=float(it.get("f84") or 0),
             main_net_5d=None,
@@ -141,11 +150,11 @@ class CapitalFlowCollector:
     def get_capital_flow(self, symbol: str) -> CapitalFlow | None:
         """获取单只股票的资金流向。
 
-        实时主力净额优先用悟道 intraday_main_flow(盘中快照), 四档(超大/大/中/小)用
-        Engine(腾讯/东财实时四档)补全。智兔资金流是盘后 T+1 批量, 不作实时源。
+        取数优先级(2026-08-11 更新):
+        1) 东财 push2delay 今日实时资金流(直连/网关, 含完整四档) — 开盘初期全 0 视为未就绪回退
+        2) Engine 四档实时(新浪 T-1 / 东财 push2his)
 
-        2026-08-10: 优先走国内数据网关(push2delay 今日实时资金流, 香港节点拿不到);
-        网关不可用时回退 悟道→Engine(新浪/东财 T-1)。
+        悟道 intraday_main_flow 已移除: 9:15-10:30 限流且只给主力净额无四档明细。
         """
         cache_key = f"{self.market.value}:{symbol}"
         cached = _FLOW_CACHE.get(cache_key)
@@ -169,28 +178,9 @@ class CapitalFlowCollector:
                 _FLOW_CACHE.set(cache_key, cf)
                 return cf
         except Exception as e:
-            logger.debug(f"今日实时资金流失败, 回退悟道/Engine: {e}")
-        # 1) 悟道盘中实时主力净额(优先)
-        try:
-            from src.collectors.wudao_mcp_client import WudaoMCPClient
-            wc = WudaoMCPClient()
-            wc._initialize()
-            r = wc.call_tool("intraday_main_flow", {"codes": [symbol]})
-            if isinstance(r, dict) and "text" in r:
-                import re
-                m = re.search(r"主力净额\s*([-\d.]+)\s*万", r["text"])
-                if m:
-                    main_net = float(m.group(1)) * 1e4
-                    capital_flow = CapitalFlow(
-                        symbol=symbol, name="",
-                        main_net_inflow=main_net,
-                        main_net_inflow_pct=0.0,
-                        super_net_inflow=0.0, big_net_inflow=0.0,
-                        mid_net_inflow=0.0, small_net_inflow=0.0,
-                        main_net_5d=None,
-                    )
-        except Exception as e:
-            logger.debug(f"悟道资金流失败, 回退 Engine: {e}")
+            logger.debug(f"今日实时资金流失败, 回退 Engine: {e}")
+        # 1) 悟道已移除(2026-08-11): intraday_main_flow 在 9:15-10:30 限流,
+        #    且只给主力净额无四档明细。直接走 Engine 四档实时(新浪 T-1 / 东财)。
 
         # 2) Engine 四档实时(腾讯/东财)补全
         md_cf = get_market_data().capital_flow(symbol, market=self.market.value)
