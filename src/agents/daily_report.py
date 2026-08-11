@@ -384,10 +384,23 @@ class DailyReportAgent(BaseAgent):
                     else f"{inflow / 1e4:+.0f}万"
                 )
                 lines.append(
-                    f"- 资金：{flow['status']}，主力净流入{inflow_str}（{inflow_pct:+.1f}%）"
+                    f"- 资金(东财口径)：{flow['status']}，主力净流入{inflow_str}（{inflow_pct:+.1f}%）"
                 )
                 if flow.get("trend_5d") and flow.get("trend_5d") != "无数据":
                     lines.append(f"- 5日资金：{flow['trend_5d']}")
+
+            # 主力意图(逐笔口径, 2026-08-11): 与东财资金流口径不同, 判断主力行为以逐笔为准
+            try:
+                from src.agents.intraday_monitor import _main_intent_summary
+                intent = _main_intent_summary(w.symbol)
+                if intent:
+                    lines.append(f"- 主力意图(逐笔V14)：{intent}")
+                    lines.append(
+                        "> 口径提醒: 上方「资金(东财口径)」按单笔金额分档, 「主力意图」为腾讯逐笔实时口径, "
+                        "两者可能方向不同; 判断主力吸筹/派发一律以「主力意图」为准。"
+                    )
+            except Exception:
+                pass
 
             # 相关新闻/公告
             stock_news = (
