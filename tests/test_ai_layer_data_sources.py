@@ -56,16 +56,16 @@ class TestAuctionRawLimited:
 
 
 class TestNewsMultiSource:
-    def test_chat_news_uses_news_collector(self):
-        """get_market_news 应优先 NewsCollector(不再只依赖悟道)。"""
+    def test_chat_news_uses_flash_news(self):
+        """get_market_news 应优先市场级多源快讯(flash_news), 悟道降级。"""
         src = open(str(ROOT / "src/web/api/chat.py")).read()
-        assert "NewsCollector" in src
+        assert "flash_news" in src
         assert "wudao_mcp_client" in src
-        # 在 get_market_news 分支内部: fetch_all(多源)应出现在 news_hotlist(悟道)之前
+        # 在 get_market_news 分支内部: flash_news(多源)应出现在 news_hotlist(悟道)之前
         branch_start = src.find('name == "get_market_news"')
         assert branch_start != -1
         branch = src[branch_start:]
-        news_pos = branch.find("collector.fetch_all")
+        news_pos = branch.find("flash_news(")
         wudao_pos = branch.find('cli.call_tool("news_hotlist"')
         assert news_pos != -1 and wudao_pos != -1
         assert news_pos < wudao_pos

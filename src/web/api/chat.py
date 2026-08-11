@@ -260,13 +260,16 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
             limit = int((args.get("limit") or 15))
             briefing_type = (args.get("briefing_type") or "").strip()
             try:
-                from src.collectors.news_collector import NewsCollector
+                import asyncio
 
-                # 1) 底层多源新闻体系(财联社/新浪/东财7x24/雪球/公告 5 源聚合, 引擎自动降级)
+                # 1) 底层多源快讯体系(财联社/新浪/东财7x24, 市场级, 引擎主备+降级)
                 parts = []
                 try:
-                    collector = NewsCollector.from_database()
-                    items = await collector.fetch_all([], 24)
+                    from src.core.marketdata_client import get_market_data
+
+                    items = await asyncio.to_thread(
+                        lambda: get_market_data().flash_news(market="CN", limit=limit)
+                    )
                     if items:
                         lines = [f"【市场快讯】(最近{len(items)}条, 多源聚合)"]
                         for it in items[:limit]:
@@ -280,7 +283,7 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
                             lines.append(line)
                         parts.append("\n".join(lines))
                 except Exception as e:
-                    logger.warning(f"NewsCollector 聚合失败, 回退悟道热榜: {e}")
+                    logger.warning(f"快讯聚合失败, 回退悟道热榜: {e}")
 
                 # 2) 悟道热榜/简报作为补充(失败不影响主链路)
                 try:
