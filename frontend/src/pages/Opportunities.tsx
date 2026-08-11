@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, RefreshCw, Share2, Sparkles } from 'lucide-react'
+import { AlertTriangle, RefreshCw, Share2, Sparkles, ScanSearch } from 'lucide-react'
 import {
   recommendationsApi,
   stocksApi,
+  strategiesApi,
   tdxApi,
   type EntryCandidateItem,
+  type ScanItem,
   type StrategyCatalogItem,
+  type StrategyItem,
   type StrategySignalItem,
   type StrategyStatsResponse,
   type TdxAskResponse,
@@ -253,6 +256,46 @@ export default function OpportunitiesPage() {
 
   // 个股 AI 评分分享卡:当前分享的信号
   const [shareSignal, setShareSignal] = useState<StrategySignalItem | null>(null)
+
+  // ── 策略选股(策略库批量扫描) ──
+  const [scanStrategies, setScanStrategies] = useState<StrategyItem[]>([])
+  const [scanStrategyId, setScanStrategyId] = useState('')
+  const [scanUniverse, setScanUniverse] = useState<'all' | 'watchlist'>('all')
+  const [scanning, setScanning] = useState(false)
+  const [scanResult, setScanResult] = useState<{ items: ScanItem[]; total: number; scanned: number; quoted: number } | null>(null)
+  const [scanError, setScanError] = useState('')
+
+  const loadScanStrategies = useCallback(async () => {
+    try {
+      const res = await strategiesApi.list()
+      setScanStrategies(res.items || [])
+    } catch {
+      setScanStrategies([])
+    }
+  }, [])
+
+  useEffect(() => { void loadScanStrategies() }, [loadScanStrategies])
+
+  const doScan = useCallback(async () => {
+    if (!scanStrategyId) return
+    setScanning(true)
+    setScanError('')
+    setScanResult(null)
+    try {
+      const res = await strategiesApi.scan({
+        strategy_id: scanStrategyId,
+        market: market === 'ALL' ? 'CN' : market,
+        limit: 50,
+        universe: scanUniverse,
+        min_score: 0,
+      })
+      setScanResult(res)
+    } catch (e) {
+      setScanError(e instanceof Error ? e.message : '策略扫描失败')
+    } finally {
+      setScanning(false)
+    }
+  }, [scanStrategyId, market, scanUniverse])
 
   const openInsight = useCallback((item: StrategySignalItem) => {
     setInsightSymbol(item.stock_symbol)
@@ -920,6 +963,106 @@ export default function OpportunitiesPage() {
           {error}
         </div>
       )}
+
+      {/* ── 策略选股(策略库批量扫描) ── */}
+      <div className="card p-4 mb-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+          <div className="flex items-center gap-2">
+            <ScanSearch className="w-4 h-4 text-primary" />
+            <h2 className="text-[14px] font-semibold text-foreground">策略选股</h2>
+            <span className="text-[11px] text-muted-foreground">用策略库规则批量扫描全市场, 按分数排序</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Select value={scanStrategyId} onValueChange={setScanStrategyId}>
+            <SelectTrigger className="h-8 text-[12px] w-[220px]">
+              <SelectValue placeholder="选择策略" />
+            </SelectTrigger>
+            <SelectContent>
+              {scanStrategies.map((s) => (
+                <SelectItem key={s.id} value={s.id}>{s.display_name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={scanUniverse} onValueChange={(v) => setScanUniverse(v as 'all' | 'watchlist')}>
+            <SelectTrigger className="h-8 text-[12px] w-[130px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全市场</SelectItem>
+              <SelectItem value="watchlist">自选+种子池</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            size="sm"
+            className="h-8 text-[12px]"
+            onClick={doScan}
+            disabled={scanning || !scanStrategyId}
+          >
+            {scanning ? <span className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin" /> : <ScanSearch className="w-3.5 h-3.5 mr-1" />}
+            {scanning ? '扫描中...' : '批量选股'}
+          </Button>
+          {scanResult && (
+            <span className="text-[11px] text-muted-foreground">
+              扫描 {scanResult.scanned} 只 → 命中 {scanResult.total} 只
+            </span>
+          )}
+        </div>
+        {scanError && (
+          <div className="mt-2 text-[12px] text-amber-500 flex items-center gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5" /> {scanError}
+          </div>
+        )}
+        {scanResult && scanResult.items.length > 0 && (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-[12px]">
+              <thead>
+                <tr className="text-[11px] text-muted-foreground border-b border-border/50">
+                  <th className="text-left py-1.5 pr-2">代码</th>
+                  <th className="text-left py-1.5 pr-2">名称</th>
+                  <th className="text-right py-1.5 pr-2">评分</th>
+                  <th className="text-right py-1.5 pr-2">现价</th>
+                  <th className="text-right py-1.5 pr-2">PE</th>
+                  <th className="text-right py-1.5 pr-2">PB</th>
+                  <th className="text-right py-1.5">市值(亿)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {scanResult.items.map((it) => {
+                  const d = it.current_data || {}
+                  const num = (v: unknown) => (v == null || Number.isNaN(Number(v)) ? '--' : Number(v).toFixed(2))
+                  const pctCls = Number(d.change_pct) >= 0 ? 'text-rose-400' : 'text-emerald-400'
+                  return (
+                    <tr key={it.symbol} className="border-b border-border/30 hover:bg-accent/40 cursor-pointer" onClick={() => openInsight({
+                      stock_symbol: it.symbol,
+                      stock_market: (it.market || 'CN') as 'CN',
+                      stock_name: it.name,
+                      rank_score: it.score,
+                      is_holding_snapshot: false,
+                    } as unknown as StrategySignalItem)}>
+                      <td className="py-1.5 pr-2 font-mono text-muted-foreground">{it.symbol}</td>
+                      <td className="py-1.5 pr-2 font-medium text-foreground">{it.name}</td>
+                      <td className="py-1.5 pr-2 text-right font-semibold text-primary">{it.score.toFixed(1)}</td>
+                      <td className="py-1.5 pr-2 text-right font-mono">{num(d.current_price)}</td>
+                      <td className={`py-1.5 pr-2 text-right font-mono ${pctCls}`}>{num(d.pe_ttm)}</td>
+                      <td className="py-1.5 pr-2 text-right font-mono">{num(d.pb_ratio)}</td>
+                      <td className="py-1.5 text-right font-mono text-muted-foreground">{num(d.market_cap)}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {scanResult && scanResult.items.length === 0 && (
+          <div className="mt-3 text-[12px] text-muted-foreground">
+            没有股票通过该策略的硬过滤条件
+            <span className="block mt-1 text-[11px] text-muted-foreground/70">
+              {new Date().getHours() < 9 || new Date().getHours() >= 15
+                ? '💡 当前为非交易时段, 腾讯行情中涨跌幅/量比/换手为 0, 依赖量能条件的策略(资金热度/放量突破)会筛不出票。建议交易时段使用, 或改选估值类策略(双低/低波质量)。'
+                : '可尝试放宽条件或切换为「自选+种子池」范围'}
+            </span>
+          </div>
+        )}
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {groupedItems.map((group) => {

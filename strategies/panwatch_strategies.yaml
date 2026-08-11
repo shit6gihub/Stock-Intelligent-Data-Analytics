@@ -18,6 +18,7 @@ dual_low:
     change_pct_max: 4.5
     turnover_rate_min: 0.5  # 避免死水低估值
   # 东财字段(盘后可拿,缺则跳过)
+  pe_ttm_min: 0.01   # PE 必须为正,排除亏损公司(负 PE 不是低估值)
   pe_ttm_max: 15
   pb_max: 2.0
   market_cap_min: 50  # 亿

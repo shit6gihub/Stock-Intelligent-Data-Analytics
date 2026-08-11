@@ -45,6 +45,33 @@ export interface ApplyResult {
   error?: string
 }
 
+export interface ScanRequest {
+  strategy_id: string
+  market?: string
+  limit?: number
+  universe?: 'all' | 'watchlist'
+  min_score?: number
+  symbol_limit?: number
+}
+
+export interface ScanItem {
+  symbol: string
+  name: string
+  market: string
+  score: number
+  score_breakdown: ScoreFactor[]
+  current_data: Record<string, number | string | null>
+  missing_fields: string[]
+}
+
+export interface ScanResult {
+  items: ScanItem[]
+  total: number
+  scanned: number
+  quoted: number
+  message?: string
+}
+
 export const strategiesApi = {
   list: () => fetchAPI<StrategyListResponse>(`/strategies/list`),
 
@@ -52,6 +79,12 @@ export const strategiesApi = {
 
   apply: (req: ApplyRequest) =>
     fetchAPI<ApplyResult>(`/strategies/apply`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    }),
+
+  scan: (req: ScanRequest) =>
+    fetchAPI<ScanResult>(`/strategies/scan`, {
       method: 'POST',
       body: JSON.stringify(req),
     }),

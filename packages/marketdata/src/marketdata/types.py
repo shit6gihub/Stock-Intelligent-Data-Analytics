@@ -43,6 +43,7 @@ class Quote:
     turnover_rate: float | None = None
     volume_ratio: float | None = None
     pe_ratio: float | None = None
+    pb_ratio: float | None = None
     circulating_market_value: float | None = None
     total_market_value: float | None = None
     # 行情源提供的实际报价时间；无法确认时保持 None，不能用抓取时间冒充。

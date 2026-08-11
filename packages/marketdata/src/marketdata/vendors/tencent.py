@@ -68,6 +68,7 @@ def _parse_line(line: str, market: str) -> Quote | None:
 
         turnover_rate = _to_float(parts[38]) if len(parts) > 39 else None
         pe_ratio = _to_float(parts[39]) if len(parts) > 39 else None
+        pb_ratio = _to_float(parts[46]) if len(parts) > 46 else None
         circulating = _to_float(parts[44]) if len(parts) > 45 else None
         total = _to_float(parts[45]) if len(parts) > 45 else None
         volume_ratio = _to_float(parts[49]) if len(parts) > 49 else None
@@ -88,6 +89,7 @@ def _parse_line(line: str, market: str) -> Quote | None:
             turnover_rate=turnover_rate,
             volume_ratio=volume_ratio,
             pe_ratio=pe_ratio,
+            pb_ratio=pb_ratio,
             circulating_market_value=circulating,
             total_market_value=total,
             quote_time=_parse_quote_time(parts[30], market),

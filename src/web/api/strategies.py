@@ -87,51 +87,40 @@ class ApplyRequest(BaseModel):
     market: str = "CN"
 
 
-@router.post("/apply")
-async def apply_strategy(req: ApplyRequest):
-    """应用策略到单只股票: 硬过滤 + 因子打分。
+class ScanRequest(BaseModel):
+    strategy_id: str
+    market: str = "CN"
+    limit: int = 50          # 返回 top N
+    universe: str = "all"    # all=全市场, watchlist=自选+种子池
+    min_score: float = 0.0   # 最低分过滤
+    symbol_limit: int = 0    # 0=不限, 否则限制扫描股票数(调试用)
 
-    用现有 /api/quotes/{symbol} 拿实时字段。
-    盘后字段(pe_ttm/pb_ratio/market_cap)如果有则用, 没有则跳过对应过滤项。
+
+def _quote_to_dict(q) -> dict:
+    """Quote 对象 → dict(与 apply 现有归一化输出同形)。"""
+    if q is None:
+        return {}
+    if isinstance(q, dict):
+        return q
+    if hasattr(q, "__dict__"):
+        return {k: v for k, v in vars(q).items() if not k.startswith("_")}
+    return {"current_price": getattr(q, "current_price", None)}
+
+
+def _evaluate_strategy(cfg: dict, q: dict, strategy_id: str, symbol: str, market: str) -> dict:
+    """对单只股票的 dict 行情执行策略硬过滤 + 因子打分(apply/scan 共用)。
+
+    纯函数, 不发起网络请求。字段缺失 → missing_fields 标注并跳过该过滤项。
     """
-    from src.core.marketdata_client import get_market_data
-    from src.web.api.quotes import _parse_market
-
-    data = _load_strategies()
-    if req.strategy_id not in data:
-        raise HTTPException(404, f"策略不存在: {req.strategy_id}")
-    cfg = data[req.strategy_id]
     filter_cfg = cfg.get("filter", {})
     ranking = cfg.get("ranking_factors", {})
 
-    market_code = _parse_market(req.market)
-
-    # 拉取股票行情(用 quotes, 通用接口)
-    try:
-        quotes = get_market_data().quotes([req.symbol], market=req.market)
-    except Exception as e:
-        logger.warning(f"拉取行情失败 {req.symbol}: {e}")
-        quotes = []
-
-    q = None
-    if quotes:
-        # 归一化 Quote 对象 → dict
-        first = quotes[0]
-        if hasattr(first, "__dict__"):
-            q = {k: v for k, v in vars(first).items() if not k.startswith("_")}
-        elif isinstance(first, dict):
-            q = first
-        else:
-            q = {"current_price": getattr(first, "current_price", None)}
-
-    if not q:
-        raise HTTPException(404, f"未找到行情: {req.symbol} ({req.market})")
-
-    # 字段归一化
     def getf(key, default=None):
-        if isinstance(q, dict):
-            return q.get(key, default)
-        return getattr(q, key, default)
+        return q.get(key, default)
+
+    # 字段名规范化: 腾讯行情 pe_ratio → pe_ttm 统一口径
+    if q.get("pe_ttm") is None and q.get("pe_ratio") is not None:
+        q = {**q, "pe_ttm": q["pe_ratio"]}
 
     current_price = getf("current_price")
     change_pct = getf("change_pct")
@@ -142,8 +131,10 @@ async def apply_strategy(req: ApplyRequest):
     high = getf("high")
     low = getf("low")
     pe_ttm = getf("pe_ttm")
+    if pe_ttm is None:
+        pe_ttm = getf("pe_ratio")  # 腾讯行情字段名
     pb_ratio = getf("pb_ratio")
-    market_cap = getf("total_market_value")  # 亿(来自 eastmoney)
+    market_cap = getf("total_market_value")  # 亿
 
     # 硬过滤 + 标注缺失项
     passed = True
@@ -180,7 +171,7 @@ async def apply_strategy(req: ApplyRequest):
         check("turnover_rate", turnover_rate, "min", filter_cfg["turnover_rate_min"])
     if "turnover_rate_max" in filter_cfg and turnover_rate is not None:
         check("turnover_rate", turnover_rate, "max", filter_cfg["turnover_rate_max"])
-    # 盘后字段(pe_ttm/pb_ratio/market_cap) — 既可能在 filter 里也可能在 cfg 顶层
+    # 盘后字段(pe_ttm/pb/market_cap) — 既可能在 filter 里也可能在 cfg 顶层
     for prefix in ("pe_ttm", "pb", "market_cap"):
         for suffix in ("_min", "_max"):
             key = f"{prefix}{suffix}"
@@ -252,9 +243,9 @@ async def apply_strategy(req: ApplyRequest):
     score = max(0, min(100, round(score, 1)))
 
     return {
-        "strategy_id": req.strategy_id,
-        "symbol": req.symbol,
-        "market": req.market,
+        "strategy_id": strategy_id,
+        "symbol": symbol,
+        "market": market,
         "passed": passed,
         "score": score,
         "score_breakdown": score_breakdown,
@@ -271,6 +262,136 @@ async def apply_strategy(req: ApplyRequest):
             "market_cap": market_cap,
         },
     }
+
+
+@router.post("/scan")
+async def scan_strategy(req: ScanRequest):
+    """批量选股: 用策略硬过滤扫描全市场/候选池, 返回通过名单(按分数排序)。
+
+    - universe=all: 全市场 A 股(优先缓存列表, 东财/akshare 兜底)
+    - universe=watchlist: 自选 + 内置种子池(快, ~200 只)
+    - 行情走腾讯批量接口(免费, 100 只/批, 盘中含 PE/PB/市值全字段)
+    """
+    from src.web.stock_list import get_stock_list
+    from marketdata.vendors.tencent import TencentQuoteVendor
+    from marketdata import Symbol
+
+    data = _load_strategies()
+    if req.strategy_id not in data:
+        raise HTTPException(404, f"策略不存在: {req.strategy_id}")
+    cfg = data[req.strategy_id]
+
+    # 1. 确定扫描股票池
+    mkt = (req.market or "CN").strip().upper()
+    if req.universe == "watchlist":
+        from src.web.database import SessionLocal
+        from src.web.models import Stock
+        db = SessionLocal()
+        try:
+            rows = db.query(Stock).all()
+        finally:
+            db.close()
+        symbols = [str(s.symbol).strip() for s in rows if str(s.market) == mkt]
+        # 内置种子池补充
+        from src.core.entry_candidates import MARKET_SCAN_SEED_SYMBOLS
+        symbols += [s for s in MARKET_SCAN_SEED_SYMBOLS.get(mkt, []) if s not in symbols]
+    else:
+        all_stocks = get_stock_list()
+        symbols = []
+        for s in all_stocks:
+            code = str(s.get("symbol") or s.get("code") or "").strip()
+            market = str(s.get("market") or s.get("market_code") or "").strip().upper()
+            if not code or not code.isdigit():
+                continue
+            if market != mkt:
+                # 兼容缓存里 market 是中文或缺失: A股默认 CN
+                if mkt == "CN" and market in ("", "A股", "CN", "SH", "SZ"):
+                    pass
+                else:
+                    continue
+            # 只要沪深主板+创业板 6位代码(排除北交所 4/8 开头)
+            if mkt == "CN" and not code.startswith(("60", "00", "30", "68")):
+                continue
+            symbols.append(code)
+        symbols = list(dict.fromkeys(symbols))
+
+    if req.symbol_limit and req.symbol_limit > 0:
+        symbols = symbols[: req.symbol_limit]
+    if not symbols:
+        return {"items": [], "total": 0, "scanned": 0, "message": "股票池为空"}
+
+    # 2. 腾讯批量行情(100只/批)
+    vendor = TencentQuoteVendor()
+    quote_map: dict[str, dict] = {}
+    batch_size = 100
+    for i in range(0, len(symbols), batch_size):
+        batch = symbols[i : i + batch_size]
+        try:
+            syms = [Symbol.parse(c, mkt) for c in batch]
+            quotes = vendor.fetch(syms, {})
+            for q in quotes:
+                d = _quote_to_dict(q)
+                quote_map[str(q.symbol)] = d
+        except Exception as e:
+            logger.warning(f"[scan] 批量行情失败 {i}..{i+batch_size}: {e}")
+
+    # 3. 逐只评估
+    results = []
+    for code in symbols:
+        q = quote_map.get(code)
+        if not q or not q.get("current_price"):
+            continue
+        r = _evaluate_strategy(cfg, q, req.strategy_id, code, mkt)
+        if r["passed"] and r["score"] >= req.min_score:
+            results.append(r)
+
+    # 4. 按分数排序, 取 top N
+    results.sort(key=lambda x: x["score"], reverse=True)
+    top = results[: req.limit]
+    return {
+        "items": [
+            {
+                "symbol": r["symbol"],
+                "name": quote_map.get(r["symbol"], {}).get("name", ""),
+                "market": r["market"],
+                "score": r["score"],
+                "score_breakdown": r["score_breakdown"],
+                "current_data": r["current_data"],
+                "missing_fields": r["missing_fields"],
+            }
+            for r in top
+        ],
+        "total": len(results),
+        "scanned": len(symbols),
+        "quoted": len(quote_map),
+    }
+
+
+@router.post("/apply")
+async def apply_strategy(req: ApplyRequest):
+    """应用策略到单只股票: 硬过滤 + 因子打分。
+
+    用现有 quotes 拿实时字段; 盘后字段如果有则用, 没有则跳过对应过滤项。
+    """
+    from src.core.marketdata_client import get_market_data
+
+    data = _load_strategies()
+    if req.strategy_id not in data:
+        raise HTTPException(404, f"策略不存在: {req.strategy_id}")
+    cfg = data[req.strategy_id]
+
+    # 拉取股票行情(用 quotes, 通用接口)
+    try:
+        quotes = get_market_data().quotes([req.symbol], market=req.market)
+    except Exception as e:
+        logger.warning(f"拉取行情失败 {req.symbol}: {e}")
+        quotes = []
+
+    q = _quote_to_dict(quotes[0]) if quotes else None
+    if not q or not q.get("current_price"):
+        raise HTTPException(404, f"未找到行情: {req.symbol} ({req.market})")
+
+    return _evaluate_strategy(cfg, q, req.strategy_id, req.symbol, req.market)
 
 
 def _eod_fields(cfg: dict) -> set:
