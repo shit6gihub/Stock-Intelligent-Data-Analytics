@@ -637,23 +637,34 @@ def stocks_search(q: str = "", limit: int = 10):
         lg = bs.login()
         if lg.error_code != "0":
             return {"items": []}
-        rs = bs.query_all_stock(day=datetime.now().strftime("%Y-%m-%d"))
         results = []
         q_lower = q.strip().lower()
-        while rs.error_code == "0" and rs.next():
-            row = rs.get_row_data()
-            if len(row) < 3:
-                continue
-            code_full, status, name = row[0], row[1], row[2]
-            if status != "1":
-                continue
-            code6 = code_full.split(".")[-1]
-            if not (code6.startswith(("60", "00", "002"))):
-                continue
-            if q_lower in name.lower() or q_lower in code6 or q_lower in code_full:
-                results.append({"symbol": code6, "name": name, "market": "sh" if code_full.startswith("sh") else "sz"})
-                if len(results) >= limit:
-                    break
+        # 当天数据可能未更新(盘中/未收盘时 query_all_stock 返回空),
+        # 回退最近 8 天找最近一个有完整列表的交易日。
+        for back in range(8):
+            day = (datetime.now() - timedelta(days=back)).strftime("%Y-%m-%d")
+            rs = bs.query_all_stock(day=day)
+            got = 0
+            while rs.error_code == "0" and rs.next():
+                row = rs.get_row_data()
+                if len(row) < 3:
+                    continue
+                code_full, status, name = row[0], row[1], row[2]
+                if status != "1":
+                    continue
+                got += 1
+                code6 = code_full.split(".")[-1]
+                # 沪深主板: 沪 600/601/603/605, 深 000/001/002/003
+                # (001 段=深市主板新代码段, 如豫能控股 001896; 003 段同为深主板)
+                if not code6.startswith(("600", "601", "603", "605", "000", "001", "002", "003")):
+                    continue
+                if q_lower in name.lower() or q_lower in code6 or q_lower in code_full:
+                    results.append({"symbol": code6, "name": name, "market": "sh" if code_full.startswith("sh") else "sz"})
+                    if len(results) >= limit:
+                        break
+            if got > 0:
+                # 已找到有完整列表的交易日(即使未匹配满, 不继续用更旧的数据)
+                break
         bs.logout()
         return {"items": results}
     except Exception as e:
