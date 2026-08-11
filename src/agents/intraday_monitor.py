@@ -503,6 +503,10 @@ class IntradayMonitorAgent(BaseAgent):
                                "中标", "签约", "量产", "投产", "重组", "定增")
                 _ABNORMAL_KW = ("失利", "推迟", "延期", "取消", "爆炸", "故障", "召回", "处罚",
                                 "下修", "亏损", "违约", "爆雷", "立案")
+                # 利好事件词(2026-08-11): 获批/中标/涨价/签约/量产等, 与利空对称识别
+                _POSITIVE_KW = ("获批", "核准", "中标", "签约", "涨价", "提价", "量产", "投产",
+                                "突破", "首飞", "成功", "交付", "增持", "回购", "重组获批", "定增落地",
+                                "创新高", "订单", "合作", "入股", "预增", "扭亏")
                 # 题材词(事件驱动型优先) + 补充通用事件词
                 kw_pool = [c for c in concepts_t if c in _EVENT_KW]
                 kw_pool += [w for w in _TRIGGER_KW if w not in kw_pool][:4]
@@ -519,12 +523,14 @@ class IntradayMonitorAgent(BaseAgent):
                             for a in arts or []:
                                 title = getattr(a, "title", "") or ""
                                 # 命中条件: 标题含事件词 或 含题材词(排除纯个股行情噪音)
-                                # 或含异常词(失利/推迟/爆炸等) = 事件源头, 优先展示
+                                # 标记: ⚠️=利空异常 / ✅=利好 / 无标记=中性
                                 is_abnormal = any(n in title for n in _ABNORMAL_KW)
-                                if (any(k in title for k in kw_pool) or is_abnormal) and \
+                                is_positive = any(n in title for n in _POSITIVE_KW)
+                                tag = "⚠️" if is_abnormal else ("✅" if is_positive else "")
+                                if (any(k in title for k in kw_pool) or is_abnormal or is_positive) and \
                                    not any(n in title for n in ("涨超", "跌超", "涨幅", "跌幅", "涨停", "跌停")):
                                     event_hits.append(
-                                        f"[{str(getattr(a, 'publish_time', ''))[:16]}] {title[:60]}{' ⚠️' if is_abnormal else ''}"
+                                        f"[{str(getattr(a, 'publish_time', ''))[:16]}] {title[:60]}{tag}"
                                     )
                                     if len(event_hits) >= 3:
                                         break
@@ -532,16 +538,19 @@ class IntradayMonitorAgent(BaseAgent):
                             continue
                 except Exception:
                     pass
-                # 异常事件(失利/推迟/爆炸等)优先展示
-                event_hits.sort(key=lambda h: 0 if "⚠️" in h else 1)
+                # 事件优先级: ⚠️利空异常 > ✅利好 > 中性
+                def _ev_rank(h: str) -> int:
+                    return 0 if "⚠️" in h else (1 if "✅" in h else 2)
+                event_hits.sort(key=_ev_rank)
                 if event_hits:
                     lines.append("- 题材相关事件：")
                     for eh in event_hits[:3]:
                         lines.append(f"  · {eh}")
                 lines.append(
-                    "> 研判指引: 判断上方新闻与「该股题材」相关事件(行业政策/发射/获批/涨价/事故/处罚等), "
-                    "命中需说明事件性质(催化/利空/中性)及其对主力意图(吸筹/派发)的可能影响, "
-                    "结合「主力意图」段综合研判, 无相关事件则说明'新闻与题材无明显关联'"
+                    "> 研判指引: 判断上方「题材相关事件」与个股的关系, ⚠️=利空异常(事故/推迟/处罚等)"
+                    " ✅=利好(获批/中标/涨价/成功等) 无标记=中性。命中需说明事件性质及其对主力意图"
+                    "(利空低吸/利好派发等)的可能影响, 结合「主力意图」段综合研判, "
+                    "无相关事件则说明'新闻与题材无明显关联'"
                 )
             except Exception:
                 pass
