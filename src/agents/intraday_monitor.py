@@ -492,10 +492,56 @@ class IntradayMonitorAgent(BaseAgent):
                     lines.append(
                         f"- 该股题材：{'、'.join(concepts_t)}"
                     )
+                # 事件溯源: 用题材关键词反查市场级事件新闻(2026-08-11 修复)
+                # 发射失利/朱雀推迟是市场级事件, 个股新闻通道抓不到, 需 news_by_keyword
+                # 关键词池 = 事件驱动型题材 + 通用事件词(火箭/航天/发射/卫星/获批等)
+                _EVENT_KW = ("军工", "航天", "低空", "无人机", "卫星", "芯片", "机器人", "AI", "算力",
+                             "储能", "光伏", "新能源", "半导体", "信创", "数据要素", "量子", "生物")
+                _NOISE_KW = ("融资融券", "转融券", "深股通", "沪股通", "国企改革", "政府控股", "股权转让",
+                             "昨日高振幅", "昨日高换手", "中报预减", "标普", "富时")
+                _TRIGGER_KW = ("火箭", "发射", "卫星", "航天", "获批", "涨价", "召回", "事故", "处罚",
+                               "中标", "签约", "量产", "投产", "重组", "定增")
+                _ABNORMAL_KW = ("失利", "推迟", "延期", "取消", "爆炸", "故障", "召回", "处罚",
+                                "下修", "亏损", "违约", "爆雷", "立案")
+                # 题材词(事件驱动型优先) + 补充通用事件词
+                kw_pool = [c for c in concepts_t if c in _EVENT_KW]
+                kw_pool += [w for w in _TRIGGER_KW if w not in kw_pool][:4]
+                kw_pool = kw_pool[:6] or [c for c in concepts_t if c not in _NOISE_KW][:4]
+                event_hits: list = []
+                try:
+                    from src.core.marketdata_client import get_market_data
+                    md_g = get_market_data()
+                    for kw in kw_pool:
+                        if len(event_hits) >= 3:
+                            break
+                        try:
+                            arts = md_g.news_by_keyword(kw)
+                            for a in arts or []:
+                                title = getattr(a, "title", "") or ""
+                                # 命中条件: 标题含事件词 或 含题材词(排除纯个股行情噪音)
+                                # 或含异常词(失利/推迟/爆炸等) = 事件源头, 优先展示
+                                is_abnormal = any(n in title for n in _ABNORMAL_KW)
+                                if (any(k in title for k in kw_pool) or is_abnormal) and \
+                                   not any(n in title for n in ("涨超", "跌超", "涨幅", "跌幅", "涨停", "跌停")):
+                                    event_hits.append(
+                                        f"[{str(getattr(a, 'publish_time', ''))[:16]}] {title[:60]}{' ⚠️' if is_abnormal else ''}"
+                                    )
+                                    if len(event_hits) >= 3:
+                                        break
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+                # 异常事件(失利/推迟/爆炸等)优先展示
+                event_hits.sort(key=lambda h: 0 if "⚠️" in h else 1)
+                if event_hits:
+                    lines.append("- 题材相关事件：")
+                    for eh in event_hits[:3]:
+                        lines.append(f"  · {eh}")
                 lines.append(
-                    "> 研判指引: 判断上方新闻中是否有与「该股题材」相关的利好/利空事件"
-                    "(如行业政策、发射/获批/涨价/事故/处罚等), 若命中需说明事件性质(催化/利空/中性)"
-                    "及其对主力意图(吸筹/派发)的可能影响, 结合「主力意图」段综合研判, 无相关事件则说明'新闻与题材无明显关联'"
+                    "> 研判指引: 判断上方新闻与「该股题材」相关事件(行业政策/发射/获批/涨价/事故/处罚等), "
+                    "命中需说明事件性质(催化/利空/中性)及其对主力意图(吸筹/派发)的可能影响, "
+                    "结合「主力意图」段综合研判, 无相关事件则说明'新闻与题材无明显关联'"
                 )
             except Exception:
                 pass
