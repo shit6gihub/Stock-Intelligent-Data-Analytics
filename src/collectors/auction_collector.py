@@ -138,7 +138,11 @@ def fetch_auction_strongest(limit: int = 10) -> str:
 
 
 def _fetch_tencent_gainer_board(limit: int, title: str) -> str:
-    """腾讯批量行情 → 按涨幅排序的高开榜(竞价降级源)。"""
+    """腾讯批量行情 → 竞价高开榜(降级源)。
+
+    竞价时段(9:25-9:30): open_price 即竞价成交价, 用它算竞价涨幅 + 识别竞价涨停;
+    盘中时段: 用 current_price 算当前涨幅(原有逻辑)。
+    """
     try:
         from marketdata.vendors.tencent import TencentQuoteVendor
         from marketdata import Symbol
@@ -149,18 +153,27 @@ def _fetch_tencent_gainer_board(limit: int, title: str) -> str:
         rows = []
         for q in quotes:
             d = q.__dict__
+            prev = d.get("prev_close")
+            open_p = d.get("open_price")
             price = d.get("current_price")
-            pct = d.get("change_pct")
-            if not price or pct is None:
+            if not price or prev is None or not prev:
                 continue
-            rows.append((q.symbol, d.get("name", ""), price, pct))
+            # 竞价涨幅: 优先 open_price(9:25 后=竞价价); 盘中用 current_price
+            base = open_p if open_p else price
+            pct = (base - prev) / prev * 100
+            # 竞价涨停识别: 主板≈9.9%+ 创业/科创≈19.9%+
+            is_limit = pct >= 9.85 if not (q.symbol.startswith("300") or q.symbol.startswith("688") or q.symbol.startswith("301")) else pct >= 19.8
+            vol_ratio = d.get("volume_ratio")
+            vol_flag = f" 量比{vol_ratio:.1f}" if vol_ratio else ""
+            rows.append((q.symbol, d.get("name", ""), base, pct, is_limit, vol_flag))
         rows.sort(key=lambda r: -(r[3] or 0))
         if not rows:
             return "暂无竞价数据(数据源未就绪)"
-        lines = [f"【{title}】(候选池{len(rows)}只, 按涨幅排序)"]
-        for sym, name, price, pct in rows[:limit]:
-            flag = " 🔴" if pct >= 9.5 else (" 🟠" if pct >= 5 else "")
-            lines.append(f"- {sym} {name}: {price:.2f} ({pct:+.2f}%){flag}")
+        limit_up_n = sum(1 for r in rows if r[4])
+        lines = [f"【{title}】(候选池{len(rows)}只, 竞价涨停{limit_up_n}只, 按竞价涨幅排序)"]
+        for sym, name, price, pct, is_limit, vol_flag in rows[:limit]:
+            flag = " 🔴涨停" if is_limit else (" 🟠" if pct >= 5 else "")
+            lines.append(f"- {sym} {name}: {price:.2f} ({pct:+.2f}%){flag}{vol_flag}")
         out = "\n".join(lines)
         _cache_set(f"tencent:{limit}", out)
         return out
