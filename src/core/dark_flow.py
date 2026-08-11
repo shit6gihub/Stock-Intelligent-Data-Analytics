@@ -261,6 +261,8 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
     retail_buy_amt = sum(t["amt"] for t in non_auction if not (t["amt"] >= 20e4 or t["vol"] >= 600) and t["d"] == "B")
     retail_sell_amt = sum(t["amt"] for t in non_auction if not (t["amt"] >= 20e4 or t["vol"] >= 600) and t["d"] == "S")
     retail_net = retail_buy_amt - retail_sell_amt      # 散户净额(<20万, 剔除竞价)
+    main_intensity = (main_buy_amt + main_sell_amt) / (buy_amt + sell_amt) * 100 if (buy_amt + sell_amt) else None  # 主力参与度%
+    main_buy_ratio = main_buy_amt / (main_buy_amt + main_sell_amt) * 100 if (main_buy_amt + main_sell_amt) else None  # 主力买占主力成交%
 
     result = {
         "dark_net": round(dark_net),           # 全量主动净额
@@ -275,6 +277,8 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
         "sell_pct": round(sell_vol / (buy_vol + sell_vol + m_vol) * 100, 1) if (buy_vol + sell_vol + m_vol) else None,
         "auction_amt": round(auction_amt),   # 竞价撮合金额(元)
         "auction_vol": round(auction_vol),   # 竞价撮合手数
+        "main_intensity": round(main_intensity, 1) if main_intensity is not None else None,  # 主力参与度%
+        "main_buy_ratio": round(main_buy_ratio, 1) if main_buy_ratio is not None else None,  # 主力买占比%
         "segments": {k: round(v) for k, v in seg.items()},
         "tick_count": len(ticks),
     }
@@ -318,6 +322,7 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
         result.get("strong_buy_zones", []),
         result.get("strong_sell_zones", []),
         auction_amt, auction_vol,
+        result.get("main_intensity"), result.get("main_buy_ratio"),
     )
 
     # ---- 拆单识别(主力伪装的中小单) ----
@@ -388,34 +393,36 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
 def _judge_signal(dark_net: float, main_net: float, big_net: float, mid_net: float,
                   retail_net: float, seg: dict, low_ratio: float | None,
                   strong_buy: list | None = None, strong_sell: list | None = None,
-                  auction_amt: float = 0.0, auction_vol: float = 0.0) -> str:
-    """信号判定 v12: 当日主力意图(腾讯官方口径 主力=≥20万或≥600手)。
+                  auction_amt: float = 0.0, auction_vol: float = 0.0,
+                  main_intensity: float | None = None, main_buy_ratio: float | None = None) -> str:
+    """信号判定 v14: 主力买入强度(吸筹力度) + 净额方向。
 
-    2026-08-11 修正史:
-    v8 用大单(≥100万)当主力 → 只看到超大单买入, 漏掉大单(20-100万)在卖
-    v12 用腾讯官方口径: 主力=超大单+大单(≥20万/600手), 超大单/大单分开看
-    当日意图核心: 主力净方向 + 超大单/大单分化(托盘 vs 出货)
+    2026-08-11 二次修正(用户洞察: 同花顺暗盘流入多 = 主力在吸筹):
+    - 同花顺"暗盘" ≈ 主力主动买入强度(占成交额 40-80%), 不是净额
+    - 神剑: 主力买8.6亿(占40.6%)净额仅-2.9% → 判吸筹(同花顺一致), 不再判"托盘出货"
+    - 主力买入强度 = 主力参与度%(占全市场成交) + 主力买占比%(买占主力成交)
     """
     threshold = 500e4  # 500万
     tail = seg.get("tail", 0)
-    strong_buy = strong_buy or []
-    strong_sell = strong_sell or []
     low_boost = "低位承接" if (low_ratio or 0) > 0.4 else ""
     auction_note = f"竞价{auction_amt/1e4:.0f}万" if auction_amt > 0 else ""
+    # 吸筹力度: 主力参与度>35% 且 主力买占比>48% = 强吸筹
+    strong_absorb = (main_intensity or 0) >= 35 and (main_buy_ratio or 0) >= 48
+    intensity_note = f"主力买占比{main_buy_ratio:.0f}%" if main_buy_ratio else ""
 
-    # 主力净方向(≥20万)= 当日主力意图主信号
+    # 主力净方向(≥20万)
     if main_net > threshold:
-        # 超大单买 + 大单卖 = 托盘出货(危险信号)
-        if big_net > 0 and mid_net < -threshold * 0.5:
-            return f"主力净流入但大单出货(超大单托盘{big_net/1e4:+.0f}万/大单{mid_net/1e4:+.0f}万, 谨防拉高出货)|{auction_note}"
         if tail > 0:
-            return f"主力净流入+尾盘加仓(吸筹){low_boost}|{auction_note}"
-        return f"主力净流入(主动买占优){low_boost}|{auction_note}"
+            return f"主力净流入+尾盘加仓(吸筹){low_boost}|{auction_note}|{intensity_note}"
+        return f"主力净流入(主动买占优){low_boost}|{auction_note}|{intensity_note}"
     if main_net < -threshold:
-        # 超大单买 + 大单卖 = 超大单护盘失败, 主力整体流出
-        if big_net > 0 and mid_net < -threshold:
-            return f"主力净流出(超大单托盘{big_net/1e4:+.0f}万但大单{mid_net/1e4:+.0f}万出货)|{auction_note}"
+        # 净流出但主力参与度高(买入强度大) = 对倒换手/洗盘吸筹
+        if strong_absorb:
+            return f"主力净流出但参与度高({main_buy_ratio:.0f}%买占)疑洗盘吸筹|{auction_note}"
         if tail < 0:
             return f"主力净流出+尾盘抛压(出货)|{auction_note}"
         return f"主力净流出(主动卖占优)|{auction_note}"
-    return f"主力平衡(买卖接近, 超大单{big_net/1e4:+.0f}万/大单{mid_net/1e4:+.0f}万)|{auction_note}"
+    # 平衡: 看买入强度定吸筹/派发
+    if strong_absorb:
+        return f"主力平衡但参与度高({main_buy_ratio:.0f}%买占)疑吸筹|{auction_note}"
+    return f"主力平衡(买卖接近)|{auction_note}"

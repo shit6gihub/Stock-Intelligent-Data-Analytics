@@ -59,9 +59,10 @@ class TestJudgeSignal:
     def test_outflow(self):
         assert "流出" in _judge_signal(-9000e4, -9000e4, -5000e4, -4000e4, 5000e4,
                                        {"tail": -1000e4, "morning": 0, "mid": 0, "afternoon": 0}, 0.3, [], [])
-        # 超大单买+大单卖 = 托盘出货
-        assert "托盘" in _judge_signal(-9000e4, -9000e4, 3000e4, -12000e4, 5000e4,
-                                       {"tail": -1000e4, "morning": 0, "mid": 0, "afternoon": 0}, 0.3, [], [])
+        # 净流出但参与度高 = 洗盘吸筹
+        assert "吸筹" in _judge_signal(-9000e4, -9000e4, -5000e4, -4000e4, 5000e4,
+                                       {"tail": -1000e4, "morning": 0, "mid": 0, "afternoon": 0}, 0.3, [], [],
+                                       0, 0, 40, 50)
 
     def test_watch(self):
         assert "平衡" in _judge_signal(100e4, 100e4, 50e4, 50e4, 0,

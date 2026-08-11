@@ -697,6 +697,10 @@ class IntradayMonitorAgent(BaseAgent):
                         line = (f"- 暗盘资金：{main_tag}(主力{main_net / 1e4:+.0f}万="
                                 f"超大单{big_net / 1e4:+.0f}+大单{mid_net / 1e4:+.0f}，"
                                 f"散户{small_net / 1e4:+.0f}万)")
+                        # 主力买入强度(同花顺暗盘口径: 流入多=吸筹)
+                        if dark.get("main_intensity") is not None:
+                            line += (f"，参与度{dark['main_intensity']:.0f}%"
+                                     f"/买占{dark.get('main_buy_ratio') or 0:.0f}%")
                         # 5日阶段(双向: 主力不可能一直买/散户不能一直卖)
                         if dark.get("phase"):
                             line += f"，阶段[{dark['phase']}]"
