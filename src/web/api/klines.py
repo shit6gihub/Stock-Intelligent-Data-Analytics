@@ -200,10 +200,19 @@ def get_kline_summary(symbol: str, market: str = "CN"):
     market_code = _parse_market(market)
     collector = KlineCollector(market_code)
     summary = collector.get_kline_summary(symbol)
+    # 主力意图+筹码(2026-08-11): A股附加, 供前端个股窗口独立展示
+    main_intent = None
+    if market_code.value == "CN":
+        try:
+            from src.agents.intraday_monitor import _main_intent_summary
+            main_intent = _main_intent_summary(symbol)
+        except Exception:
+            main_intent = None
     return {
         "symbol": symbol,
         "market": market_code.value,
         "summary": summary,
+        "main_intent": main_intent,
     }
 
 

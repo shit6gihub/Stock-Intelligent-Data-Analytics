@@ -108,6 +108,7 @@ interface KlineSummaryResponse {
   symbol: string
   market: string
   summary: KlineSummaryData
+  main_intent?: string | null
 }
 
 interface KlineSummaryDialogProps {
@@ -143,6 +144,7 @@ export function KlineSummaryDialog({
   const [loading, setLoading] = useState(false)
   const [summary, setSummary] = useState<KlineSummaryData | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [mainIntent, setMainIntent] = useState<string | null>(null)
 
   const buildSuggestion = (s: KlineSummaryData, holding?: boolean) => {
     const scored = buildKlineSuggestion(s, holding)
@@ -195,7 +197,10 @@ export function KlineSummaryDialog({
 
     const m = market || 'CN'
     fetchAPI<KlineSummaryResponse>(`/klines/${encodeURIComponent(symbol)}/summary?market=${encodeURIComponent(m)}`)
-      .then((data) => setSummary(data.summary || null))
+      .then((data) => {
+        setSummary(data.summary || null)
+        setMainIntent(data.main_intent || null)
+      })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false))
   }, [open, symbol, market, initialSummary])
@@ -690,6 +695,12 @@ export function KlineSummaryDialog({
                     />
                   }
                 />
+              )}
+              {mainIntent && (
+                <div className="mt-2 rounded-md border border-rose-500/20 bg-rose-500/5 px-3 py-2">
+                  <div className="text-[11px] font-medium text-rose-400">主力意图 (逐笔V14+筹码)</div>
+                  <div className="mt-0.5 text-[11px] leading-relaxed text-foreground/85">{mainIntent}</div>
+                </div>
               )}
             </div>
 
