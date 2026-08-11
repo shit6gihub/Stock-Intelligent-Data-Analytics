@@ -77,26 +77,28 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
 
 
 def _detect_split_orders(ticks: list[dict], window_sec: int = 90, min_consec: int = 3,
-                         lo: float = 5e4, hi: float = 100e4) -> dict:
-    """拆单识别 v2: 识别主力伪装的中小单(含价格背景, 2026-08-11 修正)。
+                         lo: float = 5e4, hi: float = 100e4,
+                         prev_close: float | None = None) -> dict:
+    """拆单识别 v3: 识别主力伪装的中小单(含价格背景+套牢位置, 2026-08-11 二次修正)。
 
-    之前只按"同向+时间+金额"识别 → 把散户割肉(跌中连续卖)误判为主力拆单卖。
-    修正: 加价格背景分类(神剑实测: 跌中卖1443万全是散户割肉, 跌中买0万):
-      - 逆势吸筹(拆单买): 价格下跌中连续主动买入 = 主力偷偷吸筹
-      - 逆势派发(拆单卖): 价格上涨中连续主动卖出 = 主力偷偷出货
-      - 顺势割肉(散户): 价格下跌中连续卖出 = 散户恐慌
-      - 顺势追涨(散户): 价格上涨中连续买入 = 散户追高
-    只有"逆势"两类算疑似主力, "顺势"两类是散户行为。
+    修正史:
+    v1 只按"同向+时间+金额" → 把散户割肉(跌中连续卖)误判为主力拆单卖
+    v2 加价格方向(逆势=跌中买/涨中卖) → 仍误判: 涨中卖可能是散户解套盘!
+       (用户洞察: 震荡后散户在上涨时卖套牢筹码, 神剑实测唯一涨中卖118万全是解套盘)
+    v3 加"相对昨收位置": 
+      - 涨中卖 + 价格<昨收(套牢区) = 散户解套(不是主力!)
+      - 涨中卖 + 价格>昨收(获利区) = 疑似主力派发
+      - 跌中买 + 价格<昨收 = 主力抄底吸筹(强信号)
+      - 跌中买 + 价格>昨收 = 回落承接(中性)
 
-    Returns: {buy_amt, sell_amt, net, contrarian_net, groups}
+    Returns: {buy_amt, sell_amt, net, contrarian_net, herd_buy, herd_sell, groups}
     """
     def _t2s(t: str) -> int:
         h, m, s = t.split(":")
         return int(h) * 3600 + int(m) * 60 + int(s)
 
-    # 价格背景: 组内价格方向(涨/跌/平)
-    suspect_buy = suspect_sell = 0.0   # 逆势(疑似主力)
-    herd_buy = herd_sell = 0.0         # 顺势(散户)
+    suspect_buy = suspect_sell = 0.0   # 疑似主力(逆势+位置确认)
+    herd_buy = herd_sell = 0.0         # 散户(顺势/解套)
     groups = []
     seq = []
     for tk in ticks:
@@ -106,66 +108,77 @@ def _detect_split_orders(ticks: list[dict], window_sec: int = 90, min_consec: in
             if len(seq) >= min_consec and all(x["d"] == seq[0]["d"] for x in seq):
                 dur = _t2s(seq[-1]["t"]) - _t2s(seq[0]["t"])
                 if dur <= window_sec:
-                    direction = seq[0]["d"]
-                    amt_sum = sum(x["amt"] for x in seq)
-                    p0, p1 = seq[0]["price"], seq[-1]["price"]
-                    price_dir = "up" if p1 > p0 else ("down" if p1 < p0 else "flat")
-                    # 逆势 = 买在跌中 / 卖在涨中
-                    contrarian = (direction == "B" and price_dir == "down") or \
-                                 (direction == "S" and price_dir == "up")
-                    groups.append({
-                        "d": direction, "n": len(seq), "amt": round(amt_sum),
-                        "t0": seq[0]["t"], "t1": seq[-1]["t"],
-                        "p0": p0, "p1": p1,
-                        "contrarian": contrarian,  # 疑似主力
-                        "price_dir": price_dir,
-                    })
-                    if contrarian:
-                        if direction == "B":
-                            suspect_buy += amt_sum
+                    g = _classify_split(seq, prev_close)
+                    groups.append(g)
+                    if g["contrarian"]:
+                        if g["d"] == "B":
+                            suspect_buy += g["amt"]
                         else:
-                            suspect_sell += amt_sum
+                            suspect_sell += g["amt"]
                     else:
-                        if direction == "B":
-                            herd_buy += amt_sum
+                        if g["d"] == "B":
+                            herd_buy += g["amt"]
                         else:
-                            herd_sell += amt_sum
+                            herd_sell += g["amt"]
             seq = []
     # 尾组
     if len(seq) >= min_consec and all(x["d"] == seq[0]["d"] for x in seq):
         dur = _t2s(seq[-1]["t"]) - _t2s(seq[0]["t"])
         if dur <= window_sec:
-            direction = seq[0]["d"]
-            amt_sum = sum(x["amt"] for x in seq)
-            p0, p1 = seq[0]["price"], seq[-1]["price"]
-            price_dir = "up" if p1 > p0 else ("down" if p1 < p0 else "flat")
-            contrarian = (direction == "B" and price_dir == "down") or \
-                         (direction == "S" and price_dir == "up")
-            groups.append({
-                "d": direction, "n": len(seq), "amt": round(amt_sum),
-                "t0": seq[0]["t"], "t1": seq[-1]["t"],
-                "p0": p0, "p1": p1,
-                "contrarian": contrarian, "price_dir": price_dir,
-            })
-            if contrarian:
-                if direction == "B":
-                    suspect_buy += amt_sum
+            g = _classify_split(seq, prev_close)
+            groups.append(g)
+            if g["contrarian"]:
+                if g["d"] == "B":
+                    suspect_buy += g["amt"]
                 else:
-                    suspect_sell += amt_sum
+                    suspect_sell += g["amt"]
             else:
-                if direction == "B":
-                    herd_buy += amt_sum
+                if g["d"] == "B":
+                    herd_buy += g["amt"]
                 else:
-                    herd_sell += amt_sum
+                    herd_sell += g["amt"]
 
     groups.sort(key=lambda g: -g["amt"])
     return {
-        "buy_amt": round(suspect_buy),       # 逆势拆单买(主力吸筹)
-        "sell_amt": round(suspect_sell),     # 逆势拆单卖(主力派发)
+        "buy_amt": round(suspect_buy),
+        "sell_amt": round(suspect_sell),
         "net": round(suspect_buy - suspect_sell),
-        "herd_buy": round(herd_buy),         # 顺势买(散户追涨)
-        "herd_sell": round(herd_sell),       # 顺势卖(散户割肉)
+        "herd_buy": round(herd_buy),
+        "herd_sell": round(herd_sell),
         "groups": groups[:10],
+    }
+
+
+def _classify_split(seq: list[dict], prev_close: float | None) -> dict:
+    """单组拆单分类, 返回组信息 + contrarian 标记。"""
+    direction = seq[0]["d"]
+    amt_sum = sum(x["amt"] for x in seq)
+    p0, p1 = seq[0]["price"], seq[-1]["price"]
+    price_dir = "up" if p1 > p0 else ("down" if p1 < p0 else "flat")
+    # 相对昨收位置(套牢区 vs 获利区)
+    below_prev = prev_close is not None and p0 < prev_close
+    contrarian = False
+    reason = ""
+    if direction == "B" and price_dir == "down" and below_prev:
+        contrarian = True      # 跌中买+套牢区 = 主力抄底吸筹(强信号)
+        reason = "主力抄底"
+    elif direction == "S" and price_dir == "up" and not below_prev:
+        contrarian = True      # 涨中卖+获利区 = 主力派发
+        reason = "主力派发"
+    elif direction == "S" and price_dir == "up" and below_prev:
+        contrarian = False     # 涨中卖+套牢区 = 散户解套盘(用户洞察!)
+        reason = "散户解套"
+    elif direction == "B" and price_dir == "down" and not below_prev:
+        contrarian = False     # 跌中买+获利区 = 回落承接(中性)
+        reason = "回落承接"
+    else:
+        reason = "横盘"
+
+    return {
+        "d": direction, "n": len(seq), "amt": round(amt_sum),
+        "t0": seq[0]["t"], "t1": seq[-1]["t"],
+        "p0": p0, "p1": p1,
+        "contrarian": contrarian, "price_dir": price_dir, "reason": reason,
     }
 
 
@@ -177,6 +190,15 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
     ticks = _fetch_all_ticks(code)
     if not ticks:
         return None
+
+    # 昨收(用于套牢区判断: 涨中卖+低于昨收=散户解套, 非主力派发)
+    prev_close = None
+    try:
+        from marketdata.vendors.tencent import TencentQuoteVendor
+        q = TencentQuoteVendor().fetch([symbol], {})[0]
+        prev_close = q.prev_close if q.prev_close else None
+    except Exception:
+        pass
 
     # ---- 基础统计(三分类, 竞价单单独处理) ----
     # 关键(2026-08-11 三表破解): 9:25-9:30 集合竞价撮合不是"主动买入",
@@ -285,7 +307,7 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
 
     # ---- 拆单识别(主力伪装的中小单) ----
     try:
-        split = _detect_split_orders(ticks)
+        split = _detect_split_orders(ticks, prev_close=prev_close)
         result["split_order"] = split
     except Exception as e:
         logger.debug(f"拆单识别失败: {e}")
