@@ -641,6 +641,7 @@ class IntradayMonitorAgent(BaseAgent):
                         "  - ⚠️ 主力净流入但超大单净流出(分歧): 可能是大单拉抬、超大单出货,谨慎追涨"
                     )
                 # 盘口大单面板(腾讯, 2026-08-11 接入): 大单占比 + 大单分档统计, 失败静默
+                mdsym = None
                 try:
                     from marketdata.vendors.tencent_panel import (
                         fetch_pan_analysis,
@@ -673,6 +674,51 @@ class IntradayMonitorAgent(BaseAgent):
                         )
                 except Exception as e:
                     logger.debug(f"盘口大单面板获取失败(不影响资金面): {e}")
+
+                # 暗盘资金面板(腾讯逐笔三表结合, 2026-08-11): 大单方向(主力) + 拆单识别 + 承接价位
+                try:
+                    from src.core.dark_flow import compute_dark_flow
+
+                    if mdsym is None:
+                        from marketdata import Symbol as MDSymbol
+                        mdsym = MDSymbol.parse(stock.symbol, "CN")
+                    dark = compute_dark_flow(mdsym)
+                    if dark:
+                        big_net = dark.get("big_net", 0)
+                        small_net = dark.get("small_net", 0)
+                        # 主力信号 = 大单净方向(对齐同花顺暗盘口径)
+                        if big_net > 500e4:
+                            main_tag = "主力吸筹"
+                        elif big_net < -500e4:
+                            main_tag = "主力流出"
+                        else:
+                            main_tag = "主力平衡"
+                        line = f"- 暗盘资金：{main_tag}(大单{big_net / 1e4:+.0f}万，散户{small_net / 1e4:+.0f}万)"
+                        # 竞价撮合
+                        if dark.get("auction_amt"):
+                            line += f"，竞价{dark['auction_amt'] / 1e4:.0f}万"
+                        # 尾盘特征
+                        tail = dark.get("segments", {}).get("tail", 0)
+                        if abs(tail) > 300e4:
+                            line += f"，尾盘{tail / 1e4:+.0f}万"
+                        lines.append(line)
+                        # 吸筹价位
+                        zones = dark.get("absorb_zones") or []
+                        if zones:
+                            zs = "、".join(
+                                f"{z['price']:.2f}(大单{z['big_net'] / 1e4:+.0f}万)" for z in zones[:3]
+                            )
+                            lines.append(f"  - 主力吸筹位：{zs}")
+                        # 拆单识别(主力冒充散户的已成交部分)
+                        split = dark.get("split_order") or {}
+                        if split.get("net") is not None and abs(split["net"]) >= 300e4:
+                            dir_s = "买入" if split["net"] > 0 else "卖出"
+                            lines.append(
+                                f"  - 拆单识别：疑似主力{dir_s}{abs(split['net']) / 1e4:.0f}万"
+                                f"({len(split.get('groups', []))}组连续同向单，已成交口径)"
+                            )
+                except Exception as e:
+                    logger.debug(f"暗盘资金面板获取失败(不影响资金面): {e}")
             except Exception:
                 lines.append("- ⚠️ 资金数据解析失败(数据源返回异常),资金面留空")
         else:
