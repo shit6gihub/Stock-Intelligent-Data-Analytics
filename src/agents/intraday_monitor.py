@@ -25,6 +25,84 @@ logger = logging.getLogger(__name__)
 _realtime_volume_ratio_cache: dict[str, tuple[float, float | None]] = {}
 
 
+def _append_main_intent(lines: list, symbol: str) -> None:
+    """主力意图段(2026-08-11 独立段): 逐笔主力 + 筹码分布 + 股东户数。
+
+    与"资金面"口径隔离: 资金面=东财/腾讯静态资金流, 主力意图=逐笔实时+
+    筹码面+股东户数交叉验证。任何数据源失败均静默, 不阻塞整段。
+    """
+    try:
+        from marketdata import Symbol as MDSymbol
+        from src.core.dark_flow import compute_dark_flow
+
+        mdsym = MDSymbol.parse(symbol, "CN")
+        dark = compute_dark_flow(mdsym)
+        if not dark:
+            return
+        lines.append("\n## 主力意图")
+        main_net = dark.get("main_net", 0) or 0
+        big_net = dark.get("big_net", 0) or 0
+        mid_net = dark.get("mid_net", 0) or 0
+        small_net = dark.get("small_net", 0) or 0
+        main_tag = "主力净流入" if main_net > 500e4 else ("主力净流出" if main_net < -500e4 else "主力平衡")
+        line = (f"- 主力方向：{main_tag}(主力{main_net / 1e4:+.0f}万="
+                f"超大单{big_net / 1e4:+.0f}+大单{mid_net / 1e4:+.0f}，"
+                f"散户{small_net / 1e4:+.0f}万)")
+        if dark.get("main_intensity") is not None:
+            line += (f"，参与度{dark['main_intensity']:.0f}%"
+                     f"/买占{dark.get('main_buy_ratio') or 0:.0f}%")
+        if dark.get("phase"):
+            line += f"，阶段[{dark['phase']}]"
+        if dark.get("auction_amt"):
+            line += f"，竞价{dark['auction_amt'] / 1e4:.0f}万"
+        tail = dark.get("segments", {}).get("tail", 0) or 0
+        if abs(tail) > 300e4:
+            line += f"，尾盘{tail / 1e4:+.0f}万"
+        lines.append(line)
+        zones = dark.get("absorb_zones") or []
+        if zones:
+            zs = "、".join(f"{z['price']:.2f}(大单{z['big_net'] / 1e4:+.0f}万)" for z in zones[:3])
+            lines.append(f"- 主力吸筹位：{zs}")
+        split = dark.get("split_order") or {}
+        if split.get("net") is not None and abs(split["net"]) >= 200e4:
+            dir_s = "买入" if split["net"] > 0 else "卖出"
+            lines.append(
+                f"- 拆单识别：疑似主力{dir_s}{abs(split['net']) / 1e4:.0f}万"
+                f"(逆势{len([g for g in split.get('groups', []) if g.get('contrarian')])}组，"
+                f"散户顺势{abs(split.get('herd_sell', 0) - split.get('herd_buy', 0)) / 1e4:.0f}万)"
+            )
+        # 筹码分布(2026-08-11): 主力成本区 + 套牢盘
+        try:
+            from src.core.chip_distribution import compute_chips
+            from marketdata.vendors.kline import fetch_tencent_kline_raw
+            tc = f"{'sh' if symbol.startswith('6') else 'sz'}{symbol}"
+            kl = fetch_tencent_kline_raw(tc, 300)
+            chips = compute_chips(kl) if len(kl) >= 50 else None
+            if chips:
+                profit = chips["profit_ratio"] * 100
+                pos = "上方(套牢)" if chips["peak_price"] > chips["last_close"] else ("下方(获利)" if chips["peak_price"] < chips["last_close"] else "持平")
+                lines.append(
+                    f"- 筹码面：峰{chips['peak_price']}({pos}) 获利盘{profit:.0f}% "
+                    f"套牢盘{100 - profit:.0f}% COST50={chips['cost_50']}"
+                )
+        except Exception:
+            pass
+        # 股东户数(2026-08-11): 筹码集中度交叉验证
+        try:
+            from marketdata.vendors.tencent_info import fetch_stock_brief
+            brief = fetch_stock_brief(mdsym)
+            if brief and brief.get("gdgb"):
+                g = brief["gdgb"]
+                if g.get("gdrshb"):
+                    chg = g["gdrshb"]
+                    tag = "集中(吸筹)" if chg < 0 else ("分散(派发)" if chg > 0 else "持平")
+                    lines.append(f"- 股东户数：{g.get('gdrs', '--')}户，变化{chg}%({tag})")
+        except Exception:
+            pass
+    except Exception as e:
+        logger.debug(f"主力意图段获取失败(不影响其他段): {e}")
+
+
 def get_realtime_volume_ratio(symbol: str, market: str = "CN") -> float | None:
     """取腾讯实时量比(独立于 ths quote 源, 后者无此字段)。
 
@@ -32,7 +110,6 @@ def get_realtime_volume_ratio(symbol: str, market: str = "CN") -> float | None:
     与 K 线口径(今日总量/5日均量)不同——开盘初期 K 线口径严重失真。
     """
     import time
-
     now = time.time()
     cached = _realtime_volume_ratio_cache.get(symbol)
     if cached and (now - cached[0]) < 30.0:
@@ -674,62 +751,6 @@ class IntradayMonitorAgent(BaseAgent):
                         )
                 except Exception as e:
                     logger.debug(f"盘口大单面板获取失败(不影响资金面): {e}")
-
-                # 暗盘资金面板(腾讯逐笔三表结合, 2026-08-11): 大单方向(主力) + 拆单识别 + 承接价位
-                try:
-                    from src.core.dark_flow import compute_dark_flow
-
-                    if mdsym is None:
-                        from marketdata import Symbol as MDSymbol
-                        mdsym = MDSymbol.parse(stock.symbol, "CN")
-                    dark = compute_dark_flow(mdsym)
-                    if dark:
-                        main_net = dark.get("main_net", 0)     # 主力(≥20万, 腾讯官方口径)
-                        big_net = dark.get("big_net", 0)       # 超大单(≥100万)
-                        mid_net = dark.get("mid_net", 0)       # 大单(20-100万)
-                        small_net = dark.get("small_net", 0)   # 散户(<20万)
-                        if main_net > 500e4:
-                            main_tag = "主力净流入"
-                        elif main_net < -500e4:
-                            main_tag = "主力净流出"
-                        else:
-                            main_tag = "主力平衡"
-                        line = (f"- 暗盘资金：{main_tag}(主力{main_net / 1e4:+.0f}万="
-                                f"超大单{big_net / 1e4:+.0f}+大单{mid_net / 1e4:+.0f}，"
-                                f"散户{small_net / 1e4:+.0f}万)")
-                        # 主力买入强度(同花顺暗盘口径: 流入多=吸筹)
-                        if dark.get("main_intensity") is not None:
-                            line += (f"，参与度{dark['main_intensity']:.0f}%"
-                                     f"/买占{dark.get('main_buy_ratio') or 0:.0f}%")
-                        # 5日阶段(双向: 主力不可能一直买/散户不能一直卖)
-                        if dark.get("phase"):
-                            line += f"，阶段[{dark['phase']}]"
-                        # 竞价撮合
-                        if dark.get("auction_amt"):
-                            line += f"，竞价{dark['auction_amt'] / 1e4:.0f}万"
-                        # 尾盘特征
-                        tail = dark.get("segments", {}).get("tail", 0)
-                        if abs(tail) > 300e4:
-                            line += f"，尾盘{tail / 1e4:+.0f}万"
-                        lines.append(line)
-                        # 吸筹价位
-                        zones = dark.get("absorb_zones") or []
-                        if zones:
-                            zs = "、".join(
-                                f"{z['price']:.2f}(大单{z['big_net'] / 1e4:+.0f}万)" for z in zones[:3]
-                            )
-                            lines.append(f"  - 主力吸筹位：{zs}")
-                        # 拆单识别(主力伪装散户, 逆势口径 2026-08-11 修正)
-                        split = dark.get("split_order") or {}
-                        if split.get("net") is not None and abs(split["net"]) >= 200e4:
-                            dir_s = "买入" if split["net"] > 0 else "卖出"
-                            lines.append(
-                                f"  - 拆单识别：疑似主力{dir_s}{abs(split['net']) / 1e4:.0f}万"
-                                f"(逆势{len([g for g in split.get('groups', []) if g.get('contrarian')])}组，"
-                                f"散户顺势{abs(split.get('herd_sell', 0) - split.get('herd_buy', 0)) / 1e4:.0f}万)"
-                            )
-                except Exception as e:
-                    logger.debug(f"暗盘资金面板获取失败(不影响资金面): {e}")
             except Exception:
                 lines.append("- ⚠️ 资金数据解析失败(数据源返回异常),资金面留空")
         else:
@@ -765,6 +786,10 @@ class IntradayMonitorAgent(BaseAgent):
                 if amplitude_avg5 is not None:
                     amp_info += f"（5日平均：{amplitude_avg5:.2f}%）"
                 lines.append(f"- {amp_info}")
+
+        # ============ 主力意图(独立段, 2026-08-11) ============
+        # 逐笔实时口径 + 筹码面 + 股东户数, 资金面之外的决策核心
+        _append_main_intent(lines, stock.symbol)
 
         # 账户资金情况
         lines.append(f"\n## 账户资金")
