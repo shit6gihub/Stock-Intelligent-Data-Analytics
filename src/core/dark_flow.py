@@ -78,6 +78,9 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
             pass  # L2 未接入/异常, 回退腾讯逐笔
 
     ticks: list[dict] = []
+    # 2026-08-12: 连续空页才停(腾讯偶发限流单页返回空, 遇首个空页就 break 会
+    # 在盘中实时拉取时中途截断 → 主力意图算在残缺数据上)。实测: 第60页首次空、重试有数据。
+    empty_streak = 0
     for p in range(max_pages):
         url = f"https://stock.gtimg.cn/data/index.php?appn=detail&action=data&c={code}&p={p}"
         body = None
@@ -92,13 +95,23 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
                 if attempt == 1:
                     break
         if body is None:
-            break
+            empty_streak += 1
+            if empty_streak >= 2:
+                break
+            continue
         m = re.search(r'\[(\d+),"(.*?)"\]', body)
         if not m:
-            break
+            empty_streak += 1
+            if empty_streak >= 2:
+                break
+            continue
         rows = m.group(2).split("|")
         if not rows or len(rows) < 2:
-            break
+            empty_streak += 1
+            if empty_streak >= 2:
+                break
+            continue
+        empty_streak = 0
         for r in rows:
             parts = r.split("/")
             if len(parts) < 7:
