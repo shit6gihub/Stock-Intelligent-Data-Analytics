@@ -97,7 +97,12 @@ def fetch_big_order_stats(symbol: Symbol) -> list[dict] | None:
 
 
 def fetch_price_distribution(symbol: Symbol, limit: int = 10) -> list[dict] | None:
-    """分价表: 各价位成交量/占比, 按量降序取前 limit 个。"""
+    """分价表: 各价位成交量/主动买量/竞买率, 按量降序取前 limit 个。
+
+    真实字段(2026-08-11 截图破解):
+      价~主动买量(手)~总成交量(手)~委托买量~委托卖量
+      竞买率 = 主动买量/总成交量 (11.84: 56652/101403=55.87% ✓ 截图)
+    """
     code = _tencent_code(symbol)
     if not code:
         return None
@@ -110,14 +115,19 @@ def fetch_price_distribution(symbol: Symbol, limit: int = 10) -> list[dict] | No
         rows = []
         for part in data.split("^"):
             p = part.split("~")
-            if len(p) >= 3 and p[0] and p[1]:
+            if len(p) >= 5 and p[0] and p[2]:
                 try:
+                    total_vol = float(p[2])     # 总成交量(手)
+                    buy_vol = float(p[1])       # 主动买量(手)
                     rows.append({
                         "price": float(p[0]),
-                        "volume": int(p[1]),       # 手
-                        "pct": float(p[2]),         # 占比(% 可能>100 需按总量归一)
+                        "volume": total_vol,          # 总成交量(手)
+                        "buy_volume": buy_vol,        # 主动买量(手)
+                        "buy_ratio": round(buy_vol / total_vol, 4) if total_vol else None,  # 竞买率
+                        "bid_vol": float(p[3]) if p[3] else 0,   # 委托买量
+                        "ask_vol": float(p[4]) if p[4] else 0,   # 委托卖量
                     })
-                except (TypeError, ValueError):
+                except (ValueError, IndexError, TypeError):
                     continue
         rows.sort(key=lambda r: -r["volume"])
         return rows[:limit] or None
