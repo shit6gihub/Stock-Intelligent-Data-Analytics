@@ -72,18 +72,25 @@ def _append_main_intent(lines: list, symbol: str) -> None:
                 f"散户顺势{abs(split.get('herd_sell', 0) - split.get('herd_buy', 0)) / 1e4:.0f}万)"
             )
         # 筹码分布(2026-08-11): 主力成本区 + 套牢盘
+        # 优先: 新浪历史分价表近期真实分布(精确); 降级: 三角分布估算
         try:
-            from src.core.chip_distribution import compute_chips
+            from src.core.chip_distribution import compute_near_term_chips, compute_chips
             from marketdata.vendors.kline import fetch_tencent_kline_raw
             tc = f"{'sh' if symbol.startswith('6') else 'sz'}{symbol}"
-            kl = fetch_tencent_kline_raw(tc, 300)
-            chips = compute_chips(kl) if len(kl) >= 50 else None
+            chips = compute_near_term_chips(tc, days=10)
+            src_tag = "近期真实"
+            if chips is None:
+                kl = fetch_tencent_kline_raw(tc, 300)
+                chips = compute_chips(kl) if len(kl) >= 50 else None
+                src_tag = "估算"
             if chips:
                 profit = chips["profit_ratio"] * 100
                 pos = "上方(套牢)" if chips["peak_price"] > chips["last_close"] else ("下方(获利)" if chips["peak_price"] < chips["last_close"] else "持平")
+                band = chips.get("cost_band")
+                band_str = f" 成本带{band['low']}-{band['high']}({band['ratio']}%)" if band else ""
                 lines.append(
-                    f"- 筹码面：峰{chips['peak_price']}({pos}) 获利盘{profit:.0f}% "
-                    f"套牢盘{100 - profit:.0f}% COST50={chips['cost_50']}"
+                    f"- 筹码面({src_tag}): 峰{chips['peak_price']}({pos}) 获利盘{profit:.0f}% "
+                    f"COST50={chips['cost_50']}{band_str}"
                 )
         except Exception:
             pass
