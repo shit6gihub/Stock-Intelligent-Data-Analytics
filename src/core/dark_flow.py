@@ -66,13 +66,72 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
             try:
                 amt = float(parts[5])
                 vol = float(parts[4])
+                price = float(parts[2])
                 direction = parts[6]
                 t = parts[1]
             except (ValueError, IndexError):
                 continue
             if amt > 0:
-                ticks.append({"d": direction, "amt": amt, "vol": vol, "t": t})
+                ticks.append({"d": direction, "amt": amt, "vol": vol, "price": price, "t": t})
     return ticks
+
+
+def _detect_split_orders(ticks: list[dict], window_sec: int = 60, min_consec: int = 3,
+                         lo: float = 5e4, hi: float = 100e4) -> dict:
+    """拆单识别: 识别主力伪装的中小单(连续同向+短窗口+金额区间)。
+
+    同花顺"暗盘资金"核心 = 识别主力拆单(2026-08-11 需求确认)。
+    特征: 60秒内连续≥3笔同方向 且单笔5万-100万(拆单常见区间)。
+
+    Returns: {buy_amt, sell_amt, net, groups}
+    """
+    def _t2s(t: str) -> int:
+        h, m, s = t.split(":")
+        return int(h) * 3600 + int(m) * 60 + int(s)
+
+    suspect_buy = suspect_sell = 0.0
+    groups = []
+    seq = []
+    for tk in ticks:
+        if lo <= tk["amt"] <= hi:
+            seq.append(tk)
+        else:
+            if len(seq) >= min_consec and all(x["d"] == seq[0]["d"] for x in seq):
+                direction = seq[0]["d"]
+                amt_sum = sum(x["amt"] for x in seq)
+                dur = _t2s(seq[-1]["t"]) - _t2s(seq[0]["t"])
+                if dur <= window_sec:
+                    groups.append({
+                        "d": direction, "n": len(seq), "amt": round(amt_sum),
+                        "t0": seq[0]["t"], "t1": seq[-1]["t"],
+                        "p0": seq[0]["price"], "p1": seq[-1]["price"],
+                    })
+                    if direction == "B":
+                        suspect_buy += amt_sum
+                    else:
+                        suspect_sell += amt_sum
+            seq = []
+    # 尾组
+    if len(seq) >= min_consec and all(x["d"] == seq[0]["d"] for x in seq):
+        amt_sum = sum(x["amt"] for x in seq)
+        if _t2s(seq[-1]["t"]) - _t2s(seq[0]["t"]) <= window_sec:
+            groups.append({
+                "d": seq[0]["d"], "n": len(seq), "amt": round(amt_sum),
+                "t0": seq[0]["t"], "t1": seq[-1]["t"],
+                "p0": seq[0]["price"], "p1": seq[-1]["price"],
+            })
+            if seq[0]["d"] == "B":
+                suspect_buy += amt_sum
+            else:
+                suspect_sell += amt_sum
+
+    groups.sort(key=lambda g: -g["amt"])
+    return {
+        "buy_amt": round(suspect_buy),
+        "sell_amt": round(suspect_sell),
+        "net": round(suspect_buy - suspect_sell),
+        "groups": groups[:10],
+    }
 
 
 def compute_dark_flow(symbol: Symbol) -> dict | None:
@@ -188,7 +247,46 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
         result.get("strong_sell_zones", []),
         auction_amt, auction_vol,
     )
-    result["note"] = "v6: 三表结合(成交明细+大单明细+分价表), 竞价单独立处理"
+
+    # ---- 拆单识别(主力伪装的中小单) ----
+    try:
+        split = _detect_split_orders(ticks)
+        result["split_order"] = split
+    except Exception as e:
+        logger.debug(f"拆单识别失败: {e}")
+
+    # ---- 价位级承接分析(2026-08-11 用户洞察) ----
+    # 找"大单卖+中小买"(主力砸散户接) 或 "大单买+中小卖"(主力吸筹) 的价位
+    try:
+        from collections import defaultdict
+        by_price = defaultdict(lambda: {"big_buy": 0.0, "big_sell": 0.0, "small_buy": 0.0, "small_sell": 0.0})
+        for tk in ticks:
+            p = round(tk["price"], 2)
+            is_big = tk["amt"] >= BIG_AMOUNT
+            if is_big:
+                if tk["d"] == "B": by_price[p]["big_buy"] += tk["amt"]
+                elif tk["d"] == "S": by_price[p]["big_sell"] += tk["amt"]
+            else:
+                if tk["d"] == "B": by_price[p]["small_buy"] += tk["amt"]
+                elif tk["d"] == "S": by_price[p]["small_sell"] += tk["amt"]
+        # 主力吸筹位: 大单净买>800万 且 中小单净卖(散户割)
+        absorb_zones, distribute_zones = [], []
+        for p, d in by_price.items():
+            total = d["big_buy"] + d["big_sell"] + d["small_buy"] + d["small_sell"]
+            if total < 1000e4:  # 只留 1000万以上成交的价位
+                continue
+            big_net = d["big_buy"] - d["big_sell"]
+            small_net = d["small_buy"] - d["small_sell"]
+            if big_net > 800e4 and small_net < -300e4:
+                absorb_zones.append({"price": p, "big_net": round(big_net), "small_net": round(small_net)})
+            elif big_net < -800e4 and small_net > 300e4:
+                distribute_zones.append({"price": p, "big_net": round(big_net), "small_net": round(small_net)})
+        result["absorb_zones"] = sorted(absorb_zones, key=lambda x: -x["big_net"])[:6]
+        result["distribute_zones"] = sorted(distribute_zones, key=lambda x: x["big_net"])[:6]
+    except Exception as e:
+        logger.debug(f"承接价位分析失败: {e}")
+
+    result["note"] = "v8: 主力信号=大单净方向(同花顺暗盘口径), 承接价位分解"
     return result
 
 
@@ -196,7 +294,12 @@ def _judge_signal(dark_net: float, big_net: float, small_net: float,
                   seg: dict, low_ratio: float | None,
                   strong_buy: list | None = None, strong_sell: list | None = None,
                   auction_amt: float = 0.0, auction_vol: float = 0.0) -> str:
-    """信号判定 v6: 方向 + 价位维度 + 竞价信号。"""
+    """信号判定 v8: 主信号=大单净方向(主力), 中小单作对手盘佐证。
+
+    2026-08-11 修正(价位级分解实证): 神剑 11.84 大单净买+4486万/中小单净卖-744万,
+    同花顺判"暗盘流入4.02亿"= 大单吸筹。所以主力信号看大单(≥100万)净额,
+    中小单=散户行为(对手盘)。
+    """
     threshold = 500e4  # 500万
     tail = seg.get("tail", 0)
     strong_buy = strong_buy or []
@@ -204,19 +307,21 @@ def _judge_signal(dark_net: float, big_net: float, small_net: float,
     n_buy_zone = len(strong_buy)
     n_sell_zone = len(strong_sell)
     low_boost = "低位承接" if (low_ratio or 0) > 0.4 else ""
-    # 竞价信号: 竞价撮合金额 > 全天成交额 2% = 竞价活跃
     auction_note = f"竞价{auction_amt/1e4:.0f}万" if auction_amt > 0 else ""
 
-    if dark_net > threshold:
+    # 主力信号 = 大单净方向(同花顺"暗盘"≈大单主动净额)
+    if big_net > threshold:
+        if small_net < -threshold:
+            # 大单吸筹 + 中小单割肉 = 典型吸筹(同花顺暗盘流入场景)
+            return f"主力吸筹(大单+{big_net/1e4:.0f}万, 散户-{abs(small_net)/1e4:.0f}万){low_boost}|{auction_note}"
         if tail > 0:
             return f"主力流入+尾盘加仓(吸筹){low_boost}|{auction_note}"
-        if n_buy_zone >= 2 and n_sell_zone <= n_buy_zone:
-            return f"主力流入+低位强买{n_buy_zone}区(吸筹){low_boost}|{auction_note}"
-        return f"主力流入(主动买占优){low_boost}|{auction_note}"
-    if dark_net < -threshold:
+        return f"主力流入(大单主动买){low_boost}|{auction_note}"
+    if big_net < -threshold:
+        if small_net > threshold:
+            # 大单出货 + 中小单接盘 = 派发
+            return f"主力派发(大单-{abs(big_net)/1e4:.0f}万, 散户+{small_net/1e4:.0f}万)|{auction_note}"
         if tail < 0:
             return f"主力流出+尾盘抛压(出货)|{auction_note}"
-        if n_sell_zone >= 2:
-            return f"主力流出+高位抛压{n_sell_zone}区(派发)|{auction_note}"
-        return f"主力流出(主动卖占优)|{auction_note}"
-    return f"观望(买卖接近, 吸筹区{n_buy_zone}/抛压区{n_sell_zone})|{auction_note}"
+        return f"主力流出(大单主动卖)|{auction_note}"
+    return f"观望(大单买卖接近, 吸筹区{n_buy_zone}/抛压区{n_sell_zone})|{auction_note}"
