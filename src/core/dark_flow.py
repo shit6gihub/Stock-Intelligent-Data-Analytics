@@ -84,9 +84,12 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
     if not ticks:
         return None
 
-    # ---- 基础统计(三分类) ----
+    # ---- 基础统计(三分类, 竞价单单独处理) ----
+    # 关键(2026-08-11 三表破解): 9:25-9:30 集合竞价撮合不是"主动买入",
+    # 腾讯网页大单把它算中性盘。方向标记 B 在竞价时段不可信。
     buy_amt = sell_amt = m_amt = 0.0
     buy_vol = sell_vol = m_vol = 0.0
+    auction_amt = auction_vol = 0.0   # 竞价单(集合竞价撮合)
     # 大单分层
     big_buy_amt = big_sell_amt = 0.0
     small_buy_amt = small_sell_amt = 0.0
@@ -97,6 +100,11 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
         d, amt, vol, t = tk["d"], tk["amt"], tk["vol"], tk["t"]
         is_big = amt >= BIG_AMOUNT or vol >= BIG_VOLUME
         hm = t[:5]
+        # 竞价时段(9:25-9:30): 集合竞价撮合, 方向不可信, 单独统计
+        if t < "09:30":
+            auction_amt += amt
+            auction_vol += vol
+            continue
         if d == "B":
             buy_amt += amt; buy_vol += vol
             if is_big: big_buy_amt += amt
@@ -121,7 +129,7 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
             seg["tail"] += sign * amt
 
     # ---- 结果 ----
-    dark_net = buy_amt - sell_amt          # 全量主动净额
+    dark_net = buy_amt - sell_amt          # 全量主动净额(剔除竞价)
     big_net = big_buy_amt - big_sell_amt   # 大单(明盘)净额
     small_net = small_buy_amt - small_sell_amt  # 中小单(暗盘)净额
 
@@ -134,6 +142,8 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
         "buy_vol": round(buy_vol), "sell_vol": round(sell_vol), "m_vol": round(m_vol),
         "buy_pct": round(buy_vol / (buy_vol + sell_vol + m_vol) * 100, 1) if (buy_vol + sell_vol + m_vol) else None,
         "sell_pct": round(sell_vol / (buy_vol + sell_vol + m_vol) * 100, 1) if (buy_vol + sell_vol + m_vol) else None,
+        "auction_amt": round(auction_amt),   # 竞价撮合金额(元)
+        "auction_vol": round(auction_vol),   # 竞价撮合手数
         "segments": {k: round(v) for k, v in seg.items()},
         "tick_count": len(ticks),
     }
@@ -176,19 +186,17 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
         result.get("low_price_ratio"),
         result.get("strong_buy_zones", []),
         result.get("strong_sell_zones", []),
+        auction_amt, auction_vol,
     )
-    result["note"] = "v5: 三分类+大单/暗盘分层+分价表价位维度(腾讯逐笔全天全量)"
+    result["note"] = "v6: 三表结合(成交明细+大单明细+分价表), 竞价单独立处理"
     return result
 
 
 def _judge_signal(dark_net: float, big_net: float, small_net: float,
                   seg: dict, low_ratio: float | None,
-                  strong_buy: list | None = None, strong_sell: list | None = None) -> str:
-    """信号判定 v5: 方向(全量主动净额) + 价位维度(吸筹/抛压区) + 时段。
-
-    同花顺核心: 主力净流入 = 明盘 + 暗盘。免费近似用全量主动净额作主信号,
-    分价表吸筹/抛压价位作佐证(价跌但低位强买 = 吸筹)。
-    """
+                  strong_buy: list | None = None, strong_sell: list | None = None,
+                  auction_amt: float = 0.0, auction_vol: float = 0.0) -> str:
+    """信号判定 v6: 方向 + 价位维度 + 竞价信号。"""
     threshold = 500e4  # 500万
     tail = seg.get("tail", 0)
     strong_buy = strong_buy or []
@@ -196,18 +204,19 @@ def _judge_signal(dark_net: float, big_net: float, small_net: float,
     n_buy_zone = len(strong_buy)
     n_sell_zone = len(strong_sell)
     low_boost = "低位承接" if (low_ratio or 0) > 0.4 else ""
+    # 竞价信号: 竞价撮合金额 > 全天成交额 2% = 竞价活跃
+    auction_note = f"竞价{auction_amt/1e4:.0f}万" if auction_amt > 0 else ""
 
-    # 主信号: 全量主动净额方向(同花顺"主力净流入"近似)
     if dark_net > threshold:
         if tail > 0:
-            return f"主力流入+尾盘加仓(暗盘吸筹){low_boost}"
+            return f"主力流入+尾盘加仓(吸筹){low_boost}|{auction_note}"
         if n_buy_zone >= 2 and n_sell_zone <= n_buy_zone:
-            return f"主力流入+低位强买{n_buy_zone}区(吸筹){low_boost}"
-        return f"主力流入(主动买占优){low_boost}"
+            return f"主力流入+低位强买{n_buy_zone}区(吸筹){low_boost}|{auction_note}"
+        return f"主力流入(主动买占优){low_boost}|{auction_note}"
     if dark_net < -threshold:
         if tail < 0:
-            return f"主力流出+尾盘抛压(出货)"
+            return f"主力流出+尾盘抛压(出货)|{auction_note}"
         if n_sell_zone >= 2:
-            return f"主力流出+高位抛压{n_sell_zone}区(派发)"
-        return f"主力流出(主动卖占优)"
-    return f"观望(主动买卖接近, 吸筹区{n_buy_zone}/抛压区{n_sell_zone})"
+            return f"主力流出+高位抛压{n_sell_zone}区(派发)|{auction_note}"
+        return f"主力流出(主动卖占优)|{auction_note}"
+    return f"观望(买卖接近, 吸筹区{n_buy_zone}/抛压区{n_sell_zone})|{auction_note}"
