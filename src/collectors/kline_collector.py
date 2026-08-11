@@ -464,6 +464,40 @@ _TALIB_CN: dict[str, str] = {
 }
 
 
+# 十字星变体(高度相似, 去重时合并): 保留第一个, 其余丢弃
+_DOJI_VARIANTS = {"十字星", "长脚十字", "蜻蜓十字", "墓碑十字", "黄包车夫", "十字孕线"}
+
+
+def _dedupe_patterns(patterns: list[dict]) -> list[dict]:
+    """K线形态去重+限流(2026-08-12): 十字星变体合并, 同信号方向最多3个。
+
+    问题: 自研+TA-Lib双引擎会重复识别, 且十字星变体(长脚/蜻蜓/墓碑/黄包车夫)
+    本质同源, 6个看涨形态堆一起会刷屏误导LLM过度乐观。
+    """
+    result: list[dict] = []
+    seen_names: set[str] = set()
+    seen_signal = {"看涨": 0, "看跌": 0}
+    for p in patterns:
+        name = p.get("cn_name") or p.get("name") or ""
+        signal = p.get("signal") or ""
+        # 十字星变体只保留第一个
+        if name in _DOJI_VARIANTS:
+            if "十字" in seen_names or any(v in seen_names for v in _DOJI_VARIANTS):
+                continue
+            seen_names.add("十字")
+            result.append(p)
+            continue
+        if name in seen_names:
+            continue
+        # 同信号方向限流
+        if seen_signal.get(signal, 0) >= 3:
+            continue
+        seen_names.add(name)
+        seen_signal[signal] = seen_signal.get(signal, 0) + 1
+        result.append(p)
+    return result
+
+
 def _detect_talib_patterns(klines: list[KlineData], lookback: int = 5) -> list[dict]:
     """TA-Lib 标准 K 线形态识别(61 种,2026-08-10 接入)。
 
@@ -951,5 +985,9 @@ class KlineCollector:
             # K线形态
             "kline_pattern": indicators.kline_pattern,
             # 组合形态列表(同花顺教学体系 + TA-Lib 标准形态,含信号方向,供技术指标建议评分)
-            "kline_patterns": _get_combined_patterns(klines) + _detect_talib_patterns(klines),
+            # 2026-08-12 打磨: 去重+限流 — 十字星变体(长脚/蜻蜓/墓碑/黄包车夫)高度相似,
+            # 全堆一起会刷屏误导LLM。去重后同信号方向最多保留 3 个。
+            "kline_patterns": _dedupe_patterns(
+                _get_combined_patterns(klines) + _detect_talib_patterns(klines)
+            ),
         }

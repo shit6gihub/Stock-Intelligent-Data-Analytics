@@ -540,9 +540,11 @@ class IntradayMonitorAgent(BaseAgent):
                     lines.append(
                         f"- 该股题材：{'、'.join(concepts_t)}"
                     )
-                # 事件溯源: 用题材关键词反查市场级事件新闻(2026-08-11 修复)
-                # 发射失利/朱雀推迟是市场级事件, 个股新闻通道抓不到, 需 news_by_keyword
-                # 关键词池 = 事件驱动型题材 + 通用事件词(火箭/航天/发射/卫星/获批等)
+                # 事件溯源: 用题材关键词反查市场级事件新闻(2026-08-11 v2 修复)
+                # v1 缺陷: 题材词精确匹配失败(如"机器人概念"≠"机器人")时 kw_pool 只剩
+                # 通用事件词(火箭/发射/航天), 导致紫光股份(云计算)误报火箭新闻!
+                # v2 修复: ①题材词包含匹配 ②命中条件=标题必须含该股题材词,
+                #   通用事件词仅用于发现(搜索), 不直接判定命中。
                 _EVENT_KW = ("军工", "航天", "低空", "无人机", "卫星", "芯片", "机器人", "AI", "算力",
                              "储能", "光伏", "新能源", "半导体", "信创", "数据要素", "量子", "生物")
                 _NOISE_KW = ("融资融券", "转融券", "深股通", "沪股通", "国企改革", "政府控股", "股权转让",
@@ -555,28 +557,32 @@ class IntradayMonitorAgent(BaseAgent):
                 _POSITIVE_KW = ("获批", "核准", "中标", "签约", "涨价", "提价", "量产", "投产",
                                 "突破", "首飞", "成功", "交付", "增持", "回购", "重组获批", "定增落地",
                                 "创新高", "订单", "合作", "入股", "预增", "扭亏")
-                # 题材词(事件驱动型优先) + 补充通用事件词
-                kw_pool = [c for c in concepts_t if c in _EVENT_KW]
-                kw_pool += [w for w in _TRIGGER_KW if w not in kw_pool][:4]
-                kw_pool = kw_pool[:6] or [c for c in concepts_t if c not in _NOISE_KW][:4]
+                # 该股事件驱动型题材(包含匹配): 如"机器人概念"含"机器人"
+                event_concepts = [c for c in concepts_t if any(k in c for k in _EVENT_KW)]
+                # 搜索词 = 事件型题材词 + 通用事件词(仅发现用)
+                search_kws = list(event_concepts[:4])
+                search_kws += [w for w in _TRIGGER_KW if w not in search_kws][:4]
+                # 判定用题材词(命中必须含该股题材, 防跨题材误报)
+                judge_concepts = event_concepts or [c for c in concepts_t if c not in _NOISE_KW]
                 event_hits: list = []
                 try:
                     from src.core.marketdata_client import get_market_data
                     md_g = get_market_data()
-                    for kw in kw_pool:
+                    for kw in search_kws:
                         if len(event_hits) >= 3:
                             break
                         try:
                             arts = md_g.news_by_keyword(kw)
                             for a in arts or []:
                                 title = getattr(a, "title", "") or ""
-                                # 命中条件: 标题含事件词 或 含题材词(排除纯个股行情噪音)
+                                # 关键: 标题必须含该股题材词才算"题材相关事件"
+                                if not any(c in title for c in judge_concepts):
+                                    continue
                                 # 标记: ⚠️=利空异常 / ✅=利好 / 无标记=中性
                                 is_abnormal = any(n in title for n in _ABNORMAL_KW)
                                 is_positive = any(n in title for n in _POSITIVE_KW)
                                 tag = "⚠️" if is_abnormal else ("✅" if is_positive else "")
-                                if (any(k in title for k in kw_pool) or is_abnormal or is_positive) and \
-                                   not any(n in title for n in ("涨超", "跌超", "涨幅", "跌幅", "涨停", "跌停")):
+                                if not any(n in title for n in ("涨超", "跌超", "涨幅", "跌幅", "涨停", "跌停")):
                                     event_hits.append(
                                         f"[{str(getattr(a, 'publish_time', ''))[:16]}] {title[:60]}{tag}"
                                     )
@@ -783,6 +789,27 @@ class IntradayMonitorAgent(BaseAgent):
                     if s.get("name")
                 ]
                 lines.append(f"- 领涨概念：{'、'.join(parts)}")
+            # 个股所属板块强弱(2026-08-12 修复): 从概念涨幅榜反查该股题材,
+            # 之前只显示市场领涨(彩票/中药等), LLM 无从判断个股板块强弱
+            try:
+                from marketdata import Symbol as MDSymbol2
+                from marketdata.vendors.tencent_info import fetch_plate_list
+                plates = fetch_plate_list(MDSymbol2.parse(stock.symbol, "CN"))
+                stock_concepts = []
+                if plates and plates.get("concept"):
+                    stock_concepts = [c.get("name", "") for c in plates["concept"] if c.get("name")]
+                # 在涨幅榜里找个股所属概念
+                own = [
+                    f"{s.get('name')}{s.get('pct', 0):+.1f}%"
+                    for s in (sectors.get("concepts") or [])
+                    if s.get("name") in stock_concepts
+                ][:3]
+                if own:
+                    lines.append(f"- 个股所属概念：{'、'.join(own)}")
+                else:
+                    lines.append(f"- 个股所属概念：未在涨幅榜(板块偏弱或不在领涨)")
+            except Exception:
+                pass
             lines.append("")
             lines.append("> 判断个股所属板块是否处于当日强势方向: 板块强+个股强=顺势, 板块弱+个股异动=独立行情(谨慎)")
 
