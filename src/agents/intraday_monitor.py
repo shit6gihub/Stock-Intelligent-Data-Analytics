@@ -21,6 +21,39 @@ from src.models.market import MarketCode, StockData, MARKETS
 
 logger = logging.getLogger(__name__)
 
+# 腾讯实时量比缓存: {symbol -> (ts, volume_ratio)}。盘中 TTL 30s, 避免每轮重复请求。
+_realtime_volume_ratio_cache: dict[str, tuple[float, float | None]] = {}
+
+
+def get_realtime_volume_ratio(symbol: str, market: str = "CN") -> float | None:
+    """取腾讯实时量比(独立于 ths quote 源, 后者无此字段)。
+
+    盘中量比以腾讯口径为准(今日每分钟均量 / 5日每分钟均量),
+    与 K 线口径(今日总量/5日均量)不同——开盘初期 K 线口径严重失真。
+    """
+    import time
+
+    now = time.time()
+    cached = _realtime_volume_ratio_cache.get(symbol)
+    if cached and (now - cached[0]) < 30.0:
+        return cached[1]
+    try:
+        from marketdata.vendors.tencent import TencentQuoteVendor
+        from marketdata import Symbol
+
+        vendor = TencentQuoteVendor()
+        quotes = vendor.fetch([Symbol.parse(symbol, market)], {})
+        ratio = None
+        for q in quotes:
+            ratio = getattr(q, "volume_ratio", None)
+            if ratio:
+                break
+        _realtime_volume_ratio_cache[symbol] = (now, ratio)
+        return ratio
+    except Exception as e:
+        logger.debug(f"腾讯实时量比获取失败 {symbol}: {e}")
+        return None
+
 
 def is_market_trading(market: MarketCode) -> bool:
     """按市场判断是否在交易时段。"""
@@ -230,6 +263,9 @@ class IntradayMonitorAgent(BaseAgent):
 
         lines = []
         lines.append(f"## 时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+        lines.append("> ⚠️ 数据时刻提醒：以下行情/技术指标为采集时刻快照。开盘初期(9:30-10:00)指标波动大，"
+                     "KDJ/MA/量比可能随后续成交快速变化；描述时必须使用「当前/截至采集时刻」口径，"
+                     "不得把快照数据说成确定事实，也不得用快照推断盘面方向。\n")
 
         # 实时大盘指数(最先给出,情绪判断首要依据)
         idx_summary = (data.get("market_sentiment") or {}).get("index_summary") or []
@@ -379,6 +415,9 @@ class IntradayMonitorAgent(BaseAgent):
                 lines.append(
                     f"- KDJ：K={kdj_k:.1f} D={kdj_d:.1f} J={kdj_j:.1f}（{kdj_status}）"
                 )
+                # 临界保护: K≈D 时状态易翻转, 明确提示 AI 不得据此断言方向
+                if kdj_d is not None and abs(kdj_k - kdj_d) < 1.0:
+                    lines.append("- ⚠️ KDJ 处于临界(K≈D)，金叉/死叉随时可能翻转，禁止据此单独判断买卖方向")
 
             # 布林带
             boll_status = kline.get("boll_status")
@@ -390,17 +429,33 @@ class IntradayMonitorAgent(BaseAgent):
 
             # 量能
             volume_trend = kline.get("volume_trend")
-            volume_ratio = kline.get("volume_ratio")
-            if volume_trend:
+            kline_volume_ratio = kline.get("volume_ratio")
+            # 实时量比(腾讯行情口径)优先: K线口径=今日总量/5日均量, 盘中会系统性偏低
+            # (尤其开盘初期), 实时口径=今日每分钟均量/5日每分钟均量, 才是标准量比。
+            realtime_volume_ratio = (
+                getattr(stock, "volume_ratio", None)
+                or get_realtime_volume_ratio(stock.symbol, stock.market.value)
+            )
+            use_realtime = realtime_volume_ratio is not None and realtime_volume_ratio > 0
+            if use_realtime:
+                assert realtime_volume_ratio is not None
+                vol_info = f"量能：量比={realtime_volume_ratio:.2f}(实时口径)"
+                vol_hit = "触发" if realtime_volume_ratio >= self.volume_alert_ratio else "未触发"
+            elif volume_trend:
                 vol_info = f"量能：{volume_trend}"
-                if volume_ratio:
-                    vol_info += f"（量比={volume_ratio:.2f}）"
-                lines.append(f"- {vol_info}")
-                if volume_ratio:
-                    vol_hit = (
-                        "触发" if volume_ratio >= self.volume_alert_ratio else "未触发"
-                    )
-                    lines.append(f"- 量比阈值判断：{vol_hit}")
+                if kline_volume_ratio:
+                    vol_info += f"（量比={kline_volume_ratio:.2f}）"
+                vol_hit = "触发" if kline_volume_ratio and kline_volume_ratio >= self.volume_alert_ratio else "未触发"
+            else:
+                vol_info = "量能：无数据"
+                vol_hit = "未触发"
+            lines.append(f"- {vol_info}")
+            lines.append(f"- 量比阈值判断：{vol_hit}")
+            # 开盘初期标注: K线口径量比在交易前 30 分钟不可信
+            now_min = datetime.now().hour * 60 + datetime.now().minute
+            market_open = 9 * 60 + 30
+            if market_open <= now_min <= market_open + 30 and not use_realtime and kline_volume_ratio is not None and kline_volume_ratio < 0.5:
+                lines.append("- ⚠️ 开盘初期(9:30-10:00)：K线口径量比偏低不代表缩量，请以实时量比或盘中走势为准")
 
             # 波动率（ATR）：个股自身波动基准，用于判断"异动 vs 正常波动"
             atr_val = kline.get("atr")

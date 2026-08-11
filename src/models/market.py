@@ -96,6 +96,7 @@ class StockData:
     high_price: float
     low_price: float
     prev_close: float
+    volume_ratio: float | None = None  # 实时量比(腾讯行情口径, 与K线口径不同, 开盘初期更可信)
     timestamp: datetime = field(default_factory=datetime.now)
 
 

@@ -686,9 +686,16 @@ class KlineCollector:
             kdj_d = d_list[-1]
             kdj_j = j_list[-1]
             if kdj_k > kdj_d:
-                kdj_cross = "金叉"
+                # 临界保护: K≈D 差值过小时不硬断言方向(开盘瞬间/横盘易翻转, 防误报)
+                if (kdj_k - kdj_d) < 1.0:
+                    kdj_cross = "临界(金叉弱)"
+                else:
+                    kdj_cross = "金叉"
             else:
-                kdj_cross = "死叉"
+                if (kdj_d - kdj_k) < 1.0:
+                    kdj_cross = "临界(死叉弱)"
+                else:
+                    kdj_cross = "死叉"
 
         # 布林带
         boll_upper, boll_mid, boll_lower, boll_width = None, None, None, None
