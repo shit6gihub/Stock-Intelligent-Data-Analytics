@@ -19,6 +19,7 @@
   - `get_market_news` 改为**底层多源快讯优先**（`flash_news` 引擎：财联社/新浪/东财7x24 市场级快讯，多源主备+降级），悟道热榜/简报降级为补充，失败不影响主链路。
   - 新增 `auction_collector.py`（竞价统一入口）：悟道优先（独家 bidStrength/弱转强字段），限流窗口 9:15-10:30 快速失败不白等，悟道空返回/失败时降级腾讯批量行情算竞价高开榜；30s 缓存避免助手重复提问重复请求。
   - `_fetch_auction_context`（chat 助手）与 `auction_review`（竞价复盘 agent）改用 auction_collector，消除双实现。
+- 盘中监测**均线临界保护**：现价与 MA5/MA10 距离 <1% 时 Prompt 注入警告行，禁止 AI 断言"站上/跌破"（修复神剑股份场景：现价 11.95 在 MA5 11.90 之上 0.42%，AI 却说"跌破MA5"）。新增模块级函数 `build_ma_critical_warnings`（build_prompt 与测试共用）。
 
 ### feature
 

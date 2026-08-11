@@ -73,6 +73,43 @@ def market_label(market: MarketCode) -> str:
     return market.value
 
 
+def build_ma_critical_warnings(current_price: float | None, ma_values: dict[str, float | None]) -> list[str]:
+    """均线临界保护: 现价与 MA 距离 <1% 时生成警告行, 禁止 AI 断言"站上/跌破"。
+
+    Args:
+        current_price: 现价
+        ma_values: {"MA5": 11.90, "MA10": 10.79, ...}(None 跳过)
+
+    Returns:
+        警告行列表; 距离足够远时返回空(不干扰正常判断)。
+    """
+    warnings: list[str] = []
+    if current_price is None:
+        return warnings
+    try:
+        price = float(current_price)
+    except (TypeError, ValueError):
+        return warnings
+    for ma_name, ma_val in ma_values.items():
+        if ma_val is None:
+            continue
+        try:
+            ma_f = float(ma_val)
+        except (TypeError, ValueError):
+            continue
+        dist_pct = abs(price - ma_f) / ma_f * 100
+        pos = "上方" if price > ma_f else "下方"
+        if dist_pct < 1.0:
+            def _fmt(v: float) -> str:
+                return f"{v:.2f}".rstrip("0").rstrip(".")
+            warnings.append(
+                f"- ⚠️ 现价{_fmt(price)}与{ma_name}={_fmt(ma_f)}距离仅{dist_pct:.2f}%"
+                f"(现价在{ma_name}{pos})：处于临界区，禁止说'站上/跌破{ma_name}'，"
+                f"只能说'贴近/在{ma_name}{pos}'"
+            )
+    return warnings
+
+
 # 标准化操作建议
 SUGGESTION_TYPES = {
     "建仓": "buy",  # 新开仓位
@@ -474,9 +511,19 @@ class IntradayMonitorAgent(BaseAgent):
                 lines.append(f"- {atr_line}")
 
             # 均线
+            ma5_val = kline.get('ma5')
+            ma10_val = kline.get('ma10')
+            ma20_val = kline.get('ma20')
+            ma60_val = kline.get('ma60')
             lines.append(
-                f"- MA5：{format_num(kline.get('ma5'))} | MA10：{format_num(kline.get('ma10'))} | MA20：{format_num(kline.get('ma20'))} | MA60：{format_num(kline.get('ma60'))}"
+                f"- MA5：{format_num(ma5_val)} | MA10：{format_num(ma10_val)} | MA20：{format_num(ma20_val)} | MA60：{format_num(ma60_val)}"
             )
+            # 均线临界保护: 现价与 MA 距离 < 1% 时禁止断言"站上/跌破"(避免 11.95 vs 11.90 被说成跌破)
+            try:
+                price_now = float(current_price) if current_price is not None else None
+            except (TypeError, ValueError):
+                price_now = None
+            lines.extend(build_ma_critical_warnings(price_now, {"MA5": ma5_val, "MA10": ma10_val}))
 
             # K线形态(自研同花顺形态 + TA-Lib 标准形态,2026-08-10 接入)
             kline_patterns = kline.get("kline_patterns") or []

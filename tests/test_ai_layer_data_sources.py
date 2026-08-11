@@ -55,6 +55,36 @@ class TestAuctionRawLimited:
         assert "涨幅" in out
 
 
+class TestMaCriticalGuard:
+    """均线临界保护: 现价与 MA 距离 <1% 禁止断言站上/跌破(测真实函数)。"""
+
+    def test_price_near_ma5_triggers(self):
+        """神剑股份场景: 11.95 vs MA5 11.90(0.42%)应触发临界标注且指明在上方。"""
+        from src.agents.intraday_monitor import build_ma_critical_warnings
+        lines = build_ma_critical_warnings(11.95, {"MA5": 11.90, "MA10": 10.79})
+        assert len(lines) == 1
+        assert "MA5" in lines[0] and "0.42%" in lines[0]
+        assert "上方" in lines[0] and "禁止" in lines[0]
+
+    def test_price_clearly_above_no_trigger(self):
+        """12.30 vs MA5 11.90(3.4%)不触发临界标注。"""
+        from src.agents.intraday_monitor import build_ma_critical_warnings
+        lines = build_ma_critical_warnings(12.30, {"MA5": 11.90, "MA10": 10.79})
+        assert lines == []
+
+    def test_price_clearly_below_no_trigger(self):
+        """11.50 vs MA5 11.90(3.4%)不触发临界标注(可正常说跌破)。"""
+        from src.agents.intraday_monitor import build_ma_critical_warnings
+        lines = build_ma_critical_warnings(11.50, {"MA5": 11.90, "MA10": 10.79})
+        assert lines == []
+
+    def test_none_price_or_ma_safe(self):
+        """现价/MA 为 None 时应安全返回空列表。"""
+        from src.agents.intraday_monitor import build_ma_critical_warnings
+        assert build_ma_critical_warnings(None, {"MA5": 11.90}) == []
+        assert build_ma_critical_warnings(11.95, {"MA5": None}) == []
+
+
 class TestNewsMultiSource:
     def test_chat_news_uses_flash_news(self):
         """get_market_news 应优先市场级多源快讯(flash_news), 悟道降级。"""
