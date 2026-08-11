@@ -30,6 +30,14 @@ _HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://gu.qq.com/"}
 BIG_AMOUNT = 100e4   # 100万元
 BIG_VOLUME = 1000    # 1000手
 
+# 暗盘数据源(2026-08-11 预留): 环境变量 PANWATCH_DARK_SOURCE 可切换
+#   tencent_ticks = 腾讯逐笔(免费, 默认, 已与同花顺暗盘验证误差7%)
+#   l2_tencent    = 腾讯L2(预留, 需付费账号)
+#   l2_sina       = 新浪L2(预留, 需购买)
+#   l2_itick      = iTick L2(预留, 99 USDT/月)
+# 未来接入付费L2时, 在 _fetch_all_ticks 处按 source 分发即可。
+DARK_SOURCE = __import__("os").environ.get("PANWATCH_DARK_SOURCE", "tencent_ticks")
+
 
 def _tencent_code(symbol: Symbol) -> str | None:
     code = (symbol.code or "").strip()
@@ -51,12 +59,23 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
     """翻页拉取全天全量逐笔, 返回 [{direction, amount, volume, time}]。
 
     2026-08-11 打磨: 加 30s 缓存(盘中每轮监控复用) + 单页重试(腾讯偶发限流)。
+    数据源: 默认 tencent_ticks; 未来 L2 接入在此分发(PANWATCH_DARK_SOURCE)。
     """
     import time as _time
     now = _time.time()
     cached = _TICKS_CACHE.get(code)
     if cached and now - cached[0] < _TICKS_TTL:
         return cached[1]
+
+    # L2 数据源分发(预留): 接入后返回 {d, amt, vol, price, t} 同构列表即可无缝替换
+    if DARK_SOURCE != "tencent_ticks":
+        try:
+            from src.core.dark_l2 import fetch_l2_ticks  # 预留模块, 接入L2时实现
+            ticks = fetch_l2_ticks(code, DARK_SOURCE)
+            _TICKS_CACHE[code] = (now, ticks)
+            return ticks
+        except Exception:
+            pass  # L2 未接入/异常, 回退腾讯逐笔
 
     ticks: list[dict] = []
     for p in range(max_pages):
