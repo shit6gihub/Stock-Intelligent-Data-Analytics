@@ -343,7 +343,30 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
     except Exception as e:
         logger.debug(f"承接价位分析失败: {e}")
 
-    result["note"] = "v8: 主力信号=大单净方向(同花顺暗盘口径), 承接价位分解"
+    # ---- 5日主力阶段(2026-08-11 用户洞察: 主力不可能一直买/散户不能一直卖) ----
+    try:
+        from marketdata.vendors.tencent_fundflow import TencentFundflowVendor
+        cf = TencentFundflowVendor().fetch([symbol], {})[0]
+        today_main = cf.main_net_inflow        # 今日主力净(腾讯口径, 元)
+        main_5d = cf.main_net_5d               # 近5日主力净累计(元)
+        if main_5d is not None:
+            today_main = today_main or 0.0
+            result["today_main_5d_net"] = round(today_main)
+            result["main_5d_net"] = round(main_5d)
+            if main_5d > 0 and today_main < 0:
+                result["phase"] = "吸筹后转派发(5日净流入但今日流出, 主力开始获利了结)"
+            elif main_5d > 0 and today_main > 0:
+                result["phase"] = "持续吸筹(5日+今日均净流入)"
+            elif main_5d < 0 and today_main > 0:
+                result["phase"] = "派发后反弹(5日净流出但今日流入, 观察是否止跌)"
+            elif main_5d < 0 and today_main < 0:
+                result["phase"] = "持续派发(5日+今日均净流出)"
+            else:
+                result["phase"] = "阶段不明(数据不足)"
+    except Exception as e:
+        logger.debug(f"5日阶段判断失败: {e}")
+
+    result["note"] = "v11: 拆单+套牢位+5日主力阶段(双向)"
     return result
 
 

@@ -694,6 +694,9 @@ class IntradayMonitorAgent(BaseAgent):
                         else:
                             main_tag = "主力平衡"
                         line = f"- 暗盘资金：{main_tag}(大单{big_net / 1e4:+.0f}万，散户{small_net / 1e4:+.0f}万)"
+                        # 5日阶段(双向: 主力不可能一直买/散户不能一直卖)
+                        if dark.get("phase"):
+                            line += f"，阶段[{dark['phase']}]"
                         # 竞价撮合
                         if dark.get("auction_amt"):
                             line += f"，竞价{dark['auction_amt'] / 1e4:.0f}万"
