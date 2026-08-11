@@ -80,7 +80,7 @@ def _append_main_intent(lines: list, symbol: str) -> None:
         dark = compute_dark_flow(mdsym)
         if not dark:
             return
-        lines.append("\n## 主力意图")
+        lines.append("\n## 主力意图(腾讯逐笔实时口径, 与资金面段不同源)")
         main_net = dark.get("main_net", 0) or 0
         big_net = dark.get("big_net", 0) or 0
         mid_net = dark.get("mid_net", 0) or 0
@@ -789,7 +789,7 @@ class IntradayMonitorAgent(BaseAgent):
         # 资金流向（仅A股，若可用）
         pack = data.get("signal_pack")
         flow = getattr(pack, "capital_flow", None) if pack else None
-        lines.append("\n## 资金面")
+        lines.append("\n## 资金面(东财四档口径, 与主力意图段不同源)")
         if (
             isinstance(flow, dict)
             and flow
@@ -841,6 +841,13 @@ class IntradayMonitorAgent(BaseAgent):
                     lines.append(
                         "  - ⚠️ 主力净流入但超大单净流出(分歧): 可能是大单拉抬、超大单出货,谨慎追涨"
                     )
+                # 口径提醒(2026-08-11): 本段为东财四档(按单笔金额分档), 与「主力意图」段腾讯逐笔不同源。
+                # 两段方向冲突时, 以「主力意图」段(逐笔, 已验证与同花顺暗盘对齐)为准。
+                lines.append(
+                    "> 口径提醒: 本段「资金面」为东财四档口径(按单笔金额分档统计主动买卖)。"
+                    "下方「主力意图」段为腾讯逐笔实时口径(≥20万或600手), 两段可能方向不同, "
+                    "判断主力吸筹/派发一律以「主力意图」段为准, 本段仅作资金面参考。"
+                )
                 # 盘口大单面板(腾讯, 2026-08-11 接入): 大单占比 + 大单分档统计, 失败静默
                 mdsym = None
                 try:
