@@ -471,13 +471,34 @@ class IntradayMonitorAgent(BaseAgent):
         if realtime_news or extended_news or history_news:
             lines.append("\n## 新闻与事件上下文")
             chosen = realtime_news or extended_news or history_news
-            for item in chosen[:3]:
+            for item in chosen[:5]:
                 lines.append(
                     f"- [{item.get('time')}] {item.get('title')}（{item.get('source')}）"
                 )
             hist_topic = (layered_news.get("history_topic") or {}).get("summary")
             if hist_topic:
                 lines.append(f"- 历史新闻主题：{hist_topic}")
+
+            # 题材关联研判(2026-08-11): 新闻→题材→个股 关联提示, 让 LLM 综合事件研判
+            try:
+                from marketdata import Symbol as MDSymbol
+                from marketdata.vendors.tencent_info import fetch_stock_brief
+                mdsym_t = MDSymbol.parse(stock.symbol, "CN")
+                brief = fetch_stock_brief(mdsym_t)
+                concepts_t = []
+                if brief and brief.get("gsjj") and brief["gsjj"].get("concept"):
+                    concepts_t = [c["name"] for c in brief["gsjj"]["concept"]][:12]
+                if concepts_t:
+                    lines.append(
+                        f"- 该股题材：{'、'.join(concepts_t)}"
+                    )
+                lines.append(
+                    "> 研判指引: 判断上方新闻中是否有与「该股题材」相关的利好/利空事件"
+                    "(如行业政策、发射/获批/涨价/事故/处罚等), 若命中需说明事件性质(催化/利空/中性)"
+                    "及其对主力意图(吸筹/派发)的可能影响, 结合「主力意图」段综合研判, 无相关事件则说明'新闻与题材无明显关联'"
+                )
+            except Exception:
+                pass
 
         kline_history = symbol_ctx.get("kline_history") or {}
         if kline_history.get("available"):
