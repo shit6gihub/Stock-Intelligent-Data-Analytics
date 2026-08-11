@@ -42,6 +42,8 @@ class Quote:
     turnover: float | None = None
     turnover_rate: float | None = None
     volume_ratio: float | None = None
+    volume_outer: float | None = None   # 外盘(主动买成交量, 手)
+    volume_inner: float | None = None   # 内盘(主动卖成交量, 手)
     pe_ratio: float | None = None
     pb_ratio: float | None = None
     circulating_market_value: float | None = None

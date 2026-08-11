@@ -81,6 +81,8 @@ def _parse_line(line: str, market: str) -> Quote | None:
             prev_close=float(parts[4] or 0),
             open_price=float(parts[5] or 0),
             volume=float(parts[6] or 0),
+            volume_outer=float(parts[7] or 0),   # 外盘(主动买)
+            volume_inner=float(parts[8] or 0),   # 内盘(主动卖)
             change_amount=float(parts[31] or 0),
             change_pct=float(parts[32] or 0),
             high_price=float(parts[33] or 0),
