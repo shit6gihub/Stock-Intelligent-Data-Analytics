@@ -25,6 +25,47 @@ logger = logging.getLogger(__name__)
 _realtime_volume_ratio_cache: dict[str, tuple[float, float | None]] = {}
 
 
+def _main_intent_summary(symbol: str) -> str:
+    """主力意图结构化摘要(2026-08-11): 供通知/卡片展示, 不依赖 LLM 复述。
+
+    Returns: 如 "主力净流出-2466万(超大单+5967/大单-8433) 参与度88%/买占49%
+              筹码峰11.41 成本带10.84-11.98 获利74%"
+    """
+    try:
+        from marketdata import Symbol as MDSymbol
+        from src.core.dark_flow import compute_dark_flow
+        mdsym = MDSymbol.parse(symbol, "CN")
+        dark = compute_dark_flow(mdsym)
+        if not dark:
+            return ""
+        parts = []
+        main_net = dark.get("main_net", 0) or 0
+        big_net = dark.get("big_net", 0) or 0
+        mid_net = dark.get("mid_net", 0) or 0
+        tag = "净流入" if main_net > 500e4 else ("净流出" if main_net < -500e4 else "平衡")
+        parts.append(f"主力{tag}{main_net / 1e4:+.0f}万(超大单{big_net / 1e4:+.0f}/大单{mid_net / 1e4:+.0f})")
+        if dark.get("main_intensity") is not None:
+            parts.append(f"参与度{dark['main_intensity']:.0f}%买占{dark.get('main_buy_ratio') or 0:.0f}%")
+        if dark.get("phase"):
+            parts.append(f"阶段[{dark['phase']}]")
+        if dark.get("auction_amt"):
+            parts.append(f"竞价{dark['auction_amt'] / 1e4:.0f}万")
+        # 筹码(新浪真实分布优先)
+        try:
+            from src.core.chip_distribution import compute_near_term_chips
+            tc = f"{'sh' if symbol.startswith('6') else 'sz'}{symbol}"
+            chips = compute_near_term_chips(tc, days=10)
+            if chips:
+                band = chips.get("cost_band")
+                bstr = f" 成本带{band['low']}-{band['high']}" if band else ""
+                parts.append(f"筹码峰{chips['peak_price']} 获利{chips['profit_ratio'] * 100:.0f}%{bstr}")
+        except Exception:
+            pass
+        return " | ".join(parts)
+    except Exception:
+        return ""
+
+
 def _append_main_intent(lines: list, symbol: str) -> None:
     """主力意图段(2026-08-11 独立段): 逐笔主力 + 筹码分布 + 股东户数。
 
@@ -1161,6 +1202,10 @@ class IntradayMonitorAgent(BaseAgent):
             f"信号：{signal}",
             f"理由：{reason}",
         ]
+        # 主力意图(2026-08-11): 结构化数据直接展示, 不依赖 LLM 复述
+        intent = _main_intent_summary(stock.symbol)
+        if intent:
+            lines.append(f"主力意图：{intent}")
         if triggers:
             lines.append("触发条件：")
             lines.extend([f"- {str(x)}" for x in triggers[:3]])
