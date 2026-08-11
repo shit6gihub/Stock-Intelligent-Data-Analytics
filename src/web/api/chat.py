@@ -88,6 +88,21 @@ CHAT_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_main_intent",
+            "description": "获取股票当日主力意图（逐笔口径）：主力/超大单/大单净额、参与度、买占比、竞价、尾盘、筹码峰、成本带、获利盘。回答'主力在吸筹还是派发''主力意图如何'等问题。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "股票代码，如 002361"},
+                    "market": {"type": "string", "description": "市场代码：CN/HK/US", "default": "CN"},
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_stock_suggestions",
             "description": "获取某只股票最近的 AI 建议和分析报告。",
             "parameters": {
@@ -210,6 +225,17 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
             market = args.get("market", "CN")
             result = await _fetch_technical_context(symbol, market)
             return result or f"未能获取 {market}:{symbol} 的技术面数据。"
+        elif name == "get_main_intent":
+            symbol = args.get("symbol", "")
+            market = args.get("market", "CN")
+            if market != "CN":
+                return "主力意图仅支持 A 股(CN)。"
+            try:
+                from src.agents.intraday_monitor import _main_intent_summary
+                result = _main_intent_summary(symbol)
+                return result or f"未能获取 {symbol} 的主力意图数据。"
+            except Exception as e:
+                return f"主力意图获取失败: {str(e)[:100]}"
         elif name == "get_stock_suggestions":
             symbol = args.get("symbol", "")
             market = args.get("market", "CN")
