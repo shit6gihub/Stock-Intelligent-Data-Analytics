@@ -260,13 +260,34 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
             limit = int((args.get("limit") or 15))
             briefing_type = (args.get("briefing_type") or "").strip()
             try:
-                from src.collectors.wudao_mcp_client import WudaoMCPClient
-                cli = WudaoMCPClient()
-                cli._initialize()
+                from src.collectors.news_collector import NewsCollector
+
+                # 1) 底层多源新闻体系(财联社/新浪/东财7x24/雪球/公告 5 源聚合, 引擎自动降级)
                 parts = []
                 try:
+                    collector = NewsCollector.from_database()
+                    items = await collector.fetch_all([], 24)
+                    if items:
+                        lines = [f"【市场快讯】(最近{len(items)}条, 多源聚合)"]
+                        for it in items[:limit]:
+                            title = (getattr(it, "title", "") or "").strip()
+                            src = (getattr(it, "source", "") or "").strip()
+                            ts = getattr(it, "publish_time", None)
+                            tstr = ts.strftime("%H:%M") if ts else ""
+                            line = f"- [{tstr}] {title}"
+                            if src:
+                                line += f" ({src})"
+                            lines.append(line)
+                        parts.append("\n".join(lines))
+                except Exception as e:
+                    logger.warning(f"NewsCollector 聚合失败, 回退悟道热榜: {e}")
+
+                # 2) 悟道热榜/简报作为补充(失败不影响主链路)
+                try:
+                    from src.collectors.wudao_mcp_client import WudaoMCPClient
+                    cli = WudaoMCPClient()
+                    cli._initialize()
                     hot = cli.call_tool("news_hotlist", {"limit": limit})
-                    # wudao news_hotlist 返回 {'text': '...'} 或 {'rows':[...]}
                     hot_text = hot.get("text") if isinstance(hot, dict) else ""
                     if hot_text:
                         parts.append("【资讯热榜】\n" + str(hot_text))
@@ -288,9 +309,6 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
                                         line += " (热度" + str(heat) + ")"
                                     lines.append(line)
                             parts.append("\n".join(lines))
-                except Exception as e:
-                    logger.warning(f"news_hotlist 失败: {e}")
-                try:
                     brief_args = {"detailLevel": "digest"}
                     if briefing_type:
                         brief_args["type"] = briefing_type
@@ -301,7 +319,8 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
                     if brief_text:
                         parts.append("【每日简报】\n" + str(brief_text))
                 except Exception as e:
-                    logger.warning(f"briefings 失败: {e}")
+                    logger.debug(f"悟道热榜/简报失败(不影响主链路): {e}")
+
                 if not parts:
                     return "暂无实时资讯数据（可能非交易时段或数据源未就绪），建议盘后重试。"
                 return "\n\n".join(parts)
@@ -576,105 +595,26 @@ async def _fetch_kline_pattern_context(symbol: str, market: str) -> str:
 
 
 async def _fetch_auction_context(scene: str, limit: int = 10) -> str:
-    """集合竞价数据(悟道 MCP 竞价工具,9:25 后当日数据就绪)。"""
+    """集合竞价数据(auction_collector: 悟道优先, 腾讯批量降级, 30s 缓存)。"""
+    from src.collectors.auction_collector import (
+        fetch_auction_overview,
+        fetch_auction_strongest,
+        fetch_auction_theme,
+        fetch_auction_weak_to_strong,
+        fetch_auction_risk,
+    )
+
+    scene = (scene or "overview").strip() or "overview"
     try:
-        from src.collectors.wudao_mcp_client import WudaoMCPClient
-
-        cli = WudaoMCPClient()
-        cli._initialize()
-        lines: list[str] = []
-        scene = (scene or "overview").strip() or "overview"
-
         if scene in ("strongest", "watchlist"):
-            # 竞价最强个股(市值归一化 bidStrength)
-            res = cli.call_tool("auction_market_scan", {"sortBy": "bidStrength", "limit": limit})
-            text = res.get("text") if isinstance(res, dict) else ""
-            if text:
-                lines.append("【竞价最强个股】\n" + str(text))
-            else:
-                rows = res.get("rows") or res.get("data") or []
-                if rows:
-                    lines.append("【竞价最强个股】")
-                    for r in rows[:limit]:
-                        if isinstance(r, dict):
-                            name = r.get("name") or r.get("stockName") or r.get("code") or ""
-                            strength = r.get("bidStrength") or r.get("bidAmountPercentile") or ""
-                            amt = r.get("bidAmount") or r.get("limitBuyAmount") or ""
-                            line = f"- {name}"
-                            if strength:
-                                line += f" 强度:{strength}"
-                            if amt:
-                                line += f" 金额:{amt}"
-                            lines.append(line)
-        elif scene == "theme":
-            res = cli.call_tool("auction_theme_signal", {"limit": limit})
-            text = res.get("text") if isinstance(res, dict) else ""
-            if text:
-                lines.append("【竞价主线题材】\n" + str(text))
-            else:
-                groups = (res.get("data") or res.get("signalGroup") or [])
-                if groups:
-                    lines.append("【竞价主线题材】")
-                    for g in groups[:limit]:
-                        if isinstance(g, dict):
-                            name = g.get("theme") or g.get("name") or ""
-                            desc = g.get("description") or g.get("signal") or ""
-                            lines.append(f"- {name}: {desc}")
-        elif scene == "weak_to_strong":
-            res = cli.call_tool("auction_weak_to_strong", {"limit": limit})
-            text = res.get("text") if isinstance(res, dict) else ""
-            if text:
-                lines.append("【竞价弱转强】\n" + str(text))
-            else:
-                rows = res.get("rows") or res.get("data") or []
-                if rows:
-                    lines.append("【竞价弱转强】")
-                    for r in rows[:limit]:
-                        if isinstance(r, dict):
-                            name = r.get("name") or r.get("stockName") or r.get("code") or ""
-                            score = r.get("wtsScore") or ""
-                            origin = r.get("origin") or ""
-                            lines.append(f"- {name} wtsScore:{score} 来源:{origin}")
-        elif scene == "risk":
-            # 昨高标被核风险
-            res = cli.call_tool("auction_limitup_feedback", {"focus": "risk", "groupBy": "streak"})
-            text = res.get("text") if isinstance(res, dict) else ""
-            if text:
-                lines.append("【竞价被核风险】\n" + str(text))
-            else:
-                summary = (res.get("data") or {}).get("summary") or res.get("summary") or {}
-                if summary:
-                    break_rate = summary.get("breakRate") or summary.get("break_rate") or ""
-                    lines.append(f"【竞价被核风险】炸板率:{break_rate}")
-                rows = (res.get("data") or {}).get("risk") or res.get("risk") or []
-                if rows:
-                    for r in rows[:limit]:
-                        if isinstance(r, dict):
-                            name = r.get("name") or r.get("stockName") or r.get("code") or ""
-                            lines.append(f"- {name}")
-        else:
-            # overview: 竞价全景(六个桶)
-            res = cli.call_tool("auction_opening_snapshot", {"limit": limit})
-            text = res.get("text") if isinstance(res, dict) else ""
-            if text:
-                lines.append("【竞价全景】\n" + str(text))
-            else:
-                data = res.get("data") or {}
-                summary = data.get("summary") or {}
-                if summary:
-                    lines.append("【竞价全景】")
-                    for k, v in summary.items():
-                        lines.append(f"- {k}: {v}")
-                for bucket in ("limitUpOpen", "limitDownOpen", "topLimitBuyAmount", "topBidAmount", "prevBrokenFeedback", "prevLimitUpFeedback"):
-                    rows = data.get(bucket) or []
-                    if rows:
-                        lines.append(f"  [{bucket}] " + ", ".join(
-                            str(r.get("name") or r.get("stockName") or r.get("code") or "") for r in rows[:5] if isinstance(r, dict)
-                        ))
-
-        if not lines:
-            return "暂无集合竞价数据(9:25 前当日竞价未生成,或数据源未就绪),建议 9:25 后重试。"
-        return "\n".join(lines)
+            return fetch_auction_strongest(limit=limit)
+        if scene == "theme":
+            return fetch_auction_theme(limit=limit)
+        if scene == "weak_to_strong":
+            return fetch_auction_weak_to_strong(limit=limit)
+        if scene == "risk":
+            return fetch_auction_risk(limit=limit)
+        return fetch_auction_overview(limit=limit)
     except Exception as e:
         logger.debug(f"获取集合竞价失败: {e}")
         return f"集合竞价数据获取失败: {e}"

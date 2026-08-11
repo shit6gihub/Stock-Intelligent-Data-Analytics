@@ -25,66 +25,34 @@ class AuctionReviewAgent(BaseAgent):
     description = "9:30后解读当日集合竞价:情绪定性/主线定向/盯盘名单"
 
     async def collect(self, context: AgentContext) -> dict:
-        """采集 wudao 竞价数据:全景 + 题材一致性 + 个股强度 + 弱转强。"""
+        """采集竞价数据(auction_collector: 悟道优先, 限流窗口快速失败)。"""
         trace_id = datetime.now().strftime("%m%d%H%M%S%f")[-10:]
         start_ts = __import__("time").monotonic()
 
         data: dict = {}
 
         try:
-            from src.collectors.wudao_mcp_client import WudaoMCPClient
+            from src.collectors.auction_collector import fetch_auction_raw
 
-            client = WudaoMCPClient()
+            raw = fetch_auction_raw()
             data["client_ok"] = True
-
-            # 1. 竞价全景(涨停/跌停/昨炸板反馈/委买额)
-            try:
-                data["opening_snapshot"] = client.auction_opening_snapshot(limit=30)
-                logger.info("[%s] 竞价全景 OK", trace_id)
-            except Exception as e:
-                logger.warning("[%s] 竞价全景失败: %s", trace_id, e)
-                data["opening_snapshot"] = {}
-
-            # 2. 题材一致性(主线定向,最值钱)
-            try:
-                data["theme_strength"] = client.auction_theme_strength(
-                    limit=10, theme_source="concept"
-                )
-                logger.info("[%s] 题材一致性 OK", trace_id)
-            except Exception as e:
-                logger.warning("[%s] 题材一致性失败: %s", trace_id, e)
-                data["theme_strength"] = {}
-
-            # 3. 个股竞价强度榜(bidStrength)
-            try:
-                data["market_scan"] = client.auction_market_scan(
-                    sort_by="bidStrength", limit=10
-                )
-                logger.info("[%s] 竞价强度榜 OK", trace_id)
-            except Exception as e:
-                logger.warning("[%s] 竞价强度榜失败: %s", trace_id, e)
-                data["market_scan"] = {}
-
-            # 4. 弱转强(昨炸板反包)
-            try:
-                data["weak_to_strong"] = client.auction_weak_to_strong(limit=15)
-                logger.info("[%s] 弱转强 OK", trace_id)
-            except Exception as e:
-                logger.warning("[%s] 弱转强失败: %s", trace_id, e)
-                data["weak_to_strong"] = {}
-
-            # 5. 昨涨停反馈(高标被核?)
-            try:
-                data["limitup_feedback"] = client.auction_limitup_feedback(
-                    focus="all", group_by="streak"
-                )
-                logger.info("[%s] 昨涨停反馈 OK", trace_id)
-            except Exception as e:
-                logger.warning("[%s] 昨涨停反馈失败: %s", trace_id, e)
-                data["limitup_feedback"] = {}
+            data["opening_snapshot"] = raw.get("opening_snapshot") or {}
+            data["theme_strength"] = raw.get("theme_strength") or {}
+            data["market_scan"] = raw.get("market_scan") or {}
+            data["weak_to_strong"] = raw.get("weak_to_strong") or {}
+            data["limitup_feedback"] = raw.get("limitup_feedback") or {}
+            if raw.get("limited"):
+                data["limited"] = True
+                data["client_error"] = raw.get("error", "悟道限流窗口")
+                logger.info("[%s] 悟道限流窗口, 竞价数据降级: %s", trace_id, raw.get("error"))
+            elif raw.get("error"):
+                data["client_error"] = raw.get("error")
+                logger.warning("[%s] 悟道竞价采集失败: %s", trace_id, raw.get("error"))
+            else:
+                logger.info("[%s] 竞价采集完成(悟道)", trace_id)
 
         except Exception as e:
-            logger.error("[%s] wudao 客户端初始化失败: %s", trace_id, e)
+            logger.error("[%s] 竞价采集异常: %s", trace_id, e)
             data["client_ok"] = False
             data["client_error"] = str(e)
 

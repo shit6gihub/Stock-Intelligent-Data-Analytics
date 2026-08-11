@@ -15,6 +15,10 @@
 - 修复资金流 P0：东财 push2delay 开盘初期 f62/f184/分项全 0（数据未初始化）被当有效数据，导致盘中监测把"主力净流入 1.59 亿"报成"数据缺失"。现全 0 视为未就绪回退其他源（`_fetch_direct_flow`）。
 - 资金流链路移除悟道 `intraday_main_flow`（9:15-10:30 限流且只给主力净额无四档），直接走东财 push2delay → Engine（新浪 T-1/东财）两级。
 - 修复盘中监测"无需提醒"建议无分析内容：AI 输出 `[无需提醒]` 时直接 return 导致 signal/reason 为空，建议池里只有"持有"动作没有分析。现提取"无需提醒"后的原因作为 reason（无内容时兜底"AI 判断无需提醒"），signal 兜底"无异常"。
+- AI 助手层数据接入修复（去悟道单点）：
+  - `get_market_news` 改为**底层多源新闻优先**（NewsCollector：财联社/新浪/东财7x24/雪球/公告 5 源聚合，引擎自动降级），悟道热榜/简报降级为补充，失败不影响主链路。
+  - 新增 `auction_collector.py`（竞价统一入口）：悟道优先（独家 bidStrength/弱转强字段），限流窗口 9:15-10:30 快速失败不白等，降级腾讯批量行情算竞价高开榜；30s 缓存避免助手重复提问重复请求。
+  - `_fetch_auction_context`（chat 助手）与 `auction_review`（竞价复盘 agent）改用 auction_collector，消除双实现。
 
 ### feature
 
