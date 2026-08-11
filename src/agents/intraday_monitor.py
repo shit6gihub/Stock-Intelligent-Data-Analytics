@@ -770,6 +770,15 @@ class IntradayMonitorAgent(BaseAgent):
             result["should_alert"] = False
             result["action"] = "hold"
             result["action_label"] = "持有"
+            # 提取"无需提醒"之后的原因作为 reason(否则建议池里只有 action 没有分析内容)
+            after = content.split("[无需提醒]", 1)[1] if "[无需提醒]" in content else ""
+            clean_after = re.sub(r"\*\*|##|#|「|」", "", after).strip()
+            if clean_after:
+                result["reason"] = clean_after[:100]
+            else:
+                result["reason"] = "AI 判断无需提醒"
+            if not result["signal"]:
+                result["signal"] = "无异常"
             return result
 
         # 提取建议类型（从全文搜索）
