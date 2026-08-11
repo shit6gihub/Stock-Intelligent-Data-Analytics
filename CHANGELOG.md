@@ -14,6 +14,7 @@
 - `StockData` 增加 `volume_ratio` 字段透传实时量比（`md_stock_data` 同步）。
 - 修复资金流 P0：东财 push2delay 开盘初期 f62/f184/分项全 0（数据未初始化）被当有效数据，导致盘中监测把"主力净流入 1.59 亿"报成"数据缺失"。现全 0 视为未就绪回退其他源（`_fetch_direct_flow`）。
 - 资金流链路移除悟道 `intraday_main_flow`（9:15-10:30 限流且只给主力净额无四档），直接走东财 push2delay → Engine（新浪 T-1/东财）两级。
+- 修复盘中监测"无需提醒"建议无分析内容：AI 输出 `[无需提醒]` 时直接 return 导致 signal/reason 为空，建议池里只有"持有"动作没有分析。现提取"无需提醒"后的原因作为 reason（无内容时兜底"AI 判断无需提醒"），signal 兜底"无异常"。
 
 ### feature
 
