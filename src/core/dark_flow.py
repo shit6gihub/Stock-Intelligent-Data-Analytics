@@ -246,13 +246,25 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
 
     # ---- 结果 ----
     dark_net = buy_amt - sell_amt          # 全量主动净额(剔除竞价)
-    big_net = big_buy_amt - big_sell_amt   # 大单(明盘)净额
-    small_net = small_buy_amt - small_sell_amt  # 中小单(暗盘)净额
+    big_net = big_buy_amt - big_sell_amt   # 超大单(≥100万)净额
+    small_net = small_buy_amt - small_sell_amt  # 中小单(<100万)净额
+
+    # 当日主力意图(2026-08-11 修正, 腾讯官方口径):
+    # 主力 = 成交金额≥20万 或 股数≥6万股(600手); 超大单≥100万; 大单=主力-超大单
+    main_buy_amt = sum(t["amt"] for t in ticks if (t["amt"] >= 20e4 or t["vol"] >= 600) and t["d"] == "B")
+    main_sell_amt = sum(t["amt"] for t in ticks if (t["amt"] >= 20e4 or t["vol"] >= 600) and t["d"] == "S")
+    main_net = main_buy_amt - main_sell_amt           # 主力净额(≥20万)
+    mid_net = main_net - big_net                        # 大单净额(20万-100万)
+    retail_buy_amt = sum(t["amt"] for t in ticks if not (t["amt"] >= 20e4 or t["vol"] >= 600) and t["d"] == "B")
+    retail_sell_amt = sum(t["amt"] for t in ticks if not (t["amt"] >= 20e4 or t["vol"] >= 600) and t["d"] == "S")
+    retail_net = retail_buy_amt - retail_sell_amt      # 散户净额(<20万)
 
     result = {
-        "dark_net": round(dark_net),           # 暗盘资金(全量主动净额)
-        "big_net": round(big_net),             # 明盘(大单净额)
-        "small_net": round(small_net),         # 暗盘(中小单净额)
+        "dark_net": round(dark_net),           # 全量主动净额
+        "main_net": round(main_net),           # 主力净额(≥20万, 腾讯官方口径)
+        "big_net": round(big_net),             # 超大单净额(≥100万)
+        "mid_net": round(mid_net),             # 大单净额(20-100万)
+        "small_net": round(retail_net),        # 散户净额(<20万)
         "buy_amt": round(buy_amt), "sell_amt": round(sell_amt),
         "m_amt": round(m_amt),
         "buy_vol": round(buy_vol), "sell_vol": round(sell_vol), "m_vol": round(m_vol),
@@ -298,7 +310,7 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
         pass
 
     result["signal"] = _judge_signal(
-        dark_net, big_net, small_net, seg,
+        dark_net, main_net, big_net, mid_net, retail_net, seg,
         result.get("low_price_ratio"),
         result.get("strong_buy_zones", []),
         result.get("strong_sell_zones", []),
@@ -370,38 +382,37 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
     return result
 
 
-def _judge_signal(dark_net: float, big_net: float, small_net: float,
-                  seg: dict, low_ratio: float | None,
+def _judge_signal(dark_net: float, main_net: float, big_net: float, mid_net: float,
+                  retail_net: float, seg: dict, low_ratio: float | None,
                   strong_buy: list | None = None, strong_sell: list | None = None,
                   auction_amt: float = 0.0, auction_vol: float = 0.0) -> str:
-    """信号判定 v8: 主信号=大单净方向(主力), 中小单作对手盘佐证。
+    """信号判定 v12: 当日主力意图(腾讯官方口径 主力=≥20万或≥600手)。
 
-    2026-08-11 修正(价位级分解实证): 神剑 11.84 大单净买+4486万/中小单净卖-744万,
-    同花顺判"暗盘流入4.02亿"= 大单吸筹。所以主力信号看大单(≥100万)净额,
-    中小单=散户行为(对手盘)。
+    2026-08-11 修正史:
+    v8 用大单(≥100万)当主力 → 只看到超大单买入, 漏掉大单(20-100万)在卖
+    v12 用腾讯官方口径: 主力=超大单+大单(≥20万/600手), 超大单/大单分开看
+    当日意图核心: 主力净方向 + 超大单/大单分化(托盘 vs 出货)
     """
     threshold = 500e4  # 500万
     tail = seg.get("tail", 0)
     strong_buy = strong_buy or []
     strong_sell = strong_sell or []
-    n_buy_zone = len(strong_buy)
-    n_sell_zone = len(strong_sell)
     low_boost = "低位承接" if (low_ratio or 0) > 0.4 else ""
     auction_note = f"竞价{auction_amt/1e4:.0f}万" if auction_amt > 0 else ""
 
-    # 主力信号 = 大单净方向(同花顺"暗盘"≈大单主动净额)
-    if big_net > threshold:
-        if small_net < -threshold:
-            # 大单吸筹 + 中小单割肉 = 典型吸筹(同花顺暗盘流入场景)
-            return f"主力吸筹(大单+{big_net/1e4:.0f}万, 散户-{abs(small_net)/1e4:.0f}万){low_boost}|{auction_note}"
+    # 主力净方向(≥20万)= 当日主力意图主信号
+    if main_net > threshold:
+        # 超大单买 + 大单卖 = 托盘出货(危险信号)
+        if big_net > 0 and mid_net < -threshold * 0.5:
+            return f"主力净流入但大单出货(超大单托盘{big_net/1e4:+.0f}万/大单{mid_net/1e4:+.0f}万, 谨防拉高出货)|{auction_note}"
         if tail > 0:
-            return f"主力流入+尾盘加仓(吸筹){low_boost}|{auction_note}"
-        return f"主力流入(大单主动买){low_boost}|{auction_note}"
-    if big_net < -threshold:
-        if small_net > threshold:
-            # 大单出货 + 中小单接盘 = 派发
-            return f"主力派发(大单-{abs(big_net)/1e4:.0f}万, 散户+{small_net/1e4:.0f}万)|{auction_note}"
+            return f"主力净流入+尾盘加仓(吸筹){low_boost}|{auction_note}"
+        return f"主力净流入(主动买占优){low_boost}|{auction_note}"
+    if main_net < -threshold:
+        # 超大单买 + 大单卖 = 超大单护盘失败, 主力整体流出
+        if big_net > 0 and mid_net < -threshold:
+            return f"主力净流出(超大单托盘{big_net/1e4:+.0f}万但大单{mid_net/1e4:+.0f}万出货)|{auction_note}"
         if tail < 0:
-            return f"主力流出+尾盘抛压(出货)|{auction_note}"
-        return f"主力流出(大单主动卖)|{auction_note}"
-    return f"观望(大单买卖接近, 吸筹区{n_buy_zone}/抛压区{n_sell_zone})|{auction_note}"
+            return f"主力净流出+尾盘抛压(出货)|{auction_note}"
+        return f"主力净流出(主动卖占优)|{auction_note}"
+    return f"主力平衡(买卖接近, 超大单{big_net/1e4:+.0f}万/大单{mid_net/1e4:+.0f}万)|{auction_note}"

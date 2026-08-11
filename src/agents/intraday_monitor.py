@@ -684,16 +684,19 @@ class IntradayMonitorAgent(BaseAgent):
                         mdsym = MDSymbol.parse(stock.symbol, "CN")
                     dark = compute_dark_flow(mdsym)
                     if dark:
-                        big_net = dark.get("big_net", 0)
-                        small_net = dark.get("small_net", 0)
-                        # 主力信号 = 大单净方向(对齐同花顺暗盘口径)
-                        if big_net > 500e4:
-                            main_tag = "主力吸筹"
-                        elif big_net < -500e4:
-                            main_tag = "主力流出"
+                        main_net = dark.get("main_net", 0)     # 主力(≥20万, 腾讯官方口径)
+                        big_net = dark.get("big_net", 0)       # 超大单(≥100万)
+                        mid_net = dark.get("mid_net", 0)       # 大单(20-100万)
+                        small_net = dark.get("small_net", 0)   # 散户(<20万)
+                        if main_net > 500e4:
+                            main_tag = "主力净流入"
+                        elif main_net < -500e4:
+                            main_tag = "主力净流出"
                         else:
                             main_tag = "主力平衡"
-                        line = f"- 暗盘资金：{main_tag}(大单{big_net / 1e4:+.0f}万，散户{small_net / 1e4:+.0f}万)"
+                        line = (f"- 暗盘资金：{main_tag}(主力{main_net / 1e4:+.0f}万="
+                                f"超大单{big_net / 1e4:+.0f}+大单{mid_net / 1e4:+.0f}，"
+                                f"散户{small_net / 1e4:+.0f}万)")
                         # 5日阶段(双向: 主力不可能一直买/散户不能一直卖)
                         if dark.get("phase"):
                             line += f"，阶段[{dark['phase']}]"

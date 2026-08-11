@@ -53,12 +53,16 @@ class TestDarkFlowV5:
 
 class TestJudgeSignal:
     def test_inflow_tail(self):
-        assert "吸筹" in _judge_signal(8000e4, 8000e4, -5000e4, {"tail": 2000e4, "morning": 0, "mid": 0, "afternoon": 0}, 0.4, [{"price": 11.0}], [])
+        assert "吸筹" in _judge_signal(8000e4, 8000e4, 3000e4, 5000e4, -5000e4,
+                                       {"tail": 2000e4, "morning": 0, "mid": 0, "afternoon": 0}, 0.4, [{"price": 11.0}], [])
 
     def test_outflow(self):
-        assert "流出" in _judge_signal(-9000e4, -9000e4, -5000e4, {"tail": -1000e4, "morning": 0, "mid": 0, "afternoon": 0}, 0.3, [], [])
-        # 大单卖+散户买 = 派发
-        assert "派发" in _judge_signal(-9000e4, -9000e4, 5000e4, {"tail": -1000e4, "morning": 0, "mid": 0, "afternoon": 0}, 0.3, [], [])
+        assert "流出" in _judge_signal(-9000e4, -9000e4, -5000e4, -4000e4, 5000e4,
+                                       {"tail": -1000e4, "morning": 0, "mid": 0, "afternoon": 0}, 0.3, [], [])
+        # 超大单买+大单卖 = 托盘出货
+        assert "托盘" in _judge_signal(-9000e4, -9000e4, 3000e4, -12000e4, 5000e4,
+                                       {"tail": -1000e4, "morning": 0, "mid": 0, "afternoon": 0}, 0.3, [], [])
 
     def test_watch(self):
-        assert "观望" in _judge_signal(100e4, 100e4, 0, {"tail": 0, "morning": 0, "mid": 0, "afternoon": 0}, 0.3, [], [])
+        assert "平衡" in _judge_signal(100e4, 100e4, 50e4, 50e4, 0,
+                                       {"tail": 0, "morning": 0, "mid": 0, "afternoon": 0}, 0.3, [], [])
