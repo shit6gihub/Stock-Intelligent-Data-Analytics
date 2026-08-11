@@ -42,16 +42,37 @@ def _tencent_code(symbol: Symbol) -> str | None:
     return None
 
 
+# 逐笔缓存: {code -> (ts, ticks)}。盘中 TTL 30s, 避免每轮监控重复翻页(翻页~200次请求)
+_TICKS_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_TICKS_TTL = 30.0
+
+
 def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
-    """翻页拉取全天全量逐笔, 返回 [{direction, amount, volume, time}]。"""
-    ticks = []
+    """翻页拉取全天全量逐笔, 返回 [{direction, amount, volume, time}]。
+
+    2026-08-11 打磨: 加 30s 缓存(盘中每轮监控复用) + 单页重试(腾讯偶发限流)。
+    """
+    import time as _time
+    now = _time.time()
+    cached = _TICKS_CACHE.get(code)
+    if cached and now - cached[0] < _TICKS_TTL:
+        return cached[1]
+
+    ticks: list[dict] = []
     for p in range(max_pages):
         url = f"https://stock.gtimg.cn/data/index.php?appn=detail&action=data&c={code}&p={p}"
-        try:
-            req = urllib.request.Request(url, headers=_HEADERS)
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                body = resp.read().decode("gbk", "replace")
-        except Exception:
+        body = None
+        # 单页重试(最多2次): 腾讯偶发限流/超时
+        for attempt in range(2):
+            try:
+                req = urllib.request.Request(url, headers=_HEADERS)
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    body = resp.read().decode("gbk", "replace")
+                break
+            except Exception:
+                if attempt == 1:
+                    break
+        if body is None:
             break
         m = re.search(r'\[(\d+),"(.*?)"\]', body)
         if not m:
@@ -73,6 +94,8 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
                 continue
             if amt > 0:
                 ticks.append({"d": direction, "amt": amt, "vol": vol, "price": price, "t": t})
+    # 缓存(含空结果, 防止每次失败都重新翻页; 空结果缓存短些 10s)
+    _TICKS_CACHE[code] = (now, ticks)
     return ticks
 
 

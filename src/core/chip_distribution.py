@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 # 历史换手衰减系数(通达信默认, 突出近期筹码)
 DECAY = 1.0
 
+# 近期真实筹码缓存: {symbol_code -> (ts, result)}。TTL 1h(10日窗口盘中不变)
+_NEAR_CHIPS_CACHE: dict[str, tuple[float, dict | None]] = {}
+_NEAR_CHIPS_TTL = 3600.0
+
 
 def fetch_sina_hist_price(symbol_code: str, start: str, end: str) -> list[dict] | None:
     """新浪历史分价表: 区间内各价位真实累计成交量(2026-08-11 接入)。
@@ -165,11 +169,19 @@ def compute_near_term_chips(symbol_code: str, days: int = 10) -> dict | None:
               cost_band(low/high), prices, chips}
     """
     import datetime
+    import time as _time
+
+    # 缓存: 10日窗口数据盘中不变, TTL 1h, 避免每轮监控重复请求新浪
+    _now = _time.time()
+    _cached = _NEAR_CHIPS_CACHE.get(symbol_code)
+    if _cached and _now - _cached[0] < _NEAR_CHIPS_TTL:
+        return _cached[1]
 
     end_d = datetime.date.today()
     start_d = end_d - datetime.timedelta(days=int(days * 1.4) + 5)
     rows = fetch_sina_hist_price(symbol_code, start_d.isoformat(), end_d.isoformat())
     if not rows or len(rows) < 5:
+        _NEAR_CHIPS_CACHE[symbol_code] = (_now, None)
         return None
 
     total = sum(r["volume"] for r in rows)
@@ -212,7 +224,7 @@ def compute_near_term_chips(symbol_code: str, days: int = 10) -> dict | None:
     band_high = peak * 1.05
     band_vol = sum(v for p, v in zip(prices, vols) if band_low <= p <= band_high)
 
-    return {
+    _result = {
         "prices": prices,
         "chips": [round(c * 100, 3) for c in chips],
         "cost_10": round(c10, 2),
@@ -228,6 +240,8 @@ def compute_near_term_chips(symbol_code: str, days: int = 10) -> dict | None:
         "source": "sina_hist_price",
         "window_days": days,
     }
+    _NEAR_CHIPS_CACHE[symbol_code] = (_now, _result)
+    return _result
 
 
 def compute_chips(klines: list, float_shares: float | None = None,
