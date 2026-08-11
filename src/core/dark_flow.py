@@ -251,13 +251,16 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
 
     # 当日主力意图(2026-08-11 修正, 腾讯官方口径):
     # 主力 = 成交金额≥20万 或 股数≥6万股(600手); 超大单≥100万; 大单=主力-超大单
-    main_buy_amt = sum(t["amt"] for t in ticks if (t["amt"] >= 20e4 or t["vol"] >= 600) and t["d"] == "B")
-    main_sell_amt = sum(t["amt"] for t in ticks if (t["amt"] >= 20e4 or t["vol"] >= 600) and t["d"] == "S")
-    main_net = main_buy_amt - main_sell_amt           # 主力净额(≥20万)
+    # ⚠️ 必须剔除竞价单(9:25-9:30 撮合非主动买卖), 否则主力净额被竞价B污染
+    non_auction = [t for t in ticks if t["t"] >= "09:30"]
+    main_buy_amt = sum(t["amt"] for t in non_auction if (t["amt"] >= 20e4 or t["vol"] >= 600) and t["d"] == "B")
+    main_sell_amt = sum(t["amt"] for t in non_auction if (t["amt"] >= 20e4 or t["vol"] >= 600) and t["d"] == "S")
+    main_net = main_buy_amt - main_sell_amt           # 主力净额(≥20万, 剔除竞价)
+    big_net = big_buy_amt - big_sell_amt               # 超大单净额(≥100万, 已剔除竞价)
     mid_net = main_net - big_net                        # 大单净额(20万-100万)
-    retail_buy_amt = sum(t["amt"] for t in ticks if not (t["amt"] >= 20e4 or t["vol"] >= 600) and t["d"] == "B")
-    retail_sell_amt = sum(t["amt"] for t in ticks if not (t["amt"] >= 20e4 or t["vol"] >= 600) and t["d"] == "S")
-    retail_net = retail_buy_amt - retail_sell_amt      # 散户净额(<20万)
+    retail_buy_amt = sum(t["amt"] for t in non_auction if not (t["amt"] >= 20e4 or t["vol"] >= 600) and t["d"] == "B")
+    retail_sell_amt = sum(t["amt"] for t in non_auction if not (t["amt"] >= 20e4 or t["vol"] >= 600) and t["d"] == "S")
+    retail_net = retail_buy_amt - retail_sell_amt      # 散户净额(<20万, 剔除竞价)
 
     result = {
         "dark_net": round(dark_net),           # 全量主动净额
