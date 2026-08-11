@@ -20,6 +20,10 @@
   - 新增 `auction_collector.py`（竞价统一入口）：悟道优先（独家 bidStrength/弱转强字段），限流窗口 9:15-10:30 快速失败不白等，悟道空返回/失败时降级腾讯批量行情算竞价高开榜；30s 缓存避免助手重复提问重复请求。
   - `_fetch_auction_context`（chat 助手）与 `auction_review`（竞价复盘 agent）改用 auction_collector，消除双实现。
 - 盘中监测**均线临界保护**：现价与 MA5/MA10 距离 <1% 时 Prompt 注入警告行，禁止 AI 断言"站上/跌破"（修复神剑股份场景：现价 11.95 在 MA5 11.90 之上 0.42%，AI 却说"跌破MA5"）。新增模块级函数 `build_ma_critical_warnings`（build_prompt 与测试共用）。
+- **腾讯证券数据源接入**（2026-08-11，网页端 gu.qq.com 同源接口）：
+  - 新增 `TencentFundflowVendor`：`proxy.finance.qq.com/cgi/cgi-bin/fundflow/hsfundtab` 当日实时资金流（主力/超大/大/中/小四档 + 5日主力净额），作为东财 push2delay 之后的**第二实时源**（东财开盘全 0 未就绪时腾讯顶上）；口径：主力=超大单+大单。
+  - 新增 `tencent_panel.py`：盘口大单占比（`qt.gtimg.cn/q=s_pk`）、大单分档统计（`stock.gtimg.cn/data/index.php?appn=dadan`）、分价表（`appn=price`）。
+  - 盘中监测资金面追加"盘口大单占比 + 大单分档统计"段（腾讯面板，失败静默不影响主链路）。
 
 ### feature
 

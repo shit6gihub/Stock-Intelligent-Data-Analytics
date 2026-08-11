@@ -640,6 +640,39 @@ class IntradayMonitorAgent(BaseAgent):
                     lines.append(
                         "  - ⚠️ 主力净流入但超大单净流出(分歧): 可能是大单拉抬、超大单出货,谨慎追涨"
                     )
+                # 盘口大单面板(腾讯, 2026-08-11 接入): 大单占比 + 大单分档统计, 失败静默
+                try:
+                    from marketdata.vendors.tencent_panel import (
+                        fetch_pan_analysis,
+                        fetch_big_order_stats,
+                    )
+                    from marketdata import Symbol as MDSymbol
+
+                    mdsym = MDSymbol.parse(stock.symbol, "CN")
+                    pan = fetch_pan_analysis(mdsym)
+                    if pan:
+                        net_big = pan["buy_big"] - pan["sell_big"]
+                        side = "买盘大单占优" if net_big > 0 else ("卖盘大单占优" if net_big < 0 else "大单平衡")
+                        lines.append(
+                            f"- 盘口大单占比：买大{pan['buy_big']:.1f}%/买小{pan['buy_small']:.1f}%/"
+                            f"卖大{pan['sell_big']:.1f}%/卖小{pan['sell_small']:.1f}% ({side})"
+                        )
+                    stats = fetch_big_order_stats(mdsym)
+                    if stats:
+                        # 大单分档: 前3档净买入 + 档位1(最大单)买卖方向
+                        t1 = stats[0]
+                        t1_net = t1["buy"] - t1["sell"]
+                        t1_dir = "净买入" if t1_net > 0 else ("净卖出" if t1_net < 0 else "平衡")
+                        total_buy = sum(s["buy"] for s in stats)
+                        total_sell = sum(s["sell"] for s in stats)
+                        net = total_buy - total_sell
+                        net_dir = "净买入" if net > 0 else ("净卖出" if net < 0 else "平衡")
+                        lines.append(
+                            f"- 大单分档统计：{len(stats)}档，最大单(档1)单数{t1['count']}笔/金额{t1['amount_wan']:.0f}万({t1_dir})，"
+                            f"全档合计{net_dir}{abs(net) / 1e4:.0f}万股"
+                        )
+                except Exception as e:
+                    logger.debug(f"盘口大单面板获取失败(不影响资金面): {e}")
             except Exception:
                 lines.append("- ⚠️ 资金数据解析失败(数据源返回异常),资金面留空")
         else:

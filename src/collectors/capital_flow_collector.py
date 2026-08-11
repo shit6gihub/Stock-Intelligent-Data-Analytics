@@ -178,9 +178,35 @@ class CapitalFlowCollector:
                 _FLOW_CACHE.set(cache_key, cf)
                 return cf
         except Exception as e:
-            logger.debug(f"今日实时资金流失败, 回退 Engine: {e}")
-        # 1) 悟道已移除(2026-08-11): intraday_main_flow 在 9:15-10:30 限流,
-        #    且只给主力净额无四档明细。直接走 Engine 四档实时(新浪 T-1 / 东财)。
+            logger.debug(f"今日实时资金流失败, 回退腾讯/Engine: {e}")
+        # 1) 腾讯证券实时资金流(2026-08-11 接入): 与东财同为当日实时四档口径,
+        #    东财开盘初期 f62=0 未就绪或直连失败时, 腾讯侧通常已有数据 —— 第二实时源
+        if capital_flow is None:
+            try:
+                from marketdata.vendors.tencent_fundflow import TencentFundflowVendor
+                from marketdata import Symbol as MDSymbol
+
+                vendor = TencentFundflowVendor()
+                rows = vendor.fetch([MDSymbol.parse(symbol, self.market.value)], {})
+                if rows:
+                    tcf = rows[0]
+                    if tcf.main_net_inflow is not None and abs(tcf.main_net_inflow) > 0:
+                        capital_flow = CapitalFlow(
+                            symbol=tcf.symbol, name=tcf.name,
+                            main_net_inflow=tcf.main_net_inflow,
+                            main_net_inflow_pct=tcf.main_net_inflow_pct,
+                            super_net_inflow=tcf.super_net_inflow,
+                            big_net_inflow=tcf.big_net_inflow,
+                            mid_net_inflow=tcf.mid_net_inflow,
+                            small_net_inflow=tcf.small_net_inflow,
+                            main_net_5d=tcf.main_net_5d,
+                            date="",
+                        )
+                        _FLOW_CACHE.set(cache_key, capital_flow)
+                        logger.debug(f"腾讯实时资金流命中: {symbol} 主力={tcf.main_net_inflow}")
+                        return capital_flow
+            except Exception as e:
+                logger.debug(f"腾讯实时资金流失败: {e}")
 
         # 2) Engine 四档实时(腾讯/东财)补全
         md_cf = get_market_data().capital_flow(symbol, market=self.market.value)

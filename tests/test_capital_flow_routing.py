@@ -14,9 +14,13 @@ def test_get_capital_flow_uses_marketdata(monkeypatch):
                         small_net_inflow=500.0, main_net_5d=None)
 
     monkeypatch.setattr(cf, "get_market_data", lambda: _MD())
-    # 禁用今日实时直连+网关(测试环境无外网依赖, 走 marketdata 包)
+    # 禁用今日实时直连+网关+腾讯回退(测试环境无外网依赖, 走 marketdata 包)
     monkeypatch.setattr(cf, "_CN_GATEWAY_DISABLED", True)
     monkeypatch.setattr(cf, "_fetch_direct_flow", lambda s: None)
+    monkeypatch.setattr(
+        "marketdata.vendors.tencent_fundflow.TencentFundflowVendor",
+        type("_NoTencent", (), {"fetch": lambda self, *a, **k: []}),
+    )
     out = cf.CapitalFlowCollector(MarketCode.CN).get_capital_flow("600519")
     assert out is not None and isinstance(out, cf.CapitalFlow)
     assert out.main_net_inflow == 5000.0 and out.symbol == "600519"
