@@ -36,7 +36,8 @@
 
 ## Commit & Pull Request Guidelines
 - Commit format: `<type>: <subject>` where type ∈ `{fix, feature, update, doc}`.
-  Example: `feature: add intraday monitor agent`.
+- Keep the type prefix in English, and write the subject after the colon (plus any optional commit body) in Chinese.
+  Example: `feature: 新增盘中监控 Agent`.
 - Keep one logical, reviewable change per commit. Once a change is ready to record, commit it instead of accumulating unrelated work.
 - Every commit must update `CHANGELOG.md` in the same commit. Add a concise entry under the current date and one of these headings:
   - `fix` — bug fixes and regression corrections.

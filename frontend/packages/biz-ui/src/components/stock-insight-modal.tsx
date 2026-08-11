@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { Copy, Download, ExternalLink, RefreshCw, Share2, Sparkles } from 'lucide-react'
 import {
   insightApi,
@@ -283,6 +284,38 @@ function markdownToPlainText(input?: string): string {
     .replace(/\*\*|__|\*|_/g, '')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+function StockReportMarkdown({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        table: ({ children }) => (
+          <div className="my-4 max-w-full overflow-x-auto rounded-lg border border-border/60">
+            <table className="m-0 w-max min-w-full border-collapse text-[12px]">{children}</table>
+          </div>
+        ),
+        th: ({ children }) => (
+          <th className="whitespace-nowrap border-b border-r border-border/60 bg-accent/50 px-3 py-2 text-left font-semibold last:border-r-0">
+            {children}
+          </th>
+        ),
+        td: ({ children }) => (
+          <td className="min-w-[96px] border-b border-r border-border/40 px-3 py-2 align-top last:border-r-0">
+            {children}
+          </td>
+        ),
+        a: ({ children, href }) => (
+          <a href={href} target="_blank" rel="noopener noreferrer" className="break-all text-primary underline underline-offset-2">
+            {children}
+          </a>
+        ),
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  )
 }
 
 function firstNonEmptyText(...vals: unknown[]): string {
@@ -1746,7 +1779,7 @@ export default function StockInsightModal(props: {
                     )}
                     <div className="rounded-lg bg-accent/10 p-3">
                       <div className="prose prose-sm dark:prose-invert max-w-none text-foreground/90 break-words">
-                        <ReactMarkdown>{activeReport.content || '暂无报告内容'}</ReactMarkdown>
+                        <StockReportMarkdown content={activeReport.content || '暂无报告内容'} />
                       </div>
                     </div>
                     {(activeReport.prompt_context || activeReport.context_payload || activeReport.news_debug) && (
@@ -2145,7 +2178,7 @@ function DeepAnalysisSection({
       {result?.content && (
         <div className="rounded-lg border border-border/50 p-4">
           <div className="prose prose-sm dark:prose-invert max-w-none break-words">
-            <ReactMarkdown>{result.content}</ReactMarkdown>
+            <StockReportMarkdown content={result.content} />
           </div>
         </div>
       )}
