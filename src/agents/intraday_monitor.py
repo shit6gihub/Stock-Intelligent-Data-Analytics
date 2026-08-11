@@ -709,13 +709,14 @@ class IntradayMonitorAgent(BaseAgent):
                                 f"{z['price']:.2f}(大单{z['big_net'] / 1e4:+.0f}万)" for z in zones[:3]
                             )
                             lines.append(f"  - 主力吸筹位：{zs}")
-                        # 拆单识别(主力冒充散户的已成交部分)
+                        # 拆单识别(主力伪装散户, 逆势口径 2026-08-11 修正)
                         split = dark.get("split_order") or {}
-                        if split.get("net") is not None and abs(split["net"]) >= 300e4:
+                        if split.get("net") is not None and abs(split["net"]) >= 200e4:
                             dir_s = "买入" if split["net"] > 0 else "卖出"
                             lines.append(
                                 f"  - 拆单识别：疑似主力{dir_s}{abs(split['net']) / 1e4:.0f}万"
-                                f"({len(split.get('groups', []))}组连续同向单，已成交口径)"
+                                f"(逆势{len([g for g in split.get('groups', []) if g.get('contrarian')])}组，"
+                                f"散户顺势{abs(split.get('herd_sell', 0) - split.get('herd_buy', 0)) / 1e4:.0f}万)"
                             )
                 except Exception as e:
                     logger.debug(f"暗盘资金面板获取失败(不影响资金面): {e}")

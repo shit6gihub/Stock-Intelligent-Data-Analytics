@@ -76,20 +76,27 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
     return ticks
 
 
-def _detect_split_orders(ticks: list[dict], window_sec: int = 60, min_consec: int = 3,
+def _detect_split_orders(ticks: list[dict], window_sec: int = 90, min_consec: int = 3,
                          lo: float = 5e4, hi: float = 100e4) -> dict:
-    """拆单识别: 识别主力伪装的中小单(连续同向+短窗口+金额区间)。
+    """拆单识别 v2: 识别主力伪装的中小单(含价格背景, 2026-08-11 修正)。
 
-    同花顺"暗盘资金"核心 = 识别主力拆单(2026-08-11 需求确认)。
-    特征: 60秒内连续≥3笔同方向 且单笔5万-100万(拆单常见区间)。
+    之前只按"同向+时间+金额"识别 → 把散户割肉(跌中连续卖)误判为主力拆单卖。
+    修正: 加价格背景分类(神剑实测: 跌中卖1443万全是散户割肉, 跌中买0万):
+      - 逆势吸筹(拆单买): 价格下跌中连续主动买入 = 主力偷偷吸筹
+      - 逆势派发(拆单卖): 价格上涨中连续主动卖出 = 主力偷偷出货
+      - 顺势割肉(散户): 价格下跌中连续卖出 = 散户恐慌
+      - 顺势追涨(散户): 价格上涨中连续买入 = 散户追高
+    只有"逆势"两类算疑似主力, "顺势"两类是散户行为。
 
-    Returns: {buy_amt, sell_amt, net, groups}
+    Returns: {buy_amt, sell_amt, net, contrarian_net, groups}
     """
     def _t2s(t: str) -> int:
         h, m, s = t.split(":")
         return int(h) * 3600 + int(m) * 60 + int(s)
 
-    suspect_buy = suspect_sell = 0.0
+    # 价格背景: 组内价格方向(涨/跌/平)
+    suspect_buy = suspect_sell = 0.0   # 逆势(疑似主力)
+    herd_buy = herd_sell = 0.0         # 顺势(散户)
     groups = []
     seq = []
     for tk in ticks:
@@ -97,39 +104,67 @@ def _detect_split_orders(ticks: list[dict], window_sec: int = 60, min_consec: in
             seq.append(tk)
         else:
             if len(seq) >= min_consec and all(x["d"] == seq[0]["d"] for x in seq):
-                direction = seq[0]["d"]
-                amt_sum = sum(x["amt"] for x in seq)
                 dur = _t2s(seq[-1]["t"]) - _t2s(seq[0]["t"])
                 if dur <= window_sec:
+                    direction = seq[0]["d"]
+                    amt_sum = sum(x["amt"] for x in seq)
+                    p0, p1 = seq[0]["price"], seq[-1]["price"]
+                    price_dir = "up" if p1 > p0 else ("down" if p1 < p0 else "flat")
+                    # 逆势 = 买在跌中 / 卖在涨中
+                    contrarian = (direction == "B" and price_dir == "down") or \
+                                 (direction == "S" and price_dir == "up")
                     groups.append({
                         "d": direction, "n": len(seq), "amt": round(amt_sum),
                         "t0": seq[0]["t"], "t1": seq[-1]["t"],
-                        "p0": seq[0]["price"], "p1": seq[-1]["price"],
+                        "p0": p0, "p1": p1,
+                        "contrarian": contrarian,  # 疑似主力
+                        "price_dir": price_dir,
                     })
-                    if direction == "B":
-                        suspect_buy += amt_sum
+                    if contrarian:
+                        if direction == "B":
+                            suspect_buy += amt_sum
+                        else:
+                            suspect_sell += amt_sum
                     else:
-                        suspect_sell += amt_sum
+                        if direction == "B":
+                            herd_buy += amt_sum
+                        else:
+                            herd_sell += amt_sum
             seq = []
     # 尾组
     if len(seq) >= min_consec and all(x["d"] == seq[0]["d"] for x in seq):
-        amt_sum = sum(x["amt"] for x in seq)
-        if _t2s(seq[-1]["t"]) - _t2s(seq[0]["t"]) <= window_sec:
+        dur = _t2s(seq[-1]["t"]) - _t2s(seq[0]["t"])
+        if dur <= window_sec:
+            direction = seq[0]["d"]
+            amt_sum = sum(x["amt"] for x in seq)
+            p0, p1 = seq[0]["price"], seq[-1]["price"]
+            price_dir = "up" if p1 > p0 else ("down" if p1 < p0 else "flat")
+            contrarian = (direction == "B" and price_dir == "down") or \
+                         (direction == "S" and price_dir == "up")
             groups.append({
-                "d": seq[0]["d"], "n": len(seq), "amt": round(amt_sum),
+                "d": direction, "n": len(seq), "amt": round(amt_sum),
                 "t0": seq[0]["t"], "t1": seq[-1]["t"],
-                "p0": seq[0]["price"], "p1": seq[-1]["price"],
+                "p0": p0, "p1": p1,
+                "contrarian": contrarian, "price_dir": price_dir,
             })
-            if seq[0]["d"] == "B":
-                suspect_buy += amt_sum
+            if contrarian:
+                if direction == "B":
+                    suspect_buy += amt_sum
+                else:
+                    suspect_sell += amt_sum
             else:
-                suspect_sell += amt_sum
+                if direction == "B":
+                    herd_buy += amt_sum
+                else:
+                    herd_sell += amt_sum
 
     groups.sort(key=lambda g: -g["amt"])
     return {
-        "buy_amt": round(suspect_buy),
-        "sell_amt": round(suspect_sell),
+        "buy_amt": round(suspect_buy),       # 逆势拆单买(主力吸筹)
+        "sell_amt": round(suspect_sell),     # 逆势拆单卖(主力派发)
         "net": round(suspect_buy - suspect_sell),
+        "herd_buy": round(herd_buy),         # 顺势买(散户追涨)
+        "herd_sell": round(herd_sell),       # 顺势卖(散户割肉)
         "groups": groups[:10],
     }
 
