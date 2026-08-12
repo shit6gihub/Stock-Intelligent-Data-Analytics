@@ -180,14 +180,24 @@ async def get_index_detail(symbol: str):
             tencent_code = {"IXIC": "usIXIC", "DJI": "usDJI"}.get(symbol, "")
 
         def _fetch_tencent_kline(code: str) -> list:
-            r = _req.get(
-                f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={code},day,,,120,qfq",
-                headers={"User-Agent": "Mozilla/5.0"},
-                timeout=10,
-            )
-            if r.status_code != 200:
+            # 2026-08-13 修复: 裸 requests 同步阻塞事件循环(海外 ifzq CDN 挂起) → 走 market_http 短超时
+            try:
+                from src.collectors.market_http import market_get
+                d = market_get(
+                    "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+                    host_key="web.ifzq.gtimg.cn",
+                    params={"param": f"{code},day,,,120,qfq"},
+                    headers={"User-Agent": "Mozilla/5.0"},
+                    timeout=5,
+                    retries=1,
+                    parse="json",
+                    symbol=code,
+                    log_label="腾讯指数K线",
+                )
+                if d is None:
+                    return []
+            except Exception:
                 return []
-            d = r.json()
             data = (d.get("data") or {}).get(code) or {}
             bars = data.get("day") or data.get("qfqday") or []
             return [

@@ -116,13 +116,24 @@ def get_klines(symbol: str, market: str = "CN", days: int = 60, interval: str = 
         idx_conf = next((i for i in MARKET_INDICES if i["symbol"] == symbol), None)
         tencent_code = idx_conf.get("tencent_symbol", "") if idx_conf else ""
         try:
-            r = _req.get(
-                f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={tencent_code},day,,,{days},qfq",
+            # 2026-08-13 修复: 裸 requests.get(timeout=8) 同步阻塞 asyncio 事件循环,
+            # 海外节点 web.ifzq.gtimg.cn 偶发连接挂起(43.154.254.x HK CDN) → 事件循环堵死 → 全站无响应。
+            # 改走 market_http: 短超时(5s)+ 退避重试, 失败快速抛错(不长时间卡住)。
+            from src.collectors.market_http import market_get
+            raw_resp = market_get(
+                "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+                host_key="web.ifzq.gtimg.cn",
+                params={"param": f"{tencent_code},day,,,{days},qfq"},
                 headers={"User-Agent": "Mozilla/5.0"},
-                timeout=8,
+                timeout=5,
+                retries=1,
+                parse="json",
+                symbol=symbol,
+                log_label="腾讯指数K线",
             )
-            r.raise_for_status()
-            d = r.json()
+            if raw_resp is None:
+                raise RuntimeError(f"腾讯指数K线请求失败({tencent_code})")
+            d = raw_resp
             data = (d.get("data") or {}).get(tencent_code) or {}
             bars = data.get("day") or data.get("qfqday") or []
             if not bars:
