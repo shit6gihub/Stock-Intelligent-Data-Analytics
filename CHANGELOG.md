@@ -1,6 +1,26 @@
 # Changelog
 
-## 2026-08-12 (v0.2.16)
+## 2026-08-12 (v0.2.17)
+
+### feat(forecast) — 预测引擎全面升级
+
+- **模型体系重构**: 移除 Lag-Llama(50%命中+自回归爆炸),接入 **Chronos-Bolt-small**(Encoder无累积误差, CPU 0.07s),投票改**加权平均**(XGBoost 0.4 / Kronos 0.25 / Chronos 0.25 / 线性回归 0.1,保留±40% sanity clip)。
+- **AI 裁判层**: 模型预测结果交给对话助手评估(调 get_main_intent 主力意图/资金流/技术面/K线形态),裁判可**强势改最终方向**(B方案),verdict+理由入响应,失败自动降级不阻断。
+- **权重闭环**: 新增 model_weights.py,模型权重按历史命中率(命中率²强化+下限8%保护)动态调整,回测后自动更新。
+- **置信度融合**: 置信度融合 4 模型分歧度(≥75%一致升档/≤50%降档)+ AI裁判意见(confirm背书/adjust质疑)。
+- **LLM 情绪修正**: 修复埋点 bug(adjustment_pct 全 0 → 真实记录 score×0.75);接入**腾讯近5日主力资金流**(免key)进 LLM prompt,资金面影响情绪打分。
+- **交易日口径统一**: prediction_outcome 改用交易日(工作日)计算 horizon,与回测引擎一致。
+- **历史到期对照**: /forecast/history 增加 outcome_return_pct/outcome_status(hit/miss/pending),前端历史表展示预测vs实际。
+- **前端**: 副标题更新(Kronos+Chronos-Bolt)、回测注脚诚实文案、自选/持仓一键预测(单选)、预测进行中锁定输入(严格单只)。
+- **修复**: 服务 token sub 用 owner 真实 UUID(此前固定 "user" 导致 401)。
+
+### 实测
+- AI 裁判真实调用通过(conv_id=27, 裁判引用主力意图/技术面数据给出 confirm+up)
+- 4 模型加权投票 vs 旧中位数: final 12.86 vs 12.5(XGB 权重生效)
+- 历史到期对照: 002361 miss(-3.04%) / 000938 hit(-0.97%) / 002661 hit(+3.87%) 全对
+- pytest 4 passed + 前端 build 8.5s
+
+
 
 ### fix(shadow) — 影子账户交割单上传
 
