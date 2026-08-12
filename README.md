@@ -587,6 +587,16 @@ README 旧的「智能 Agent 系统（4 套）」漏列了 4 个：`竞价复盘
 欢迎提交 Issue 和 PR！自定义 Agent 和数据源开发请参考 [贡献指南](CONTRIBUTING.md)。
 社区交流（Telegram）：[t.me/panwatch](https://t.me/panwatch)
 
+## 赞助 Sponsor
+
+如果数智分析对你有帮助,欢迎请作者喝杯咖啡 ☕ 你的支持是持续维护的动力!
+
+| 方式 | 入口 |
+|:---:|:---:|
+| **微信赞赏** | <img src="./assets/sponsor-wechat.png" width="200" alt="微信赞赏码" /> |
+
+> 提示: 也可点右上角 ⭐ Star 支持项目。
+
 ## License
 
 [MIT](LICENSE)
