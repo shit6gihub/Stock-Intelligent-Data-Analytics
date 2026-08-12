@@ -48,6 +48,9 @@
 - 27 tests passed
 
 
+### fix
+
+- 增强主程序 Docker 镜像安装 Debian 系统依赖时的下载重试、读取超时和 HTTP 管线容错，避免字体及 Playwright 运行库因上游 EOF 或临时 500 响应导致构建中断。
 
 ### update
 

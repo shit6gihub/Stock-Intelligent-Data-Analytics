@@ -38,7 +38,8 @@ WORKDIR /app
 # - tzdata: 时区数据（zoneinfo 模块需要）
 # - 中文字体（K线截图需要）
 # - Playwright Chromium 依赖的系统库
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=8 -o Acquire::http::Timeout=120 -o Acquire::http::Pipeline-Depth=0 update \
+    && apt-get -o Acquire::Retries=8 -o Acquire::http::Timeout=120 -o Acquire::http::Pipeline-Depth=0 install -y --no-install-recommends \
     tzdata \
     # git: requirements.txt 中含 git+https 直链(tradingagents)
     git \
