@@ -394,6 +394,16 @@ export default function MinuteLwcChart({ points, prevClose, isIndex, swings }: P
           </button>
         </div>
       )}
+      {/* 图例收起后: 左上角小按钮重新展开(2026-08-12 用户反馈: 只有关没有开) */}
+      {!isIndex && swingMarks.length > 0 && !showLegend && (
+        <button
+          className="absolute left-2 top-1 z-10 rounded-md bg-background/85 backdrop-blur px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground border border-border/60 shadow-sm"
+          onClick={() => setShowLegend(true)}
+          title="显示图例"
+        >
+          📖 图例
+        </button>
+      )}
 
       <div ref={ref} className="w-full h-[300px]" />
 
