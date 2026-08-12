@@ -57,7 +57,9 @@ export async function fetchAPI<T>(path: string, options?: ApiRequestOptions): Pr
     headers['Authorization'] = `Bearer ${token}`
   }
 
-  if (options?.body) {
+  if (options?.body && !(options.body instanceof FormData)) {
+    // 2026-08-15: FormData 不设 Content-Type —— 浏览器自动带 multipart/form-data; boundary=xxx,
+    // 否则 FastAPI 收不到 UploadFile 字段(422 missing file)
     headers['Content-Type'] = 'application/json'
   }
 

@@ -71,6 +71,117 @@ class TradeRecord:
 
 # ---------------- 文件加载 ----------------
 
+_HEADER_KEYWORDS = ("证券代码", "证券名称", "股票代码", "发生日期", "成交日期", "成交时间", "成交均价", "业务名称", "操作")
+
+
+def _find_header_row(raw: pd.DataFrame) -> int | None:
+    """在 Excel 全表(header=None)中定位表头行。
+
+    标准券商交割单前几行是营业部/股东/资金账户信息,表头行特征是
+    同时包含多个关键列名(如 证券代码 + 证券名称 + 成交均价)。返回
+    0-based 行号;找不到返回 None(调用方回退默认 header=0)。
+    """
+    for idx, row in raw.iterrows():
+        cells = [str(v).strip() for v in row.tolist() if v is not None and str(v).strip()]  # type: ignore[arg-type]
+        if not cells:
+            continue
+        hits = sum(1 for kw in _HEADER_KEYWORDS if any(c == kw for c in cells))
+        if hits >= 2:
+            return int(idx)
+    return None
+
+
+def _load_text_table(p: Path, ext: str) -> pd.DataFrame:
+    """Excel/PDF 交割单 → DataFrame(统一文本行解析)。
+
+    券商交割单(国投/同花顺等)Excel 有合并单元格展开、PDF 是空格对齐
+    文本表格,两者列布局都可能错位。统一策略:
+      1. 把每个数据行转成一行文本(Excel 逐单元格 join / PDF 逐行提取)
+      2. 去掉 nan 占位与相邻重复(合并单元格展开)
+      3. 按 10 列(表头顺序)对齐
+    """
+    col_names = ["发生日期", "证券代码", "证券名称", "业务名称", "成交均价", "成交数量", "成交金额", "股份余额", "净手续费", "印花税"]
+    lines: list[str] = []
+
+    if ext in {".xlsx", ".xls"}:
+        raw = pd.read_excel(p, header=None, dtype=str)
+        for _, r in raw.iterrows():
+            cells = [str(v).strip() for v in r.tolist() if v is not None and str(v).strip()]  # type: ignore[union-attr]
+            if cells:
+                lines.append(" ".join(cells))
+    else:  # pdf
+        try:
+            from pypdf import PdfReader
+        except ImportError:
+            from PyPDF2 import PdfReader
+        reader = PdfReader(str(p))
+        for page in reader.pages:
+            text = page.extract_text() or ""
+            for ln in text.splitlines():
+                s = ln.strip()
+                if s:
+                    lines.append(s)
+
+    # 定位表头行
+    header_idx = None
+    for i, ln in enumerate(lines):
+        if "发生日期" in ln and "证券代码" in ln:
+            header_idx = i
+            break
+    if header_idx is None:
+        raise ValueError("交割单未找到表头行(发生日期/证券代码)")
+
+    rows: list[dict[str, str]] = []
+    side_keywords = ("证券买入", "证券卖出", "融资买入", "融券卖出", "担保品买入", "担保品卖出")
+    for ln in lines[header_idx + 1:]:
+        if not ln.strip():
+            continue
+        if "营业部名" in ln or "股东姓名" in ln or "资金帐户" in ln or "制表日期" in ln:
+            continue
+        if "第" in ln and "页" in ln:
+            continue
+        if not ln[0].isdigit():
+            continue  # 数据行必须以日期数字开头
+        tokens = [x for x in ln.split() if x.lower() != "nan"]
+        # 合并单元格展开会产生相邻重复(如 1700 1700),去重(保留第一个)
+        deduped: list[str] = []
+        for x in tokens:
+            if deduped and x == deduped[-1]:
+                continue
+            deduped.append(x)
+        if len(deduped) < 9:
+            continue
+        # 用业务名称关键词定位:它前面是 [日期, 代码, 名称(可变token数)],
+        # 后面固定 6 个数字列(均价/数量/金额/余额/手续费/印花税)
+        side_idx = -1
+        for i, x in enumerate(deduped):
+            if x in side_keywords:
+                side_idx = i
+                break
+        if side_idx < 0 or side_idx < 2:
+            continue
+        tail = deduped[side_idx + 1:]
+        if len(tail) < 6:
+            continue
+        row: dict[str, str] = {
+            "发生日期": deduped[0],
+            "证券代码": deduped[1],
+            "证券名称": "".join(deduped[2:side_idx]),
+            "业务名称": deduped[side_idx],
+            "成交均价": tail[0],
+            "成交数量": tail[1],
+            "成交金额": tail[2],
+            "股份余额": tail[3],
+            "净手续费": tail[4],
+            "印花税": tail[5],
+        }
+        rows.append(row)
+
+    if not rows:
+        raise ValueError("交割单未提取到数据行")
+    return pd.DataFrame(rows)
+
+
 def load_dataframe(path: str | Path) -> pd.DataFrame:
     """加载 CSV/Excel 为 DataFrame,带编码回退。
 
@@ -89,8 +200,10 @@ def load_dataframe(path: str | Path) -> pd.DataFrame:
         raise FileNotFoundError(f"File not found: {p}")
 
     ext = p.suffix.lower()
-    if ext in {".xlsx", ".xls"}:
-        return pd.read_excel(p, dtype=str)
+    if ext in {".xlsx", ".xls", ".pdf"}:
+        # 统一走"文本行 → 去 nan 占位 → 10 列对齐"策略(券商交割单兼容:
+        # Excel 合并单元格展开/PDF 文本表格, 列布局都可能错位)。
+        return _load_text_table(p, ext)
     if ext != ".csv":
         raise ValueError(f"Unsupported extension: {ext}")
 
@@ -115,6 +228,8 @@ def detect_format(df: pd.DataFrame) -> FormatName:
 
     if {"成交时间", "证券代码", "操作"}.issubset(cols):
         return "tonghuashun"
+    if {"发生日期", "证券代码", "业务名称"}.issubset(cols):
+        return "guotou"
     if {"买卖标志", "股票代码"}.issubset(cols) or {"买卖标志", "成交均价"}.issubset(cols):
         return "eastmoney"
     if {"Date", "Symbol", "Side"}.issubset(cols) or {"Date", "Symbol", "Direction"}.issubset(cols):
@@ -196,6 +311,40 @@ def _to_float(val: Any, default: float = 0.0) -> float:
         return parsed if math.isfinite(parsed) else default
     except (ValueError, TypeError):
         return default
+
+
+def parse_guotou(df: pd.DataFrame) -> list[TradeRecord]:
+    """解析国投证券(及同类标准券商)交割单。
+
+    期望列: 发生日期, 证券代码, 证券名称, 业务名称, 成交均价,
+    成交数量, 成交金额, 股份余额, 净手续费, 印花税。
+    业务名称: 证券买入/证券卖出/融资买入/融券卖出。
+    """
+    records: list[TradeRecord] = []
+    for _, row in df.iterrows():
+        raw_code = row.get("证券代码", "")
+        if _is_empty_code(raw_code):
+            continue
+        side_raw = str(row.get("业务名称", "")).strip()
+        # 跳过非买卖操作行: 分页表头("业务名称"自身)、红股派息、指定交易等
+        if side_raw not in _BUY_TOKENS and side_raw not in _SELL_TOKENS:
+            continue
+        qty = _to_float(row.get("成交数量"))
+        price = _to_float(row.get("成交均价"))
+        amount = _to_float(row.get("成交金额")) or qty * price
+        fee = _to_float(row.get("净手续费")) + _to_float(row.get("印花税"))
+        records.append(TradeRecord(
+            datetime=_ths_datetime(row.get("发生日期", "")),
+            symbol=_qualify_a_share(str(raw_code)),
+            name=str(row.get("证券名称", "")).strip(),
+            side=_normalize_side(side_raw),
+            quantity=qty,
+            price=price,
+            amount=amount,
+            fee=fee,
+            market="china_a",
+        ))
+    return records
 
 
 def parse_tonghuashun(df: pd.DataFrame) -> list[TradeRecord]:
@@ -510,6 +659,7 @@ def _infer_market_from_symbol(symbol: str) -> str:
 
 _PARSERS = {
     "tonghuashun": parse_tonghuashun,
+    "guotou": parse_guotou,
     "eastmoney": parse_eastmoney,
     "futu": parse_futu,
     "generic": parse_generic,
@@ -536,7 +686,17 @@ def parse_file(path: str | Path) -> tuple[FormatName, list[TradeRecord]]:
         except Exception:
             pass
         raise ValueError(f"Unrecognized trade journal format. Columns: {list(df.columns)}")
-    return fmt, _PARSERS[fmt](df)
+    records = _PARSERS[fmt](df)
+    # 跨页重复: 同一笔(datetime+symbol+side+qty+price)在 PDF 多页可能重复出现, 去重
+    seen: set[tuple] = set()
+    deduped: list[TradeRecord] = []
+    for r in records:
+        k = (r.datetime, r.symbol, r.side, r.quantity, r.price)
+        if k in seen:
+            continue
+        seen.add(k)
+        deduped.append(r)
+    return fmt, deduped
 
 
 def records_to_dataframe(records: list[TradeRecord]) -> pd.DataFrame:
