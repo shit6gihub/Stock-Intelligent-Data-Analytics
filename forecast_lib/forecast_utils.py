@@ -121,14 +121,38 @@ def calc_capital_score(
     return final_score
 
 
+_CONF_ORDER = ["低", "中", "高"]
+
+
+def _shift_conf(conf: str, delta: int) -> str:
+    """置信档位移: delta=+1 升一档, -1 降一档, 越界时钳制在 低/高。"""
+    try:
+        idx = _CONF_ORDER.index(conf)
+    except ValueError:
+        return conf
+    idx = max(0, min(len(_CONF_ORDER) - 1, idx + delta))
+    return _CONF_ORDER[idx]
+
+
 def build_recommendation(symbol: str, last_close: float, final: np.ndarray,
                          direction: str, expected_pct: float,
                          kronos: dict, lag: dict | None, sentiment: dict,
-                         capital_score: float = 0.0) -> dict:
+                         capital_score: float = 0.0,
+                         models: dict | None = None,
+                         referee: dict | None = None) -> dict:
     """生成操作建议: 基于方向+幅度+置信区间+情绪面+资金面。
 
     capital_score: 资金面评分(-1~+1), 由 calc_capital_score 计算。
                     >0 主力持续净流入(偏多), <0 净流出(偏空)。
+
+    models (可选): 4模型方向字典, 如 {"kronos": "up", "chronos": "down",
+                   "xgboost": "up", "linreg": "up"}。
+                   与最终 direction 一致的比例 ≥0.75 → 置信升一档;
+                   ≤0.5 → 置信降一档。不传/少于2个模型时不影响置信度。
+
+    referee (可选): AI裁判意见 {"verdict": "confirm"|"adjust", "direction": ...}。
+                    verdict=confirm → 置信升一档(背书);
+                    verdict=adjust → 置信降一档(质疑) + risk_note 标注"AI裁判质疑"。
     """
     spread_pct = 0
     if kronos:
@@ -197,6 +221,34 @@ def build_recommendation(symbol: str, last_close: float, final: np.ndarray,
     elif cap_bear:
         # 资金背离/偏空 → 降半档(高→中, 中→低)
         base_conf = {"高": "中", "中": "低"}.get(base_conf, base_conf)
+
+    # 模型分歧度融合: 4模型与最终方向一致比例
+    if models:
+        agreed = sum(
+            1 for m_dir in models.values()
+            if str(m_dir).strip().lower() == direction
+        )
+        total = len(models)
+        if total >= 2:
+            agreement = agreed / total
+            if agreement >= 0.75:
+                # 高度一致 → 升一档(低→中, 中→高)
+                base_conf = _shift_conf(base_conf, +1)
+            elif agreement <= 0.5:
+                # 分裂/反向 → 降一档(高→中, 中→低)
+                base_conf = _shift_conf(base_conf, -1)
+
+    # AI裁判意见融合
+    if referee:
+        verdict = str(referee.get("verdict", "")).strip().lower()
+        if verdict == "confirm":
+            # 裁判背书 → 升一档
+            base_conf = _shift_conf(base_conf, +1)
+        elif verdict == "adjust":
+            # 裁判质疑 → 降一档 + 风险提示
+            base_conf = _shift_conf(base_conf, -1)
+            tag = "AI裁判质疑"
+            risk_note = (risk_note + "; " if risk_note else "") + tag
 
     return {
         "action": action,

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { TrendingUp, LineChart, RefreshCw, Activity, Download, History, FileText, Send } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
-import { fetchAPI } from '@panwatch/api'
+import { fetchAPI, stocksApi, type StockItem } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Input } from '@panwatch/base-ui/components/ui/input'
 import { Label } from '@panwatch/base-ui/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@panwatch/base-ui/components/ui/select'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
 
 interface KronosResult {
@@ -25,7 +26,7 @@ interface PredictResult {
   expected_pct: number
   models: {
     kronos: KronosResult
-    lag_llama?: { median: number[]; p10: number[]; p90: number[]; n_samples: number } | null
+    chronos?: { median: number[]; p10: number[]; p90: number[]; n_samples: number } | null
     xgboost: number[] | null
     linreg: number[] | null
   }
@@ -66,6 +67,12 @@ interface ForecastHistoryItem {
   summary: string
   sentiment_adj: number
   created_at: string
+  // TODO(到期对照): /forecast/history 后端(list_forecasts → forecasts 表)尚未返回 outcome 字段。
+  // 待后端在 forecast_lib/forecast_history.py 里按 target_date 对照实际行情后补充以下字段
+  // （如 outcome_return_pct: 实际涨跌幅%, outcome_status: 'hit'|'miss'|'pending'），
+  // 前端历史表会自动展示"到期对照"列，无需再改这里。
+  outcome_return_pct?: number
+  outcome_status?: 'hit' | 'miss' | 'pending' | string
 }
 
 interface BacktestResult {
@@ -108,6 +115,10 @@ export default function ForecastPage() {
   const [taskLogs, setTaskLogs] = useState<string[]>([])
   const [history, setHistory] = useState<ForecastHistoryItem[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
+  // 自选股(一键填入搜索框): stocksApi.list() → GET /stocks(用户自选+全局)
+  const [watchlist, setWatchlist] = useState<StockItem[]>([])
+  const [watchlistLoading, setWatchlistLoading] = useState(false)
+  const [watchPick, setWatchPick] = useState('')
   const [detail, setDetail] = useState<ForecastHistoryItem | null>(null)
   const [report, setReport] = useState<PredictionReport | null>(null)
   const [reportLoading, setReportLoading] = useState(false)
@@ -158,6 +169,26 @@ export default function ForecastPage() {
     setStockName(s.name)
     setSearchText(`${s.name} ${s.symbol}`)
     setSearchResults([])
+  }
+
+  // 加载自选股列表(每次展开下拉时刷新, 保持最新)
+  const loadWatchlist = async () => {
+    setWatchlistLoading(true)
+    try {
+      const list = await stocksApi.list()
+      setWatchlist(list || [])
+    } catch {
+      setWatchlist([])
+    } finally {
+      setWatchlistLoading(false)
+    }
+  }
+
+  // 从自选下拉选中 → 复用 selectStock 填充搜索框并选中
+  const pickFromWatchlist = (id: string) => {
+    const s = watchlist.find(w => String(w.id) === id)
+    if (s) selectStock({ symbol: s.symbol, name: s.name || s.symbol })
+    setWatchPick('') // 重置, 下次打开仍是 placeholder
   }
 
   // 加载历史预测列表
@@ -362,6 +393,32 @@ export default function ForecastPage() {
   const dirColor = (dir: string) =>
     dir === 'up' ? 'text-red-500' : dir === 'down' ? 'text-green-500' : 'text-gray-500'
 
+  // 到期对照: 仅当后端 /forecast/history 返回 outcome 字段时展示该列(见 ForecastHistoryItem 的 TODO)
+  const historyHasOutcome = history.some(
+    h => h.outcome_return_pct !== undefined || h.outcome_status !== undefined
+  )
+  const renderOutcome = (h: ForecastHistoryItem) => {
+    if (h.outcome_status === 'pending') {
+      return <span className="text-xs text-muted-foreground">未到期</span>
+    }
+    if (h.outcome_return_pct === undefined && !h.outcome_status) {
+      return <span className="text-xs text-muted-foreground">—</span>
+    }
+    // hit 判定: 优先用后端 outcome_status; 否则按 实际涨跌方向 vs 预测方向 推算
+    const actualDir = (h.outcome_return_pct ?? 0) > 0 ? 'up' : (h.outcome_return_pct ?? 0) < 0 ? 'down' : 'flat'
+    const hit = h.outcome_status === 'hit' || (!h.outcome_status && h.direction === actualDir && actualDir !== 'flat')
+    const pct = h.outcome_return_pct
+    return (
+      <span className={hit ? 'text-green-500' : 'text-red-500'}>
+        {hit ? '✓' : '✗'}{' '}
+        <span className="font-mono text-xs">
+          预测{typeof h.expected_pct === 'number' ? `${h.expected_pct > 0 ? '+' : ''}${h.expected_pct}%` : '-'}
+          {pct !== undefined && <> vs 实际{pct > 0 ? '+' : ''}{pct}%</>}
+        </span>
+      </span>
+    )
+  }
+
   return (
     <div className="space-y-6 p-4 md:p-6">
       <div className="flex items-center justify-between">
@@ -370,7 +427,7 @@ export default function ForecastPage() {
             <TrendingUp className="h-6 w-6" /> 预测回测
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Kronos + Lag-Llama + XGBoost + 线性回归 四模型投票预测（数据源：baostock 不复权）
+            Kronos + Chronos-Bolt + XGBoost + 线性回归 四模型加权投票预测（AI裁判评估，数据源：baostock 不复权）
           </p>
         </div>
         <div className="flex items-center gap-2 text-sm">
@@ -406,6 +463,7 @@ export default function ForecastPage() {
                 onFocus={() => searchText && doSearch(searchText)}
                 placeholder="输入名称或代码,如 神剑/002361"
                 className="w-48"
+                disabled={loading}
               />
               {searchResults.length > 0 && (
                 <div className="absolute z-20 mt-1 w-56 max-h-56 overflow-y-auto bg-popover border rounded-lg shadow-lg">
@@ -428,6 +486,33 @@ export default function ForecastPage() {
             )}
           </div>
           <div className="space-y-1.5">
+            <Label>从自选选择</Label>
+            <Select
+              value={watchPick}
+              onValueChange={pickFromWatchlist}
+              onOpenChange={open => { if (open) loadWatchlist() }}
+              disabled={loading}
+            >
+              <SelectTrigger className="w-40">
+                <SelectValue placeholder="选择自选股" />
+              </SelectTrigger>
+              <SelectContent>
+                {watchlistLoading && watchlist.length === 0 && (
+                  <SelectItem value="__loading" disabled>加载中...</SelectItem>
+                )}
+                {!watchlistLoading && watchlist.length === 0 && (
+                  <SelectItem value="__empty" disabled>暂无自选股（股票页添加后刷新）</SelectItem>
+                )}
+                {watchlist.map(w => (
+                  <SelectItem key={w.id} value={String(w.id)}>
+                    {w.name || w.symbol}
+                    <span className="ml-2 font-mono text-muted-foreground">{w.symbol}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
             <Label>预测至</Label>
             <Input
               type="date"
@@ -435,6 +520,7 @@ export default function ForecastPage() {
               min={lastKlineDate ? lastKlineDate : undefined}
               onChange={e => setTargetDate(e.target.value)}
               className="w-36"
+              disabled={loading}
             />
           </div>
           <Button onClick={runPredict} disabled={loading}>
@@ -561,9 +647,9 @@ export default function ForecastPage() {
                   </span>
                 </div>
                 <div className="flex justify-between bg-muted/50 rounded px-3 py-2">
-                  <span>Lag-Llama<span className="text-muted-foreground text-xs ml-1">(短周期可靠)</span></span>
+                  <span>Chronos-Bolt<span className="text-muted-foreground text-xs ml-1">(时序基础模型)</span></span>
                   <span className="font-mono">
-                    {result.models.lag_llama ? `${result.models.lag_llama.median[0].toFixed(2)} → ${result.models.lag_llama.median[result.models.lag_llama.median.length - 1].toFixed(2)}` : '不可用'}
+                    {result.models.chronos ? `${result.models.chronos.median[0].toFixed(2)} → ${result.models.chronos.median[result.models.chronos.median.length - 1].toFixed(2)}` : '不可用'}
                   </span>
                 </div>
                 <div className="flex justify-between bg-muted/50 rounded px-3 py-2">
@@ -687,7 +773,7 @@ export default function ForecastPage() {
               </div>
             </div>
             <div className="text-xs text-muted-foreground">
-              注：回测用线性回归快速预测方向，作为模型参考；Kronos 全量 MC 回测较慢，仅按需运行。
+              注：回测统计的是模型方向命中率（预测方向 vs 实际方向），不含交易成本与收益测算；完整信号回测见本地回测内核。
             </div>
             {backtest.recent_samples.length > 0 && (
               <div className="overflow-x-auto">
@@ -778,6 +864,8 @@ export default function ForecastPage() {
                   <th className="text-right">止损</th>
                   <th className="text-left">操作建议</th>
                   <th className="text-left">置信</th>
+                  {/* TODO(到期对照): 后端返回 outcome 字段后自动出现该列, 见 ForecastHistoryItem */}
+                  {historyHasOutcome && <th className="text-right">到期对照</th>}
                 </tr>
               </thead>
               <tbody>
@@ -796,6 +884,7 @@ export default function ForecastPage() {
                     <td className="text-right font-mono">{h.stop_loss ?? '-'}</td>
                     <td>{h.action || '-'}</td>
                     <td>{h.confidence || '-'}</td>
+                    {historyHasOutcome && <td className="text-right">{renderOutcome(h)}</td>}
                   </tr>
                 ))}
               </tbody>

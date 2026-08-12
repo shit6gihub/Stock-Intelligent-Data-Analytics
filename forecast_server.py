@@ -2,7 +2,7 @@
 """A股预测引擎服务 (:8010) — 主入口
 
 拆分后模块:
-- forecast_lib/forecast_models.py    模型层(Kronos/Lag-Llama/XGBoost/回归)
+- forecast_lib/forecast_models.py    模型层(Kronos/Chronos-Bolt/XGBoost/回归)
 - forecast_lib/forecast_history.py   历史存储(SQLite)
 - forecast_lib/forecast_sentiment.py 情绪面(LLM+公告+板块)
 - forecast_lib/forecast_utils.py     工具(任务/推荐)
@@ -34,12 +34,21 @@ _PREDICT_CACHE_TTL = 1800.0
 # 模块导入
 from forecast_models import (
     get_predictor, load_kline, kronos_predict,
-    xgboost_predict, linreg_predict, lag_llama_predict,
+    xgboost_predict, linreg_predict, chronos_predict,
 )
 from forecast_history import (
     get_stock_name, save_forecast, list_forecasts,
 )
 from forecast_paths import FORECAST_DB_PATH
+# 模型权重: 按历史回测命中率动态调整(预测质量闭环, 见 forecast_lib/model_weights.py)
+try:
+    from forecast_lib.model_weights import (
+        load_weights, update_weights_after_backtest, last_weights_source,
+    )
+except ImportError:  # forecast_lib 目录已在 sys.path 的 direct 运行方式
+    from model_weights import (
+        load_weights, update_weights_after_backtest, last_weights_source,
+    )
 from forecast_sentiment import (
     fetch_sentiment, _load_llm_config,
 )
@@ -66,7 +75,7 @@ def health():
 
 @app.get("/predict")
 def predict(symbol: str, days: int = 5, task_id: str = "", target_date: str = ""):
-    """多模型预测: Kronos + Lag-Llama + XGBoost + 线性回归 投票。
+    """多模型预测: Kronos + Chronos-Bolt + XGBoost + 线性回归 加权投票。
 
     target_date 可选: 预测到该日期为止(自动换算交易日数)。task_id 可选(进度日志)。
 
@@ -143,28 +152,34 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
         symbol, stock_name, last_close, last_date, "", days, task_id=tid
     ) or 0
 
+    # 模型权重: 按历史回测命中率动态调整(预测质量闭环); 无历史数据时回退默认
+    #   XGBoost 0.4 / Kronos 0.25 / Chronos-Bolt 0.25 / 线性回归 0.1
+    weights = load_weights()
+    w_source = last_weights_source()
+    _log(tid, f"模型权重来源: {w_source} → {weights}")
+
     # Kronos MC
     _log(tid, "Kronos 模型推理中(MC 30 采样,约 20-30s)...")
-    kronos = run_model_with_trace(run_id, "kronos", kronos_predict, df, pred_len=days, last_close=last_close) if run_id else kronos_predict(df, pred_len=days)
+    kronos = run_model_with_trace(run_id, "kronos", kronos_predict, df, pred_len=days, weight=weights["kronos"], last_close=last_close) if run_id else kronos_predict(df, pred_len=days)
     _log(tid, "Kronos 完成")
 
     # XGBoost
     _log(tid, "XGBoost 训练预测中...")
-    xgb_preds = run_model_with_trace(run_id, "xgboost", xgboost_predict, df, pred_len=days, last_close=last_close) if run_id else xgboost_predict(df, pred_len=days)
+    xgb_preds = run_model_with_trace(run_id, "xgboost", xgboost_predict, df, pred_len=days, weight=weights["xgboost"], last_close=last_close) if run_id else xgboost_predict(df, pred_len=days)
     _log(tid, "XGBoost 完成")
 
     # 线性回归
     _log(tid, "线性回归趋势外推中...")
-    reg_preds = run_model_with_trace(run_id, "linear_reg", linreg_predict, df, pred_len=days, last_close=last_close) if run_id else linreg_predict(df, pred_len=days)
+    reg_preds = run_model_with_trace(run_id, "linear_reg", linreg_predict, df, pred_len=days, weight=weights["linreg"], last_close=last_close) if run_id else linreg_predict(df, pred_len=days)
     _log(tid, "线性回归完成")
 
-    # Lag-Llama(第4模型,时序基础模型)
-    _log(tid, "Lag-Llama 推理中(首次加载约30-60s)...")
-    lag = run_model_with_trace(run_id, "lag_llama", lag_llama_predict, df, pred_len=days, last_close=last_close) if run_id else lag_llama_predict(df, pred_len=days)
-    if lag:
-        _log(tid, "Lag-Llama 完成")
+    # Chronos-Bolt(第4模型,时序基础模型,替代 Lag-Llama)
+    _log(tid, "Chronos-Bolt 推理中(首次加载约10-30s)...")
+    chronos = run_model_with_trace(run_id, "chronos", chronos_predict, df, pred_len=days, weight=weights["chronos"], last_close=last_close) if run_id else chronos_predict(df, pred_len=days)
+    if chronos:
+        _log(tid, "Chronos-Bolt 完成")
     else:
-        _log(tid, "Lag-Llama 不可用(跳过,用3模型投票)")
+        _log(tid, "Chronos-Bolt 不可用(跳过,用其余模型加权投票)")
 
     # 消息情绪面(黑天鹅/公告/板块共振修正)
     _log(tid, "拉取消息情绪面(公告/新闻/板块共振)...")
@@ -207,41 +222,46 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
         dragon_tiger = []
 
 
-    # sanity clip: 单模型预测偏离基准 >±40% 视为异常, 截断(防 Lag-Llama 外推爆炸污染)
+    # sanity clip: 单模型预测偏离基准 >±40% 视为异常, 截断(防模型外推爆炸污染)
     def _clip_arr(arr, base, lo=0.6, hi=1.4):
         a = np.array(arr, dtype=float)
         return np.clip(a, base * lo, base * hi)
 
-    votes = []
+    # 加权投票: 权重按历史回测命中率动态调整(上面已加载, 预测质量闭环)
+    MODEL_WEIGHTS = weights
+
+    votes = []  # [(model_name, np.array 长度=days)]
     # Kronos 仅返回前 2 天(pred_len>2 时被模型截断), 用其均值回填后续天, 保证维度对齐
     if kronos:
         k_med = _clip_arr(kronos["median"], last_close)
         if len(k_med) < days:
             fill = k_med.mean() if len(k_med) else last_close
             k_med = np.concatenate([k_med, np.full(days - len(k_med), fill)])
-        votes.append(k_med)
-    # Lag-Llama 参与投票但只取前 2 天(实测 3 天以上外推区间爆炸,仅短周期可靠)
-    if lag:
-        lag_med = _clip_arr(lag["median"], last_close)
-        lag_vote = lag_med.copy()
-        if len(lag_vote) > 2 and kronos:
-            kronos_med = _clip_arr(kronos["median"], last_close)
-            for i in range(2, len(lag_vote)):
-                lag_vote[i] = kronos_med[i] if i < len(kronos_med) else lag_med[i]
-        if len(lag_vote) < days:
-            fill = lag_vote.mean() if len(lag_vote) else last_close
-            lag_vote = np.concatenate([lag_vote, np.full(days - len(lag_vote), fill)])
-        votes.append(lag_vote)
+        votes.append(("kronos", k_med))
+    # Chronos-Bolt 9 分位输出, 取中位数路径参与投票
+    if chronos:
+        c_med = _clip_arr(chronos["median"], last_close)
+        if len(c_med) < days:
+            fill = c_med.mean() if len(c_med) else last_close
+            c_med = np.concatenate([c_med, np.full(days - len(c_med), fill)])
+        votes.append(("chronos", c_med))
     if xgb_preds:
-        votes.append(_clip_arr(xgb_preds, last_close))
+        votes.append(("xgboost", _clip_arr(xgb_preds, last_close)))
     if reg_preds:
-        votes.append(_clip_arr(reg_preds, last_close))
+        votes.append(("linreg", _clip_arr(reg_preds, last_close)))
     if not votes:
         _set_status(tid, "error")
         _log(tid, "所有模型预测失败")
         raise HTTPException(502, "所有模型预测失败")
 
-    final = np.median(np.array(votes), axis=0)
+    # 加权平均: 某模型不可用时其余权重按比例归一化(不重算总权重, 直接除可用权重和)
+    w_sum = sum(MODEL_WEIGHTS[n] for n, _ in votes)
+    if w_sum <= 0:
+        w_sum = 1.0
+    final = np.zeros(days, dtype=float)
+    for n, arr in votes:
+        final += np.asarray(arr, dtype=float) * (MODEL_WEIGHTS[n] / w_sum)
+    _log(tid, f"加权投票(权重来源:{w_source}): {[(n, round(MODEL_WEIGHTS[n]/w_sum, 2)) for n, _ in votes]}")
 
     # 应用情绪面修正系数(±0.5~1.5%)
     adjust_pct = sentiment["adjustment_pct"]
@@ -251,13 +271,48 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
 
     direction = "up" if final[-1] > last_close else "down" if final[-1] < last_close else "flat"
 
+    # --- AI 裁判层(2026-08-12, B方案): 预测交给 PanWatch 对话助手(8000)评估, 可改最终方向 ---
+    # 裁判用对话助手的工具(主力意图/资金流/技术面/K线形态)核实盘面后给 verdict;
+    # verdict=adjust 且给出方向时强势覆盖 direction; 任何异常降级 confirm, 不阻断主流程。
+    try:
+        from ai_referee import evaluate_prediction
+        ai_verdict = evaluate_prediction(
+            symbol, stock_name, last_close,
+            {
+                "kronos": kronos,
+                "chronos": chronos,
+                "xgboost": xgb_preds,
+                "linreg": reg_preds,
+            },
+            direction,
+            round((float(final[-1]) / last_close - 1) * 100, 2),
+        )
+    except Exception as e:
+        _log(tid, f"AI 裁判调用异常(降级 confirm): {e}")
+        ai_verdict = {"verdict": "confirm", "direction": None, "reason": f"裁判不可用: {e}"}
+
+    if ai_verdict.get("verdict") == "adjust" and ai_verdict.get("direction") in ("up", "down"):
+        old_dir = direction
+        direction = ai_verdict["direction"]
+        _log(
+            tid,
+            f"AI 裁判(B方案): 调整方向 {old_dir} → {direction}, "
+            f"理由: {str(ai_verdict.get('reason', ''))[:120]}",
+        )
+    else:
+        _log(
+            tid,
+            f"AI 裁判: {ai_verdict.get('verdict', 'confirm')}(方向维持 {direction}), "
+            f"理由: {str(ai_verdict.get('reason', ''))[:120]}",
+        )
+
     # 生成操作建议
     from forecast_utils import calc_capital_score
     capital_score = calc_capital_score(capital_flow, last_close)
     rec = build_recommendation(
         symbol, last_close, final, direction,
         round((float(final[-1]) / last_close - 1) * 100, 2),
-        kronos, lag, sentiment,
+        kronos, chronos, sentiment,
         capital_score=capital_score,
     )
 
@@ -284,7 +339,7 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
         "recommendation": rec,
         "models": {
             "kronos": kronos,
-            "lag_llama": lag,
+            "chronos": chronos,
             "xgboost": xgb_preds,
             "linreg": reg_preds,
         },
@@ -295,6 +350,12 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
             "notes": sentiment["notes"],
         },
         "capital_flow": capital_flow,
+        "ai_referee": {
+            "verdict": ai_verdict.get("verdict", "confirm"),
+            "direction": ai_verdict.get("direction"),
+            "reason": ai_verdict.get("reason", ""),
+            "elapsed_ms": ai_verdict.get("elapsed_ms"),
+        },
         "elapsed_ms": int((time.monotonic() - t0) * 1000),
     }
     # 保存历史(供回查列表)
@@ -321,7 +382,7 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
         models_summary = {}
         for _name, _pred in [
             ("kronos", kronos), ("xgboost", xgb_preds),
-            ("linear_reg", reg_preds), ("lag_llama", lag),
+            ("linear_reg", reg_preds), ("chronos", chronos),
         ]:
             try:
                 if _pred is None:
@@ -523,6 +584,12 @@ def _do_backtest(symbol: str, force_legacy: bool = False):
                 source="runs",
             )
 
+            # 预测质量闭环: 回测命中率 → 动态权重(写回, 供下次 predict 使用)
+            try:
+                update_weights_after_backtest(model_summary)
+            except Exception as e:  # 权重更新失败不影响回测主流程
+                print(f"[forecast] 权重更新失败(不影响回测): {e}", file=sys.stderr)
+
             return {
                 "symbol": symbol,
                 "source": "historical_runs",
@@ -601,18 +668,14 @@ def forecast_models():
     """预测引擎模型清单(设置页展示)。"""
     cfg = _load_llm_config()
     kronos_root = os.path.expanduser("~/Kronos")
-    lag_ckpt = os.path.expanduser(
-        "~/.cache/huggingface/models--time-series-foundation-models--Lag-Llama/"
-        "snapshots/72dcfc29da106acfe38250a60f4ae29d1e56a3d9/lag-llama.ckpt"
-    )
     env_path = os.path.expanduser("~/.panwatch_forecast.env")
 
     return {
         "models": [
             {"name": "Kronos", "module": "预测主模型", "model_id": "NeoQuasar/Kronos-small",
              "location": kronos_root, "configurable": "本地源码路径(~/Kronos)"},
-            {"name": "Lag-Llama", "module": "投票模型(短周期)", "model_id": "time-series-foundation-models/Lag-Llama",
-             "location": lag_ckpt, "configurable": "checkpoint 路径(代码内)"},
+            {"name": "Chronos-Bolt", "module": "投票模型(时序基础模型)", "model_id": "amazon/chronos-bolt-small",
+             "location": "pip 包 chronos-forecasting", "configurable": "HuggingFace 模型(首次自动下载)"},
             {"name": "XGBoost", "module": "投票模型", "model_id": "XGBRegressor(n_estimators=100, depth=3)",
              "location": "pip 包", "configurable": "参数在代码内"},
             {"name": "LLM情绪打分", "module": "公告/新闻语义判断", "model_id": cfg.get("model", "agnes-2.5-flash"),
@@ -620,6 +683,8 @@ def forecast_models():
              "api_key_set": bool(cfg.get("api_key"))},
             {"name": "PanWatch AI", "module": "AI对话/Agent 分析", "model_id": "AIModel 表默认",
              "location": "PanWatch 设置→AI 服务商", "configurable": "PanWatch 设置页(已有)"},
+            {"name": "AI裁判", "module": "预测结果裁判层(可改方向,B方案)", "model_id": "PanWatch 对话助手(8000)",
+             "location": "forecast_lib/ai_referee.py", "configurable": "自动调用对话助手工具核实盘面"},
         ],
         "config_file": env_path,
         "config_file_exists": os.path.exists(env_path),

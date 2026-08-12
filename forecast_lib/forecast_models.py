@@ -1,4 +1,4 @@
-# 模型层: Kronos / Lag-Llama / XGBoost / 线性回归
+# 模型层: Kronos / Chronos-Bolt / XGBoost / 线性回归
 import os, sys, json, time
 from datetime import datetime, timedelta
 import numpy as np
@@ -161,146 +161,62 @@ def linreg_predict(df: pd.DataFrame, pred_len: int = 5):
     return preds
 
 
-# ════ Lag-Llama 全局缓存 ════
-_lag_predictor = None
-_lag_lock = False
-
-# Lag-Llama 需要的补丁(在 import 时一次性应用)
-import os as _os_ll
-_os_ll.environ["HF_HOME"] = "/home/ubuntu/.cache/huggingface"
-try:
-    import torch as _torch
-    import gluonts.torch.distributions.studentT as _studentT
-    import gluonts.torch.modules.loss as _loss_mod
-
-    _torch.serialization.add_safe_globals([
-        _studentT.StudentTOutput,
-        _loss_mod.NegativeLogLikelihood,
-        _loss_mod.DistributionLoss,
-    ])
-except Exception:
-    pass
-try:
-    import lightning.fabric.utilities.cloud_io as _cloud_io
-
-    _orig_pl_load = _cloud_io._load
-
-    def _patched_pl_load(*args, **kwargs):
-        kwargs["weights_only"] = False
-        return _orig_pl_load(*args, **kwargs)
-
-    _cloud_io._load = _patched_pl_load
-except Exception:
-    pass
-
-# ════ Lag-Llama 全局缓存 ════
-_lag_predictor = None
-_lag_lock = False
-import os as _os_ll
-_os_ll.environ['HF_HOME'] = '/home/ubuntu/.cache/huggingface'
-try:
-    import torch as _torch
-    import gluonts.torch.distributions.studentT as _studentT
-    import gluonts.torch.modules.loss as _loss_mod
-    _torch.serialization.add_safe_globals([
-        _studentT.StudentTOutput,
-        _loss_mod.NegativeLogLikelihood,
-        _loss_mod.DistributionLoss,
-    ])
-except Exception:
-    pass
-try:
-    import lightning.fabric.utilities.cloud_io as _cloud_io
-    _orig_pl_load = _cloud_io._load
-    def _patched_pl_load(*args, **kwargs):
-        kwargs['weights_only'] = False
-        return _orig_pl_load(*args, **kwargs)
-    _cloud_io._load = _patched_pl_load
-except Exception:
-    pass
+# ════ Chronos-Bolt 全局缓存 ════
+_chronos_pipeline = None
+_chronos_lock = False
 
 
-
-def get_lag_predictor():
-    """懒加载 Lag-Llama predictor(首次加载慢,后续复用)。"""
-    global _lag_predictor, _lag_lock
-    if _lag_predictor is not None:
-        return _lag_predictor
-    if _lag_lock:
-        raise HTTPException(503, "Lag-Llama 加载中,请稍候")
-    _lag_lock = True
+def get_chronos_predictor():
+    """懒加载 Chronos-Bolt-small(首次 ~30MB 下载/加载,后续复用,CPU 单次 ~0.06s)。"""
+    global _chronos_pipeline, _chronos_lock
+    if _chronos_pipeline is not None:
+        return _chronos_pipeline
+    if _chronos_lock:
+        raise HTTPException(503, "Chronos-Bolt 加载中,请稍候")
+    _chronos_lock = True
     try:
-        import sys as _sys
-        if "/tmp/lag-llama" not in _sys.path:
-            _sys.path.insert(0, "/tmp/lag-llama")
-        from lag_llama.gluon.estimator import LagLlamaEstimator
+        import torch
+        from chronos.chronos_bolt import ChronosBoltPipeline
 
-        ckpt = "/home/ubuntu/.cache/huggingface/models--time-series-foundation-models--Lag-Llama/snapshots/72dcfc29da106acfe38250a60f4ae29d1e56a3d9/lag-llama.ckpt"
-        estimator = LagLlamaEstimator(
-            ckpt_path=ckpt,
-            prediction_length=5,
-            context_length=32,
-            input_size=1,
-            n_layer=2,
-            n_embd_per_head=16,
-            n_head=9,
-            lags_seq=["Q", "M", "W", "D", "H", "T", "S"],
-            time_feat=True,  # 必须=True,feature_size 才 =15 匹配 checkpoint(92=144×? 维度)
-            scaling="mean",
-            batch_size=32,
-            num_parallel_samples=100,
-        )
-        _lag_predictor = estimator.create_predictor(
-            transformation=estimator.create_transformation(),
-            module=estimator.create_lightning_module(use_kv_cache=True),
+        _chronos_pipeline = ChronosBoltPipeline.from_pretrained(
+            "amazon/chronos-bolt-small",
+            device_map="cpu",
+            torch_dtype=torch.float32,
         )
     finally:
-        _lag_lock = False
-    return _lag_predictor
+        _chronos_lock = False
+    return _chronos_pipeline
 
 
+def chronos_predict(df: pd.DataFrame, pred_len: int = 5):
+    """Chronos-Bolt-small 预测(第4模型,时序基础模型,替代 Lag-Llama)。
 
-def lag_llama_predict(df: pd.DataFrame, pred_len: int = 5):
-    """Lag-Llama 预测(第4模型,多变量时序基础模型)。
-
-    关键: 模型预训练在标准化数据上,输入必须 mean-std 标准化,
-    输出再反缩放回真实价格。否则(原始价格直接喂)外推崩坏(负价格)。
+    输出 shape (1, 9, pred_len): 9 个分位数 [0.1,0.2,...,0.9],
+    直接取 0.5 分位(索引4)为中位数,0.1/0.9 分位为区间。
+    输入先按最后收盘价缩放(输出随输入线性,乘回还原),避免量级敏感。
     """
     try:
-        from gluonts.dataset.pandas import PandasDataset
+        import torch
 
-        predictor = get_lag_predictor()
+        pipeline = get_chronos_predictor()
 
-        df_long = df[["timestamp", "close"]].copy()
-        df_long.columns = ["timestamp", "target"]
-        df_long = df_long.set_index("timestamp")
-        # 处理停牌缺口:重采样为连续工作日索引并前向填充(PandasDataset 要求均匀间隔)
-        df_long = df_long.asfreq("B").ffill()
-        # 模型权重是 float32,输入必须转 float32 否则 matmul dtype 不匹配
-        df_long["target"] = df_long["target"].astype("float32")
+        closes = df["close"].astype("float32").values
+        if len(closes) < 10:
+            return None
+        scale = float(closes[-1])
+        if scale <= 0:
+            scale = 1.0
+        inputs = torch.tensor(closes / scale, dtype=torch.float32)
 
-        # ⚠️ 标准化: 减均值/除标准差(模型预训练分布),预测后反缩放
-        mean = float(df_long["target"].mean())
-        std = float(df_long["target"].std())
-        if std < 1e-9:
-            std = 1.0
-        df_long["target"] = (df_long["target"] - mean) / std
-
-        ds = PandasDataset(dataframes=[df_long], target="target", freq="B")
-
-        forecasts = list(predictor.predict(ds, num_samples=100))
-        samples = forecasts[0].samples  # (100, pred_len)
-        # 反缩放回真实价格
-        samples = samples * std + mean
-        median = np.median(samples, axis=0)
-        p10 = np.percentile(samples, 10, axis=0)
-        p90 = np.percentile(samples, 90, axis=0)
+        out = pipeline.predict(inputs=inputs, prediction_length=pred_len)  # (1, 9, pred_len)
+        arr = out[0].numpy() * scale  # (9, pred_len) 每行一个分位数路径
+        # 分位索引: 0.1→0, 0.5→4, 0.9→8(官方 Chronos-Bolt 固定 9 分位)
         return {
-            "median": [round(float(x), 2) for x in median[:pred_len]],
-            "p10": [round(float(x), 2) for x in p10[:pred_len]],
-            "p90": [round(float(x), 2) for x in p90[:pred_len]],
-            "n_samples": 100,
+            "median": [round(float(x), 2) for x in arr[4]],
+            "p10": [round(float(x), 2) for x in arr[0]],
+            "p90": [round(float(x), 2) for x in arr[8]],
+            "n_samples": 9,  # 9 个分位路径
         }
     except Exception as e:
-        print(f"Lag-Llama 预测失败: {e}")
+        print(f"Chronos-Bolt 预测失败: {e}")
         return None
