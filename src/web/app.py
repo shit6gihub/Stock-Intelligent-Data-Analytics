@@ -74,6 +74,10 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 # 市场指数（公共数据，无需登录）
 app.include_router(market.router, prefix="/api/market", tags=["market"])
+# TradingView Alert Webhook(2026-08-12): 免登录, secret 鉴权
+from src.web.api import tradingview_webhook
+
+app.include_router(tradingview_webhook.router, prefix="/api/webhooks", tags=["webhooks"])
 
 # 需要登录的路由
 protected = [Depends(get_current_user)]

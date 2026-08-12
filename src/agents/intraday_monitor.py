@@ -66,6 +66,62 @@ def _main_intent_summary(symbol: str) -> str:
         return ""
 
 
+def _main_intent_structured(symbol: str) -> dict | None:
+    """主力意图结构化数据(2026-08-12): 供前端K线 markers/筹码叠加, 不依赖字符串解析。
+
+    Returns: {
+        direction: "buy" | "sell" | "neutral"  (主力净额方向, >500万=买 / <-500万=卖)
+        main_net: 主力净额(元)
+        big_net: 超大单净额(元)
+        mid_net: 大单净额(元)
+        participation: 参与度(%)
+        buy_ratio: 主力买占比(%)
+        auction_amt: 竞价额(元)
+        phase: 5日阶段
+        signal: 综合信号文本
+        chip_peak: 筹码峰价
+        chip_band: {"low": 成本带下沿, "high": 成本带上沿}
+        profit_ratio: 获利盘比例(0-1)
+    }
+    """
+    try:
+        from marketdata import Symbol as MDSymbol
+        from src.core.dark_flow import compute_dark_flow
+        mdsym = MDSymbol.parse(symbol, "CN")
+        dark = compute_dark_flow(mdsym)
+        if not dark:
+            return None
+        main_net = dark.get("main_net", 0) or 0
+        direction = "buy" if main_net > 500e4 else ("sell" if main_net < -500e4 else "neutral")
+        out: dict = {
+            "direction": direction,
+            "main_net": main_net,
+            "big_net": dark.get("big_net", 0) or 0,
+            "mid_net": dark.get("mid_net", 0) or 0,
+            "participation": dark.get("main_intensity"),
+            "buy_ratio": dark.get("main_buy_ratio"),
+            "auction_amt": dark.get("auction_amt", 0) or 0,
+            "phase": dark.get("phase"),
+            "signal": dark.get("signal"),
+        }
+        # 筹码(新浪真实分布优先)
+        try:
+            from src.core.chip_distribution import compute_near_term_chips
+            tc = f"{'sh' if symbol.startswith('6') else 'sz'}{symbol}"
+            chips = compute_near_term_chips(tc, days=10)
+            if chips:
+                out["chip_peak"] = chips.get("peak_price")
+                band = chips.get("cost_band")
+                if band:
+                    out["chip_band"] = {"low": band["low"], "high": band["high"]}
+                out["profit_ratio"] = chips.get("profit_ratio")
+        except Exception:
+            pass
+        return out
+    except Exception:
+        return None
+
+
 def _append_main_intent(lines: list, symbol: str) -> None:
     """主力意图段(2026-08-11 独立段): 逐笔主力 + 筹码分布 + 股东户数。
 
