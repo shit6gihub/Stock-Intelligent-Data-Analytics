@@ -38,11 +38,17 @@ export interface SwingSegment {
   price_down?: number
   amt: number
   main_net: number
+  main_buy?: number
+  main_sell?: number
   retail_net: number
+  retail_buy?: number
+  retail_sell?: number
   buy_ratio?: number
   sell_ratio?: number
   verdict: string
   score: number
+  signals?: string[]
+  post?: { main_net: number; price_change: number } | null
 }
 
 export interface MinuteSwings {
