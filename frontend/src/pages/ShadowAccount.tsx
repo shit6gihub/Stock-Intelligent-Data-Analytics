@@ -51,6 +51,7 @@ export default function ShadowAccountPage() {
       const d = await fetchAPI<ShadowResult>('/shadow/analyze', {
         method: 'POST',
         body: form,
+        timeoutMs: 180000, // 交割单解析+画像可能 60-120s(586笔实测75s), 默认20s不够
       })
       setResult((d as any)?.data ?? d)
     } catch (e: any) {
@@ -114,7 +115,7 @@ export default function ShadowAccountPage() {
         <input
           id="shadow-file-input"
           type="file"
-          accept=".csv,.xlsx,.xls"
+          accept=".csv,.xlsx,.xls,.pdf"
           className="hidden"
           onChange={e => { const f = e.target.files?.[0]; if (f) upload(f) }}
         />
@@ -127,7 +128,7 @@ export default function ShadowAccountPage() {
           <div className="flex flex-col items-center gap-2">
             <Upload className="w-8 h-8 text-muted-foreground" />
             <span className="text-[13px] font-medium text-foreground">点击或拖拽上传交割单</span>
-            <span className="text-[11px] text-muted-foreground">支持 .csv / .xlsx / .xls（同花顺、东财、富途格式自动识别）</span>
+            <span className="text-[11px] text-muted-foreground">支持 .csv / .xlsx / .pdf（同花顺、国投、东财格式自动识别）</span>
           </div>
         )}
       </div>
