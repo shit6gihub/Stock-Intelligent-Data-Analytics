@@ -283,6 +283,23 @@ CREATE TABLE IF NOT EXISTS suggestion_feedback (
             )
             conn.commit()
 
+        # 统一 LLM 配置中心(2026-08-12): 场景-模型绑定表。
+        # create_all 通常已建表(ORM 注册), 这里兜底保证存量库直接升级也有该表。
+        if not _has_table(conn, "ai_scene_bindings"):
+            conn.execute(
+                text(
+                    """
+CREATE TABLE IF NOT EXISTS ai_scene_bindings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scene VARCHAR(64) NOT NULL UNIQUE,
+  model_id INTEGER REFERENCES ai_models(id) ON DELETE SET NULL,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+"""
+                )
+            )
+            conn.commit()
+
 
 def _migrate_old_providers(engine):
     """如果存在旧的 ai_providers 表，迁移数据到 ai_services + ai_models"""

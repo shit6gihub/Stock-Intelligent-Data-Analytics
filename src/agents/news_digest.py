@@ -5,7 +5,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from src.agents.base import BaseAgent, AgentContext, AnalysisResult
+from src.agents.base import BaseAgent, AgentContext, AnalysisResult, apply_scene_binding
 from src.collectors.news_collector import NewsCollector, NewsItem
 from src.core.analysis_history import save_analysis
 from src.core.cn_symbol import get_cn_prefix
@@ -466,6 +466,8 @@ class NewsDigestAgent(BaseAgent):
     async def analyze(self, context: AgentContext, data: dict) -> AnalysisResult:
         """重写分析：落库到历史，便于在 UI 中查看“新闻速递”产物。"""
         system_prompt, user_content = self.build_prompt(data, context)
+        # 统一 LLM 配置中心: reports 场景模型绑定 + 画像注入(无 db/绑定失败则原样)
+        system_prompt = apply_scene_binding(context, "reports", system_prompt)
         content = await context.ai_client.chat(system_prompt, user_content)
 
         if context.model_label:

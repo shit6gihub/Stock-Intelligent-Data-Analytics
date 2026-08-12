@@ -14,7 +14,7 @@ import logging
 from datetime import date, datetime, timezone
 from typing import Any
 
-from src.agents.base import AgentContext, AnalysisResult, BaseAgent
+from src.agents.base import AgentContext, AnalysisResult, BaseAgent, apply_scene_binding
 from src.agents.tradingagents.cost_tracker import (
     check_budget,
     estimate_cost,
@@ -402,6 +402,14 @@ class TradingAgentsAgent(BaseAgent):
         # 标的元信息永远放最前(即使没有持仓也注入)
         portfolio_context_text = (
             f"{meta_context}\n\n{portfolio_part}" if portfolio_part else meta_context
+        )
+
+        # 统一 LLM 配置中心: trading_agents 场景模型绑定 + 画像注入(无 db/绑定失败则原样)。
+        # 效果: ① deep/quick 模型未显式指定时, build_ta_llm_config 会回落到
+        #   ai_client.model(此处被场景绑定覆盖) → deep=quick=绑定模型;
+        # ② 用户交易画像(如有)经 build_system_prompt 组装后追加到注入 TA 的上下文文本。
+        portfolio_context_text = apply_scene_binding(
+            context, "trading_agents", portfolio_context_text
         )
 
         # 5) 同步阻塞,丢到线程池;加硬超时防卡死

@@ -208,10 +208,19 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
     else:
         _log(tid, "Chronos-Bolt 不可用(跳过,用其余模型加权投票)")
 
-    # 消息情绪面(黑天鹅/公告/板块共振修正)
-    _log(tid, "拉取消息情绪面(公告/新闻/板块共振)...")
-    sentiment = fetch_sentiment(symbol, _run_id=run_id)
-    _log(tid, f"情绪面: 事件{len(sentiment['events'])}条, 修正系数 {sentiment['adjustment_pct']:+.2f}%")
+    # 消息情绪面(2026-08-13 用户决策: 独立 LLM 情绪打分停用, 由 AI 裁判接管消息面/情绪判断)
+    # fetch_sentiment / llm_sentiment_score 保留在 forecast_sentiment 模块(不删, 供参考/降级),
+    # 但主流程不再调用 —— adjustment_pct 恒为 0, 不再参与 final 修正。
+    # 若未来要恢复: 取消注释下行, 并把 sentiment["adjustment_pct"] 加回 final。
+    # sentiment = fetch_sentiment(symbol, _run_id=run_id)
+    sentiment = {
+        "events": [],
+        "market_sentiment": None,
+        "adjustment_pct": 0.0,
+        "notes": [],
+    }
+    adjust_pct = 0.0
+    _log(tid, "情绪打分已停用(2026-08-13 用户决策: AI 裁判接管消息面/情绪判断), adjustment_pct=0")
 
     # 主力资金面(东财口径, 经 PanWatch 8000 tdx 接口)
     _log(tid, "拉取主力资金流(panwatch-tdx)...")
@@ -291,11 +300,9 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
         final += np.asarray(arr, dtype=float) * (MODEL_WEIGHTS[n] / w_sum)
     _log(tid, f"加权投票(权重来源:{w_source}): {[(n, round(MODEL_WEIGHTS[n]/w_sum, 2)) for n, _ in votes]}")
 
-    # 应用情绪面修正系数(±0.5~1.5%)
-    adjust_pct = sentiment["adjustment_pct"]
-    if adjust_pct != 0:
-        final = final * (1 + adjust_pct / 100)
-        _log(tid, f"应用情绪修正 {adjust_pct:+.2f}%")
+    # 情绪修正已停用(2026-08-13 用户决策: AI 裁判接管消息面/情绪判断):
+    # adjustment_pct 恒为 0, final 不再乘 (1 + adjustment_pct/100)。
+    # 原代码: final = final * (1 + adjust_pct / 100)
 
     # 单日涨跌停约束(2026-08-13 修复): A股主板单日 ±10%, 预测序列必须物理可行。
     # 之前模型外推(如 linreg +39.7%)导致 T+1 跳变 +13%, 违反涨跌停规则。
@@ -326,8 +333,13 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
     # 用户影子画像(B方案, 2026-08-13): 经 8000 GET /api/shadow/profile 拉 owner 画像,
     # 注入裁判 prompt 只影响建议贴合度(短线/潜伏等表达), 不改 verdict/direction。
     try:
-        from ai_referee import evaluate_prediction
+        from ai_referee import evaluate_prediction, resolve_referee_model_cfg
         user_profile = _get_owner_shadow_profile()  # 失败返回 None, 裁判照常跑
+        # 统一 LLM 配置中心(2026-08-13): referee 场景绑定 > 旧 forecast_llm_* > 默认 agnes。
+        # 场景绑定解析出 ai_model_id 时, 建会话时传给对话助手(chat.py 优先用它)。
+        referee_model_cfg = resolve_referee_model_cfg()
+        if referee_model_cfg.get("ai_model_id"):
+            _log(tid, f"AI 裁判模型: referee 场景绑定 ai_model_id={referee_model_cfg['ai_model_id']} ({referee_model_cfg.get('model', '')})")
         ai_verdict = evaluate_prediction(
             symbol, stock_name, last_close,
             {
@@ -339,6 +351,7 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
             direction,
             round((float(final[-1]) / last_close - 1) * 100, 2),
             user_profile=user_profile,
+            model_cfg=referee_model_cfg,
         )
     except Exception as e:
         _log(tid, f"AI 裁判调用异常(降级 confirm): {e}")

@@ -7,7 +7,7 @@ from collections import Counter
 from datetime import datetime, date, timedelta
 from pathlib import Path
 
-from src.agents.base import BaseAgent, AgentContext, AnalysisResult
+from src.agents.base import BaseAgent, AgentContext, AnalysisResult, apply_scene_binding
 from src.core.signals import SignalPackBuilder
 from src.core.analysis_history import save_analysis, get_latest_analysis
 from src.core.cn_symbol import get_cn_prefix
@@ -861,6 +861,8 @@ class PremarketOutlookAgent(BaseAgent):
             context.model_label or "default",
         )
         system_prompt, user_content = self.build_prompt(data, context)
+        # 统一 LLM 配置中心: reports 场景模型绑定 + 画像注入(无 db/绑定失败则原样)
+        system_prompt = apply_scene_binding(context, "reports", system_prompt)
         logger.info(
             "[%s] Prompt构建完成: system_chars=%s user_chars=%s lines=%s",
             trace_id,

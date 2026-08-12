@@ -6,7 +6,7 @@ import re
 from datetime import datetime, timedelta, date, timezone
 from pathlib import Path
 
-from src.agents.base import BaseAgent, AgentContext, AnalysisResult
+from src.agents.base import BaseAgent, AgentContext, AnalysisResult, apply_scene_binding
 from src.collectors.kline_collector import KlineCollector
 from src.core.analysis_history import get_latest_analysis, get_analysis
 from src.core.context_builder import ContextBuilder
@@ -1467,6 +1467,9 @@ class IntradayMonitorAgent(BaseAgent):
             )
 
         system_prompt, user_content = self.build_prompt(data, context)
+
+        # 统一 LLM 配置中心: reports 场景模型绑定 + 画像注入(无 db/绑定失败则原样)
+        system_prompt = apply_scene_binding(context, "reports", system_prompt)
 
         # 打印完整 prompt 用于调试
         logger.info(f"=== Prompt for {stock.symbol} ===\n{user_content}")

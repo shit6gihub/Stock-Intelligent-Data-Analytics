@@ -3,6 +3,7 @@ import { RefreshCw } from 'lucide-react'
 import { fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import MinuteLwcChart from './MinuteLwcChart'
+import DarkFlowCards from './DarkFlowCards'
 
 type BusinessDay = { year: number; month: number; day: number }
 
@@ -888,6 +889,8 @@ export default function InteractiveKline(props: {
                 <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 border-t border-dashed border-slate-500" /> 昨收(±分界线)</span>
                 <span>腾讯实时分时 · 每30秒自动刷新 · {minutePoints.length} 个点</span>
               </div>
+              {/* 分时模式专属: 主力意图 + 内盘外盘 双卡片(2026-08-13, 仅 A 股) */}
+              {props.market === 'CN' ? <DarkFlowCards symbol={props.symbol} market={props.market} /> : null}
             </>
           )}
         </div>

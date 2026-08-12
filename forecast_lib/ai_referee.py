@@ -1,7 +1,8 @@
 """AI 裁判层: 模型预测交给 PanWatch 对话助手(8000)评估, 可改最终方向(B方案)。
 
 流程:
-- 预测引擎(8010) 4 模型加权投票 + 情绪修正后, 把预测结果打包成评估数据
+- 预测引擎(8010) 4 模型加权投票后(2026-08-13 起独立 LLM 情绪打分已停用,
+  AI 裁判接管消息面/情绪判断), 把预测结果打包成评估数据
 - 经 8000 对话助手 API 建会话(绑定股票, initial_context 放评估数据快照)
   → 发消息让 AI 用其工具(主力意图 get_main_intent / 资金流 get_capital_flow /
     技术面 get_technical_analysis / 形态 get_rally_analysis 等)核实后再评估
@@ -43,6 +44,135 @@ logger = logging.getLogger(__name__)
 # 建会话 / 发消息 超时(秒)。发消息含 AI 工具调用, 最耗时。
 _CONVERSATION_TIMEOUT = 15.0
 _MESSAGE_TIMEOUT = 45.0
+
+
+# ── 统一 LLM 配置中心(2026-08-13): 裁判模型解析 ─────────────────────────────
+
+def _db_paths() -> list[str]:
+    """PanWatch 主库候选路径(只读探测, 与 forecast_sentiment._db_llm_config 同机制)。"""
+    import os as _os
+    return [
+        _os.getenv("PANWATCH_DB", ""),
+        "/var/lib/docker/volumes/panwatch_data/_data/panwatch.db",
+        "/app/data/panwatch.db",
+    ]
+
+
+def _db_scene_binding_model_id() -> int | None:
+    """从 PanWatch DB 读 referee 场景绑定的 ai_models.id(只读, 无绑定返回 None)。
+
+    场景绑定表由基础设施(A 子任务, 统一 LLM 配置中心)提供; 表未迁移/列名差异/
+    无 referee 行/disabled 均自然回落, 不抛异常。兼容列名: scene/scene_name,
+    model_id/ai_model_id/model, enabled 列存在时 0/false 视为停用。
+    """
+    import os as _os
+    import sqlite3 as _sqlite
+
+    for p in _db_paths():
+        if not p or not _os.path.exists(p):
+            continue
+        try:
+            conn = _sqlite.connect(f"file:{p}?mode=ro", uri=True, timeout=3)
+            try:
+                cols = [r[1] for r in conn.execute("PRAGMA table_info(ai_scene_bindings)").fetchall()]
+                if not cols:
+                    continue  # 表不存在(A 子任务未迁移) → 回落
+                scene_col = "scene" if "scene" in cols else ("scene_name" if "scene_name" in cols else None)
+                id_col = next((c for c in ("model_id", "ai_model_id", "model") if c in cols), None)
+                if not scene_col or not id_col:
+                    continue
+                row = conn.execute(
+                    f"SELECT {id_col} FROM ai_scene_bindings WHERE {scene_col} = ?",
+                    ("referee",),
+                ).fetchone()
+                if not row or row[0] is None:
+                    continue
+                if "enabled" in cols:
+                    en = conn.execute(
+                        f"SELECT enabled FROM ai_scene_bindings WHERE {scene_col} = ?",
+                        ("referee",),
+                    ).fetchone()
+                    if en is not None and en[0] in (0, False, "0", "false", "off", "no"):
+                        continue
+                return int(row[0])
+            finally:
+                conn.close()
+        except Exception:
+            continue
+    return None
+
+
+def _db_model_by_id(model_id: int) -> dict | None:
+    """按 ai_models.id 读模型 + 服务商连接信息(只读)。"""
+    import os as _os
+    import sqlite3 as _sqlite
+
+    for p in _db_paths():
+        if not p or not _os.path.exists(p):
+            continue
+        try:
+            conn = _sqlite.connect(f"file:{p}?mode=ro", uri=True, timeout=3)
+            try:
+                row = conn.execute(
+                    "SELECT m.id, m.model, m.name, s.base_url, s.api_key "
+                    "FROM ai_models m JOIN ai_services s ON s.id = m.service_id "
+                    "WHERE m.id = ?",
+                    (model_id,),
+                ).fetchone()
+                if not row:
+                    return None
+                return {
+                    "ai_model_id": int(row[0]),
+                    "model": row[1] or "",
+                    "name": row[2] or "",
+                    "base_url": row[3] or "",
+                    "api_key": row[4] or "",
+                }
+            finally:
+                conn.close()
+        except Exception:
+            continue
+    return None
+
+
+def resolve_referee_model_cfg() -> dict:
+    """解析 AI 裁判模型配置(2026-08-13 统一 LLM 配置中心)。
+
+    优先级: ai_scene_bindings 的 referee 场景绑定 > 旧 forecast_llm_* 配置
+    (设置页 app_settings / ~/.panwatch_forecast.env) > 默认 agnes。
+    返回 dict; 场景绑定命中时带 ai_model_id(建会话时传给对话助手指定模型);
+    旧配置/默认 agnes 无 ai_model_id(对话助手按自身 chat 场景/默认模型走)。
+    任何失败都不抛异常(调用方按无指定模型处理)。
+    """
+    # 1) referee 场景绑定(只读直查 PanWatch DB)
+    try:
+        mid = _db_scene_binding_model_id()
+        if mid:
+            cfg = _db_model_by_id(mid)
+            if cfg:
+                logger.info("AI 裁判模型: referee 场景绑定 ai_model_id=%s (%s)", mid, cfg.get("model"))
+                return cfg
+            logger.warning("AI 裁判模型: referee 场景绑定 ai_model_id=%s 但查无模型行, 回落旧配置", mid)
+    except Exception as exc:
+        logger.warning("referee 场景绑定解析失败(回落旧配置): %s", exc)
+
+    # 2) 旧 forecast_llm_* 配置(设置页 DB > 本地 env > PanWatch 默认模型)
+    try:
+        from forecast_sentiment import _load_llm_config
+        old = _load_llm_config() or {}
+        if old.get("api_key"):
+            logger.info("AI 裁判模型: 旧 forecast_llm_* 配置 (%s)", old.get("model"))
+            return {
+                "base_url": old.get("base_url") or "https://api.agnes-ai.cn/v1",
+                "api_key": old.get("api_key") or "",
+                "model": old.get("model") or "agnes-2.5-flash",
+            }
+    except Exception as exc:
+        logger.warning("旧 forecast_llm_* 配置读取失败(回落默认 agnes): %s", exc)
+
+    # 3) 默认 agnes
+    logger.info("AI 裁判模型: 默认 agnes-2.5-flash")
+    return {"base_url": "https://api.agnes-ai.cn/v1", "api_key": "", "model": "agnes-2.5-flash"}
 
 
 def _infer_market(symbol: str) -> str:
@@ -227,6 +357,7 @@ def evaluate_prediction(
     expected_pct: float,
     run_id: int = 0,
     user_profile: dict | None = None,
+    model_cfg: dict | None = None,
 ) -> dict:
     """把模型预测交给 PanWatch 对话助手评估, 返回裁判结论。
 
@@ -243,6 +374,10 @@ def evaluate_prediction(
                 有画像时注入评估 prompt 的"用户交易风格参考"段: 只影响建议表达
                 贴合度(短线/潜伏/持仓节奏), 不影响 verdict/direction 判断。
                 无画像(None)行为与旧版完全一致。
+        model_cfg: 裁判模型配置(统一 LLM 配置中心, 2026-08-13)。None 时内部调用
+                resolve_referee_model_cfg() 自解析(referee 场景绑定 > 旧
+                forecast_llm_* > 默认 agnes)。命中场景绑定(带 ai_model_id)时,
+                建会话 body 带 ai_model_id, 对话助手 send_message 优先用它。
 
     Returns:
         {"verdict": "confirm"|"adjust", "direction": "up"|"down"|None,
@@ -269,13 +404,21 @@ def evaluate_prediction(
             f"[预测引擎 AI 裁判] 股票 {symbol} {stock_name or ''}, 市场 {market}, "
             f"最新收盘 {last_close}, 模型加权方向 {direction}, 预期 {expected_pct:+.2f}%。"
         )
+        conv_body: dict = {
+            "stock_symbol": symbol,
+            "stock_market": market,
+            "initial_context": initial_context,
+        }
+        # 统一 LLM 配置中心(2026-08-13): referee 场景绑定 → 会话指定 ai_model_id,
+        # 对话助手 send_message 的 _get_ai_client 优先用它(显式模型 > chat 场景绑定)。
+        if model_cfg is None:
+            model_cfg = resolve_referee_model_cfg()
+        conv_model_id = model_cfg.get("ai_model_id") if isinstance(model_cfg, dict) else None
+        if conv_model_id:
+            conv_body["ai_model_id"] = conv_model_id
         conv_resp = requests.post(
             f"{base_url}/api/chat/conversations",
-            json={
-                "stock_symbol": symbol,
-                "stock_market": market,
-                "initial_context": initial_context,
-            },
+            json=conv_body,
             headers=headers,
             timeout=_CONVERSATION_TIMEOUT,
         )

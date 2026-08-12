@@ -3,10 +3,94 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from src.web.database import get_db
-from src.web.models import AIService, AIModel
+from src.web.models import AIService, AIModel, AISceneBinding
 from src.core.ai_client import AIClient
 
 router = APIRouter()
+
+# --- 场景绑定(统一 LLM 配置中心, 2026-08-12) ---
+
+# 全量场景注册表: scene → 显示名 + 描述。新增使用点需在此登记。
+SCENES = {
+    "chat": {"name": "对话助手", "desc": "日常对话 / 个股问答助手"},
+    "trading_agents": {"name": "TradingAgents 深度分析", "desc": "多智能体深度分析报告"},
+    "reports": {"name": "报告复盘 Agent", "desc": "盘前 / 盘后复盘报告生成"},
+    "referee": {"name": "AI 裁判", "desc": "多模型结果裁决 / 交叉验证"},
+    "selfcheck": {"name": "自检", "desc": "AI 自检 / 质量检查"},
+    "insights": {"name": "机会评分", "desc": "投资机会评分 / 洞察"},
+}
+
+
+class SceneBindingResponse(BaseModel):
+    scene: str
+    display_name: str
+    description: str
+    model_id: int | None = None
+    model_name: str | None = None
+    service_id: int | None = None
+    is_bound: bool = False
+
+
+class SceneBindingUpdate(BaseModel):
+    model_id: int | None = None  # None = 解绑, 回落默认模型
+
+
+@router.get("/scene-bindings", response_model=list[SceneBindingResponse])
+def list_scene_bindings(db: Session = Depends(get_db)):
+    """返回全部场景的绑定状态(含未绑定场景), 前端据此渲染绑定 UI。"""
+    bindings = {b.scene: b for b in db.query(AISceneBinding).all()}
+    result = []
+    for scene, meta in SCENES.items():
+        binding = bindings.get(scene)
+        model = None
+        if binding and binding.model_id is not None:
+            model = db.query(AIModel).filter(AIModel.id == binding.model_id).first()
+        result.append({
+            "scene": scene,
+            "display_name": meta["name"],
+            "description": meta["desc"],
+            "model_id": model.id if model else None,
+            "model_name": model.name if model else None,
+            "service_id": model.service_id if model else None,
+            "is_bound": model is not None,
+        })
+    return result
+
+
+@router.put("/scene-bindings/{scene}", response_model=SceneBindingResponse)
+def update_scene_binding(
+    scene: str, body: SceneBindingUpdate, db: Session = Depends(get_db)
+):
+    """绑定场景到指定模型; model_id=None 解绑(使用点回落默认模型)。"""
+    if scene not in SCENES:
+        raise HTTPException(404, f"未知场景: {scene}")
+
+    if body.model_id is not None:
+        model = db.query(AIModel).filter(AIModel.id == body.model_id).first()
+        if not model:
+            raise HTTPException(400, "AI 模型不存在")
+
+    binding = db.query(AISceneBinding).filter(AISceneBinding.scene == scene).first()
+    if binding is None:
+        binding = AISceneBinding(scene=scene, model_id=body.model_id)
+        db.add(binding)
+    else:
+        binding.model_id = body.model_id
+    db.commit()
+    db.refresh(binding)
+
+    model = None
+    if binding.model_id is not None:
+        model = db.query(AIModel).filter(AIModel.id == binding.model_id).first()
+    return {
+        "scene": scene,
+        "display_name": SCENES[scene]["name"],
+        "description": SCENES[scene]["desc"],
+        "model_id": model.id if model else None,
+        "model_name": model.name if model else None,
+        "service_id": model.service_id if model else None,
+        "is_bound": model is not None,
+    }
 
 
 # --- Service ---

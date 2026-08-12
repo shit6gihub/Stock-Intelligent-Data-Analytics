@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Check, Eye, EyeOff, Plus, Pencil, Trash2, Star, Send, Cpu, Play, Download, Upload, FileJson, BarChart3, User, Radar, RefreshCw, QrCode, MonitorUp, MailCheck } from 'lucide-react'
-import { fetchAPI, type AIService, type AIModel, type NotifyChannel, type UserInfo, type SubscriptionItem, authApi } from '@panwatch/api'
+import { fetchAPI, listSceneBindings, setSceneBinding, type AIService, type AIModel, type NotifyChannel, type SceneBinding, type UserInfo, type SubscriptionItem, authApi } from '@panwatch/api'
 import UserManagement from '@/components/UserManagement'
 import { useAvatar, saveAvatar, fileToAvatarDataUrl } from '@/hooks/use-avatar'
 import { Input } from '@panwatch/base-ui/components/ui/input'
@@ -205,6 +205,11 @@ export default function SettingsPage() {
   const [submittingBatch, setSubmittingBatch] = useState(false)
   const [discoveringService, setDiscoveringService] = useState<number | null>(null)
 
+  // 场景分配(统一 LLM 配置中心): 6 场景 × 模型绑定
+  const [sceneBindings, setSceneBindings] = useState<SceneBinding[]>([])
+  const [sceneBindingsLoading, setSceneBindingsLoading] = useState(true)
+  const [bindingSaving, setBindingSaving] = useState<string | null>(null)
+
   // Channel dialog
   const [channelDialogOpen, setChannelDialogOpen] = useState(false)
   const [channelForm, setChannelForm] = useState<ChannelForm>(emptyChannelForm)
@@ -287,13 +292,14 @@ export default function SettingsPage() {
 
   const load = async () => {
     try {
-      const [settingsData, keyDataSourcesData, servicesData, channelsData, versionData, healthData] = await Promise.all([
+      const [settingsData, keyDataSourcesData, servicesData, channelsData, versionData, healthData, sceneBindingsData] = await Promise.all([
         fetchAPI<Setting[]>('/settings'),
         fetchAPI<KeyDataSource[]>('/datasources'),
         fetchAPI<AIService[]>('/providers/services'),
         fetchAPI<NotifyChannel[]>('/channels'),
         fetchAPI<{ version: string }>('/settings/version'),
         fetchAPI<AgentsHealth>('/agents/health'),
+        listSceneBindings(),
       ])
       setSettings(settingsData)
       setKeyDataSources(keyDataSourcesData)
@@ -301,6 +307,8 @@ export default function SettingsPage() {
       setChannels(channelsData)
       setVersion(versionData.version)
       setHealth(healthData)
+      setSceneBindings(sceneBindingsData)
+      setSceneBindingsLoading(false)
       loadForecastModels()
       // 同花顺登录态(静默加载,失败不阻塞)
       try {
@@ -324,6 +332,22 @@ export default function SettingsPage() {
       setForecastModels([])
     } finally {
       setForecastModelsLoading(false)
+    }
+  }
+
+  // 场景分配: 下拉选中 → 绑定/解绑模型(None=回落默认模型)
+  // Radix Select 不允许空字符串 value, 用哨兵值表示"默认模型"(解绑)
+  const SCENE_DEFAULT_VALUE = '__default__'
+  const handleSceneChange = async (scene: string, value: string) => {
+    setBindingSaving(scene)
+    try {
+      const updated = await setSceneBinding(scene, value === SCENE_DEFAULT_VALUE ? null : Number(value))
+      setSceneBindings(prev => prev.map(b => (b.scene === scene ? updated : b)))
+      toast(value === SCENE_DEFAULT_VALUE ? '已解绑，该场景回落默认模型' : `已绑定: ${updated.model_name || ''}`, 'success')
+    } catch (e) {
+      toast(e instanceof Error ? `绑定失败: ${e.message}` : '绑定失败，请重试', 'error')
+    } finally {
+      setBindingSaving(null)
     }
   }
 
@@ -846,6 +870,10 @@ export default function SettingsPage() {
   const defaultModel = allModels.find(m => m.is_default)
   const defaultChannel = channels.find(c => c.is_default)
   const enabledChannels = channels.filter(c => c.enabled)
+  // 场景分配下拉选项: 模型池全部模型(模型名 + 服务商名)
+  const sceneModelOptions = services.flatMap(svc =>
+    (svc.models || []).map(m => ({ id: m.id, label: `${m.name} · ${svc.name}` })),
+  )
 
   const filteredSettings = settings.filter(s => {
     // 敏感接口 key 由独立"接口 Key"区块管理,系统区块不重复展示
@@ -1033,6 +1061,47 @@ export default function SettingsPage() {
               ))}
             </div>
           )}
+
+          {/* 场景分配(统一 LLM 配置中心): 每个使用点绑定模型池里的模型 */}
+          <div className="mt-5 pt-4 border-t">
+            <div className="mb-3">
+              <h4 className="text-[12px] font-semibold text-foreground">场景分配</h4>
+              <p className="text-[11px] text-muted-foreground mt-0.5">各 AI 使用点绑定的模型，未绑定则使用默认模型</p>
+            </div>
+            {sceneBindingsLoading ? (
+              <p className="text-[11px] text-muted-foreground text-center py-3">加载中...</p>
+            ) : sceneBindings.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground text-center py-3">暂无场景数据</p>
+            ) : (
+              <div className="space-y-2">
+                {sceneBindings.map(b => (
+                  <div key={b.scene} className="flex items-center justify-between gap-3 rounded-lg bg-accent/30 px-3 py-2">
+                    <div className="min-w-0">
+                      <span className="text-[12px] font-semibold text-foreground">{b.display_name}</span>
+                      <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{b.description}</p>
+                    </div>
+                    <div className="flex-shrink-0 w-[220px] sm:w-[260px]">
+                      <Select
+                        value={b.model_id != null ? String(b.model_id) : SCENE_DEFAULT_VALUE}
+                        onValueChange={v => handleSceneChange(b.scene, v)}
+                        disabled={bindingSaving === b.scene}
+                      >
+                        <SelectTrigger className="h-8 text-[12px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={SCENE_DEFAULT_VALUE}>默认模型</SelectItem>
+                          {sceneModelOptions.map(opt => (
+                            <SelectItem key={opt.id} value={String(opt.id)}>{opt.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* 预测引擎模型清单(全部模型一览,防止"不知道哪个模块用什么模型") */}
           <div className="mt-5 pt-4 border-t">

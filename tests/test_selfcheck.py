@@ -164,7 +164,7 @@ def test_run_selfcheck_aggregates(monkeypatch):
             return {"category": "datasource", "key": f"ds:{source.id}", "name": source.name,
                     "status": "ok", "latency_ms": 10, "error": None, "hint": ""}
 
-        async def fake_ai(model, service):
+        async def fake_ai(model, service, db=None):  # db 参数: 统一配置中心场景绑定兼容
             return {"category": "ai", "key": f"ai:{model.id}", "name": model.name,
                     "status": "fail", "latency_ms": 20, "error": "401", "hint": "key 错"}
 
