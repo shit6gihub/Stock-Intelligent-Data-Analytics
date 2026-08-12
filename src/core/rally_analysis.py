@@ -23,6 +23,7 @@ MAIN_VOL = 600
 # 拉升识别参数
 RALLY_VOL_MULT = 1.5      # 拉升分钟量能 ≥ 前5分钟均额 x1.5
 RALLY_UP_MIN = 0.005      # 拉升分钟价格涨幅下限(元)
+RALLY_DOWN_MIN = 0.005    # 下探分钟价格跌幅下限(元)
 POST_WINDOW_MIN = 5       # 拉升后观察窗口(分钟)
 # 判别阈值
 BUY_RATIO_TRUE = 60.0     # 主动买占比>60% = 真买
@@ -78,8 +79,9 @@ def _find_rallies(minutes: OrderedDict, times: list[str]) -> list[dict]:
     return rallies
 
 
-def _merge_segments(rallies: list[dict], times: list[str]) -> list[dict]:
-    """连续拉升分钟合并为段。返回 [{start, end, start_price, end_price, amt, price_up, mins}]。"""
+def _merge_segments(rallies: list[dict], times: list[str], kind: str = "rally") -> list[dict]:
+    """连续拉升/下探分钟合并为段。返回 [{start, end, start_price, end_price, amt, price_up|price_down, mins}]。"""
+    key = "price_up" if kind == "rally" else "price_down"
     segments = []
     t_idx = {t: i for i, t in enumerate(times)}
     for r in rallies:
@@ -88,12 +90,12 @@ def _merge_segments(rallies: list[dict], times: list[str]) -> list[dict]:
             seg["end"] = r["t"]
             seg["end_price"] = r["c"]
             seg["amt"] += r["amt"]
-            seg["price_up"] = seg["end_price"] - seg["start_price"]
+            seg[key] = seg["end_price"] - seg["start_price"]
             seg["mins"] += 1
         else:
             segments.append({"start": r["t"], "end": r["t"],
                              "start_price": r["c"], "end_price": r["c"],
-                             "amt": r["amt"], "price_up": 0.0, "mins": 1})
+                             "amt": r["amt"], key: 0.0, "mins": 1})
     return segments
 
 
@@ -281,6 +283,204 @@ def analyze_rallies(symbol: str) -> dict | None:
         }
     except Exception as e:
         logger.warning(f"拉升段分析失败 {symbol}: {e}")
+        return None
+
+
+def _find_dips(minutes: OrderedDict, times: list[str]) -> list[dict]:
+    """识别瞬时下探分钟: 收盘价比前1分钟低 + 量能≥前5分钟均额x1.5。
+
+    返回 [{t, c, prev_c, amt, avg, down}]。
+    """
+    dips = []
+    for i in range(1, len(times)):
+        cur, prev = minutes[times[i]], minutes[times[i - 1]]
+        if cur["c"] >= prev["c"] or cur["amt"] <= 0:
+            continue
+        w_times = times[max(0, i - 5):i]
+        avg = sum(minutes[hm]["amt"] for hm in w_times) / max(len(w_times), 1)
+        if avg > 0 and cur["amt"] >= RALLY_VOL_MULT * avg and (prev["c"] - cur["c"]) >= RALLY_DOWN_MIN:
+            dips.append({"t": times[i], "c": cur["c"], "prev_c": prev["c"],
+                         "amt": cur["amt"], "avg": avg, "down": prev["c"] - cur["c"]})
+    return dips
+
+
+def _judge_dip(stats: dict, post: dict | None, price_down: float) -> dict:
+    """判别下探段性质: 放量下杀(真出货) / 诱空吸筹(假跌) / 中性。
+
+    镜像于 _judge: 主动卖占比>60% = 真砸; 主力大额净卖+下探后仍流出 = 出货;
+    主力净买+下探后回补 = 诱空吸筹(主力借跌吸筹)。
+    """
+    sell_ratio = 100 - (stats["buy_ratio"] or 0)  # 主动卖占比
+    main_net = stats["main_net"]
+    retail_net = stats["retail_net"]
+    signals = []
+    verdict = "中性"
+    score = 0
+
+    if sell_ratio >= 60:
+        signals.append(f"主动卖占{sell_ratio:.0f}%>60%(真砸)")
+        score -= 2
+    elif sell_ratio <= 50:
+        signals.append(f"主动卖占{sell_ratio:.0f}%≤50%(对倒/承接)")
+        score += 2
+    else:
+        signals.append(f"主动卖占{sell_ratio:.0f}%(中性)")
+
+    if main_net < -300e4:
+        signals.append(f"主力净{main_net/1e4:+.0f}万(真出货)")
+        score -= 2
+    elif main_net > 100e4:
+        signals.append(f"主力净{main_net/1e4:+.0f}万(逆势吸筹)")
+        score += 2
+    else:
+        signals.append(f"主力净{main_net/1e4:+.0f}万")
+
+    if retail_net < -30e4:
+        signals.append("散户割肉(恐慌盘)")
+    elif retail_net > 30e4:
+        signals.append(f"散户净买{retail_net/1e4:+.0f}万(散户接盘⚠️)")
+        score += 1  # 散户接盘 = 主力在卖
+    else:
+        signals.append("散户中性")
+
+    post_note = "无后续数据"
+    if post:
+        post_main = post["main_net"]
+        post_chg = post["price_change"]
+        if post_main > 200e4 and post_chg > 0:
+            signals.append(f"下探后主力回补{post_main/1e4:+.0f}万+反弹{post_chg:+.2f}元(诱空⚠️)")
+            score += 2
+            post_note = "下探后主力回补(诱空吸筹)"
+        elif post_main < -200e4 and post_chg <= 0:
+            signals.append(f"下探后主力仍流出{post_main/1e4:+.0f}万+续跌(真出货⚠️)")
+            score -= 2
+            post_note = "下探后主力持续流出"
+        else:
+            signals.append(f"下探后主力净{post_main/1e4:+.0f}万/价{post_chg:+.2f}元")
+            post_note = "下探后中性"
+
+    if score >= 4:
+        verdict = "诱空吸筹(假跌)"
+    elif score <= -3:
+        verdict = "放量下杀(真出货)"
+    elif score <= -1:
+        verdict = "疑似出货"
+    elif score >= 2:
+        verdict = "疑似诱空"
+
+    return {
+        "verdict": verdict,
+        "score": score,
+        "signals": signals,
+        "post_note": post_note,
+        "price_down": round(price_down, 2),
+    }
+
+
+def analyze_swings(symbol: str) -> dict | None:
+    """分析当日盘中顺势拉升段 + 瞬时下探段(供分时K线标记)。
+
+    与 analyze_rallies 共享逐笔缓存(30s TTL), 一次性计算两类段。
+
+    Returns:
+        {
+          "symbol", "current_price",
+          "rallies": [...同 analyze_rallies...],
+          "dips": [{start, end, price_down, amt, main_net, retail_net,
+                     sell_ratio, verdict, score, post}],
+          "summary": {...},
+        }
+    """
+    try:
+        from marketdata import Symbol as MDSymbol
+        from src.core.dark_flow import _fetch_all_ticks, _tencent_code, _TICKS_CACHE
+
+        mdsym = MDSymbol.parse(symbol, "CN")
+        code = _tencent_code(mdsym)
+        if not code:
+            return None
+        ticks = _fetch_all_ticks(code)
+        if not ticks:
+            return None
+
+        minutes, times = _build_minutes(ticks)
+        if not times:
+            return None
+
+        # 拉升段
+        rallies = _merge_segments(_find_rallies(minutes, times), times)
+        # 下探段
+        dips_raw = _find_dips(minutes, times)
+        dips = _merge_segments(dips_raw, times, kind="dip")
+
+        def _post_window(end: str):
+            end_idx = times.index(end) if end in times else -1
+            if end_idx < 0 or end_idx + 1 >= len(times):
+                return None
+            post_times = times[end_idx + 1:min(end_idx + 1 + POST_WINDOW_MIN, len(times))]
+            post_ticks = [t for t in ticks if post_times[0] <= t["t"][:5] <= post_times[-1]]
+            pbb = sum(t["amt"] for t in post_ticks if (t["amt"] >= MAIN_AMT or t["vol"] >= MAIN_VOL) and t["d"] == "B")
+            pbs = sum(t["amt"] for t in post_ticks if (t["amt"] >= MAIN_AMT or t["vol"] >= MAIN_VOL) and t["d"] == "S")
+            return {
+                "main_net": round(pbb - pbs),
+                "price_change": round(minutes[post_times[-1]]["c"] - minutes[end]["c"], 2),
+            }
+
+        out_rallies = []
+        for seg in rallies:
+            stats = _segment_stats(ticks, seg["start"], seg["end"])
+            post = _post_window(seg["end"])
+            judge = _judge(stats, post, seg["price_up"])
+            out_rallies.append({
+                "start": seg["start"], "end": seg["end"],
+                "price_up": round(seg["price_up"], 2),
+                "amt": stats["amt"], "ticks": stats["ticks"],
+                "main_net": stats["main_net"], "main_buy": stats["main_buy"],
+                "main_sell": stats["main_sell"],
+                "retail_net": stats["retail_net"],
+                "buy_ratio": stats["buy_ratio"],
+                "verdict": judge["verdict"], "score": judge["score"],
+                "signals": judge["signals"],
+                "post": post,
+            })
+
+        out_dips = []
+        for seg in dips:
+            stats = _segment_stats(ticks, seg["start"], seg["end"])
+            post = _post_window(seg["end"])
+            judge = _judge_dip(stats, post, seg.get("price_down", 0))
+            out_dips.append({
+                "start": seg["start"], "end": seg["end"],
+                "price_down": round(seg.get("price_down", 0), 2),
+                "amt": stats["amt"], "ticks": stats["ticks"],
+                "main_net": stats["main_net"], "main_buy": stats["main_buy"],
+                "main_sell": stats["main_sell"],
+                "retail_net": stats["retail_net"],
+                "sell_ratio": round(100 - (stats["buy_ratio"] or 0), 1),
+                "verdict": judge["verdict"], "score": judge["score"],
+                "signals": judge["signals"],
+                "post": post,
+            })
+
+        all_non_auc = [t for t in ticks if t["t"] >= "09:30"]
+        all_bb = sum(t["amt"] for t in all_non_auc if (t["amt"] >= MAIN_AMT or t["vol"] >= MAIN_VOL) and t["d"] == "B")
+        all_bs = sum(t["amt"] for t in all_non_auc if (t["amt"] >= MAIN_AMT or t["vol"] >= MAIN_VOL) and t["d"] == "S")
+
+        return {
+            "symbol": symbol,
+            "current_price": ticks[-1]["price"],
+            "rallies": out_rallies,
+            "dips": out_dips,
+            "summary": {
+                "n_rallies": len(out_rallies),
+                "n_dips": len(out_dips),
+                "true_rallies": sum(1 for r in out_rallies if "放量上涨" in r["verdict"] or "疑似真拉升" in r["verdict"]),
+                "true_dips": sum(1 for d in out_dips if "诱空" in d["verdict"] or "疑似诱空" in d["verdict"]),
+                "main_net_total": round(all_bb - all_bs),
+            },
+        }
+    except Exception as e:
+        logger.warning(f"拉升/下探段分析失败 {symbol}: {e}")
         return None
 
 

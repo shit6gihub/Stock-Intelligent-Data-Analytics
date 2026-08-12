@@ -30,12 +30,36 @@ type MinutePoint = {
   volume: number
 }
 
+/** 拉升/下探段(2026-08-12): 后端 minute 接口 swings 字段, 供分时K区间标记 */
+export interface SwingSegment {
+  start: string
+  end: string
+  price_up?: number
+  price_down?: number
+  amt: number
+  main_net: number
+  retail_net: number
+  buy_ratio?: number
+  sell_ratio?: number
+  verdict: string
+  score: number
+}
+
+export interface MinuteSwings {
+  symbol: string
+  current_price: number
+  rallies: SwingSegment[]
+  dips: SwingSegment[]
+  summary?: { n_rallies?: number; n_dips?: number; true_rallies?: number; true_dips?: number; main_net_total?: number }
+}
+
 type MinuteResponse = {
   symbol: string
   market: string
   points: MinutePoint[]
   prev_close?: number | null
   is_index?: boolean
+  swings?: MinuteSwings | null
 }
 
 /** 主力意图结构化数据(2026-08-12): 后端 klines summary API 返回, 供 K线 markers/筹码叠加 */
@@ -211,6 +235,7 @@ export default function InteractiveKline(props: {
   const [minutePoints, setMinutePoints] = useState<MinutePoint[]>([])
   const [minutePrevClose, setMinutePrevClose] = useState<number | null>(null)
   const [minuteIsIndex, setMinuteIsIndex] = useState(false)
+  const [minuteSwings, setMinuteSwings] = useState<MinuteSwings | null>(null)
   const [minuteLoading, setMinuteLoading] = useState(false)
   const [minuteError, setMinuteError] = useState<string>('')
   const minuteRef = useRef<{ pts: MinutePoint[]; prev: number | null }>({ pts: [], prev: null })
@@ -227,11 +252,13 @@ export default function InteractiveKline(props: {
       setMinutePoints(res.points || [])
       setMinutePrevClose(res.prev_close ?? null)
       setMinuteIsIndex(!!res.is_index)
+      setMinuteSwings(res.swings || null)
     } catch (e) {
       setMinuteError(e instanceof Error ? e.message : '加载分时失败')
       setMinutePoints([])
       setMinutePrevClose(null)
       setMinuteIsIndex(false)
+      setMinuteSwings(null)
     } finally {
       setMinuteLoading(false)
     }
@@ -584,7 +611,12 @@ export default function InteractiveKline(props: {
           }
         }
         if (markers.length) {
-          candleSeries.setMarkers?.(markers)
+          // LWC v5: setMarkers 已移除, 改用顶级 createSeriesMarkers(series, markers)
+          if (typeof candleSeries.setMarkers === 'function') {
+            candleSeries.setMarkers(markers)
+          } else if (typeof LW.createSeriesMarkers === 'function') {
+            LW.createSeriesMarkers(candleSeries, markers)
+          }
         }
       }
       // ③ 筹码叠加: 筹码峰 + 成本带上/下沿画在价格 pane
@@ -837,7 +869,7 @@ export default function InteractiveKline(props: {
                 </div>
               </div>
               <div className="w-full rounded-xl border border-border/50 bg-card">
-                <MinuteLwcChart points={minutePoints} prevClose={minutePrevClose} isIndex={minuteIsIndex} />
+                <MinuteLwcChart points={minutePoints} prevClose={minutePrevClose} isIndex={minuteIsIndex} swings={minuteSwings} />
               </div>
               <div className="mt-2 flex gap-4 text-[11px] text-muted-foreground">
                 <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-rose-400" /> 价格</span>

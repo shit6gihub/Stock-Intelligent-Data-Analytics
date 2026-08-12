@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import type { MinuteSwings } from './InteractiveKline'
 
 export interface MinutePoint {
   t: string
@@ -11,6 +12,7 @@ interface Props {
   points: MinutePoint[]
   prevClose: number | null
   isIndex: boolean
+  swings?: MinuteSwings | null
 }
 
 function getLW(): any {
@@ -45,7 +47,7 @@ function hhmmToTs(t: string): number {
  * + 下方成交量柱(红涨绿跌, pane 1)。与日K 同一库(Lightweight v5), 砍掉 ECharts 依赖。
  * 午休时段(11:30-13:00)无数据点, 时间戳连续 → 天然留空隙, 无需 whitespace。
  */
-export default function MinuteLwcChart({ points, prevClose, isIndex }: Props) {
+export default function MinuteLwcChart({ points, prevClose, isIndex, swings }: Props) {
   const ref = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -115,6 +117,48 @@ export default function MinuteLwcChart({ points, prevClose, isIndex }: Props) {
       title: '',
     })
 
+    // 拉升/下探段标记(2026-08-12): 段起点标箭头(红↑真拉升 / 绿↓真出货),
+    // 段内成交额标注在箭头 tooltip。仅个股非指数。
+    // 注意: 分时点 t 为 "0930" 格式, 段 start/end 为 "09:48" 格式 → 统一转 "HH:MM" 比较。
+    const hmOf = (t: string) => (t.includes(':') ? t.slice(0, 5) : `${t.slice(0, 2)}:${t.slice(2, 4)}`)
+    if (!isIndex && swings && (swings.rallies?.length || swings.dips?.length)) {
+      const markers: any[] = []
+      for (const r of swings.rallies || []) {
+        const idx = points.findIndex(p => hmOf(p.t) === r.start)
+        if (idx < 0) continue
+        const trueRally = r.verdict.includes('放量上涨') || r.verdict.includes('疑似真拉升')
+        markers.push({
+          time: hhmmToTs(points[idx].t),  // hhmmToTs 期望 "0930" 原始格式
+          position: 'belowBar',
+          color: trueRally ? '#f43f5e' : 'rgba(244, 63, 94, 0.5)',
+          shape: 'arrowUp',
+          text: `拉升 ${(r.price_up ?? 0).toFixed(2)} 主力${(r.main_net / 1e4).toFixed(0)}万`,
+          size: 1,
+        })
+      }
+      for (const d of swings.dips || []) {
+        const idx = points.findIndex(p => hmOf(p.t) === d.start)
+        if (idx < 0) continue
+        const trueDip = d.verdict.includes('放量下杀') || d.verdict.includes('疑似出货')
+        markers.push({
+          time: hhmmToTs(points[idx].t),  // hhmmToTs 期望 "0930" 原始格式
+          position: 'aboveBar',
+          color: trueDip ? '#10b981' : 'rgba(16, 185, 129, 0.5)',
+          shape: 'arrowDown',
+          text: `下探 ${(d.price_down ?? 0).toFixed(2)} 主力${(d.main_net / 1e4).toFixed(0)}万`,
+          size: 1,
+        })
+      }
+      if (markers.length) {
+        // LWC v5: setMarkers 已移除, 改用顶级 createSeriesMarkers(series, markers)
+        if (typeof priceSeries.setMarkers === 'function') {
+          priceSeries.setMarkers(markers)
+        } else if (typeof LW.createSeriesMarkers === 'function') {
+          LW.createSeriesMarkers(priceSeries, markers)
+        }
+      }
+    }
+
     // 量能柱(pane 1)
     const volSeries = addHistogramSeries(chart, LW, {
       priceFormat: { type: 'volume' },
@@ -143,7 +187,7 @@ export default function MinuteLwcChart({ points, prevClose, isIndex }: Props) {
         /* ignore */
       }
     }
-  }, [points, prevClose, isIndex])
+  }, [points, prevClose, isIndex, swings])
 
   return <div ref={ref} className="w-full h-[300px]" />
 }

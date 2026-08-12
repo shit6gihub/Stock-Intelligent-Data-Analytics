@@ -274,7 +274,11 @@ def _tencent_minute(symbol: str, market: str) -> tuple[list[dict] | None, float 
 
 @router.get("/minute/{symbol}")
 async def get_minute(symbol: str, market: str = "CN"):
-    """分时走势(盘中实时)。腾讯优先, 失败返回空。含昨收(±分界线)。"""
+    """分时走势(盘中实时)。腾讯优先, 失败返回空。含昨收(±分界线)。
+
+    2026-08-12: 附加 swings 字段(顺势拉升段/瞬时下探段标记, 逐单明细判别),
+    供前端分时K线区间着色。仅 A 股计算(复用逐笔 30s 缓存, 开销 ~0.1s)。
+    """
     is_index = market == "CN" and (
         symbol in ("000001", "000300", "000016", "000905", "000852")
         or symbol.startswith("399")
@@ -282,11 +286,21 @@ async def get_minute(symbol: str, market: str = "CN"):
     cache_key = f"{market}:{symbol}"
     cached = _MINUTE_CACHE.get(cache_key)
     if cached and (_time.time() - cached[0]) < _MINUTE_TTL:
+        # 兼容旧3元组缓存(2026-08-12 加 swings 前): 缺第4元素则 swings=None
+        swings_old = cached[3] if len(cached) > 3 else None
         return {"symbol": symbol, "market": market, "points": cached[1],
-                "prev_close": cached[2], "is_index": is_index}
+                "prev_close": cached[2], "is_index": is_index, "swings": swings_old or None}
     points, prev_close = _tencent_minute(symbol, market)
     if points is None:
         points = []
-    _MINUTE_CACHE[cache_key] = (_time.time(), points, prev_close)
+    # 拉升/下探段(仅A股个股, 逐单明细判别; 失败静默 None 不阻塞分时)
+    swings = None
+    if market == "CN" and not is_index:
+        try:
+            from src.core.rally_analysis import analyze_swings
+            swings = analyze_swings(symbol)
+        except Exception:
+            swings = None
+    _MINUTE_CACHE[cache_key] = (_time.time(), points, prev_close, swings)
     return {"symbol": symbol, "market": market, "points": points,
-            "prev_close": prev_close, "is_index": is_index}
+            "prev_close": prev_close, "is_index": is_index, "swings": swings}
