@@ -16,8 +16,8 @@ services:
       args:
         NODE_IMAGE: public.ecr.aws/docker/library/node:20-alpine
         PYTHON_IMAGE: public.ecr.aws/docker/library/python:3.11-slim
-        VERSION: dev-0.1.1
-    image: panwatch:dev-0.1.1
+        VERSION: dev-0.2.0
+    image: panwatch:dev-0.2.0
     environment:
       DEV_RELOAD: "1"
     volumes:
@@ -32,7 +32,7 @@ services:
       dockerfile: Dockerfile.forecast
       args:
         PYTHON_IMAGE: public.ecr.aws/docker/library/python:3.11-slim
-    image: panwatch-forecast:dev-0.1.1
+    image: panwatch-forecast:dev-0.2.0
     ports:
       - "8010:8010"
     volumes:
