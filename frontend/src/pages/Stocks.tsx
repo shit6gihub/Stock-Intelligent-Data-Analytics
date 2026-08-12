@@ -18,6 +18,8 @@ import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
 import { DeepAnalysisModal } from '@panwatch/biz-ui/components/deep-analysis-modal'
 import StockPriceAlertPanel from '@panwatch/biz-ui/components/stock-price-alert-panel'
+import { useNavigate } from 'react-router-dom'
+import StockContextMenu, { type StockContextMenuState, type StockContextTarget } from '@/components/StockContextMenu'
 
 interface AgentResult {
   success?: boolean
@@ -477,6 +479,9 @@ export default function StocksPage() {
   const [insightName, setInsightName] = useState<string | undefined>(undefined)
   const [insightHasPosition, setInsightHasPosition] = useState(false)
 
+  // PC 右键菜单(股票行)
+  const [stockCtxMenu, setStockCtxMenu] = useState<StockContextMenuState | null>(null)
+
   // Market status
   const [marketStatus, setMarketStatus] = useState<MarketStatus[]>([])
   // Guard to prevent overlapping K线刷新任务导致实际并发超限
@@ -920,6 +925,38 @@ export default function StocksPage() {
     setInsightHasPosition(!!hasPosition)
     setInsightOpen(true)
   }, [])
+
+  // ========== PC 右键菜单 ==========
+  const navigate = useNavigate()
+
+  const openStockContextMenu = useCallback((e: React.MouseEvent, stock: StockContextTarget) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setStockCtxMenu({ x: e.clientX, y: e.clientY, stock })
+  }, [])
+
+  const addToWatchlistFromMenu = useCallback(async (stock: StockContextTarget) => {
+    const exists = stocks.some(s => s.market === stock.market && s.symbol === stock.symbol)
+    if (exists) {
+      toast('该股票已在自选中', 'success')
+      return
+    }
+    try {
+      await stocksApi.create({ symbol: stock.symbol, name: stock.name || stock.symbol, market: stock.market || 'CN' })
+      toast('已加入自选', 'success')
+      load()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '加入自选失败', 'error')
+    }
+  }, [stocks, toast, load])
+
+  const viewDetailFromMenu = useCallback((stock: StockContextTarget) => {
+    openStockDetail(stock.symbol, stock.market || 'CN', stock.name || stock.symbol, stock.hasPosition)
+  }, [openStockDetail])
+
+  const paperTradeFromMenu = useCallback(() => {
+    navigate('/paper-trading')
+  }, [navigate])
 
   const formatPreviewTime = (iso: string, tz?: string): string => {
     try {
@@ -2125,6 +2162,7 @@ export default function StocksPage() {
                                 <tr
                                   key={pos.id}
                                   draggable
+                                  onContextMenu={(e) => openStockContextMenu(e, { symbol: pos.symbol, name: pos.name, market: pos.market, hasPosition: true })}
                                   onDragStart={(e) => {
                                     positionDragSnapshotRef.current = portfolioRaw ? JSON.parse(JSON.stringify(portfolioRaw)) : null
                                     setDraggingPositionId(pos.id)
@@ -2302,6 +2340,7 @@ export default function StocksPage() {
                             <div
                               key={pos.id}
                               draggable
+                              onContextMenu={(e) => openStockContextMenu(e, { symbol: pos.symbol, name: pos.name, market: pos.market, hasPosition: true })}
                               onDragStart={(e) => {
                                 positionDragSnapshotRef.current = portfolioRaw ? JSON.parse(JSON.stringify(portfolioRaw)) : null
                                 setDraggingPositionId(pos.id)
@@ -2535,6 +2574,7 @@ export default function StocksPage() {
                   <div
                     key={stock.id}
                     draggable={stockListFilter === '' && !watchlistOnlyAlerts}
+                    onContextMenu={(e) => openStockContextMenu(e, { symbol: stock.symbol, name: stock.name, market: stock.market, hasPosition: false })}
                     onDragStart={(e) => {
                       if (stockListFilter !== '' || watchlistOnlyAlerts) return
                       watchDragSnapshotRef.current = stocks
@@ -3328,6 +3368,15 @@ export default function StocksPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* PC 右键菜单 */}
+      <StockContextMenu
+        menu={stockCtxMenu}
+        onClose={() => setStockCtxMenu(null)}
+        onAddWatchlist={addToWatchlistFromMenu}
+        onViewDetail={viewDetailFromMenu}
+        onPaperTrade={paperTradeFromMenu}
+      />
     </div>
   )
 }
