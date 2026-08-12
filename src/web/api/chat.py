@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from src.config import Settings
 from src.core.ai_client import AIClient
 from src.models.market import MarketCode
+from src.web.api.auth import get_current_user
 from src.web.database import SessionLocal, get_db
 from src.web.models import (
     AIModel,
@@ -23,6 +24,7 @@ from src.web.models import (
     Position,
     Stock,
     StockSuggestion,
+    User,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,6 +46,47 @@ SYSTEM_PROMPT = """你是 PanWatch 的 AI 投资助手。
 
 MAX_HISTORY_MESSAGES = 20
 MAX_TOOL_ROUNDS = 5
+
+# 画像注入节流: profile_text 截断 + rules 只取前 N 条, 避免每次对话占过多 token
+_SHADOW_PROFILE_TEXT_MAX = 300
+_SHADOW_PROFILE_RULES_MAX = 3
+
+
+def _build_shadow_profile_block(profile_json) -> str:
+    """从 users.shadow_profile_json 构建精简版画像注入文本(无画像返回空串)。"""
+    if not profile_json or not isinstance(profile_json, dict):
+        return ""
+    parts: list[str] = []
+
+    profile_text = (profile_json.get("profile_text") or "").strip()
+    if profile_text:
+        if len(profile_text) > _SHADOW_PROFILE_TEXT_MAX:
+            profile_text = profile_text[:_SHADOW_PROFILE_TEXT_MAX] + "…"
+        parts.append(f"画像: {profile_text}")
+
+    rules = profile_json.get("rules") or []
+    if rules:
+        rule_lines = []
+        for rule in rules[:_SHADOW_PROFILE_RULES_MAX]:
+            if isinstance(rule, dict) and rule.get("human_text"):
+                rule_lines.append(f"- {rule['human_text']}")
+        if rule_lines:
+            parts.append("交易规则:\n" + "\n".join(rule_lines))
+
+    preferred_markets = profile_json.get("preferred_markets") or []
+    if preferred_markets:
+        parts.append("偏好市场: " + ", ".join(str(m) for m in preferred_markets))
+
+    holding_days = profile_json.get("typical_holding_days")
+    if holding_days:
+        if isinstance(holding_days, (list, tuple)) and len(holding_days) == 2:
+            parts.append(f"典型持仓天数: 中位 {holding_days[0]} 天 / P75 {holding_days[1]} 天")
+        else:
+            parts.append(f"典型持仓天数: {holding_days} 天")
+
+    if not parts:
+        return ""
+    return "以下是用户交易风格画像(AI 参考, 用于给出更贴合的建议):\n" + "\n".join(parts)
 
 # ──────────────── Tool Definitions ────────────────
 
@@ -817,6 +860,7 @@ def delete_conversation(conversation_id: int, db: Session = Depends(get_db)):
 async def send_message(
     conversation_id: int,
     body: SendMessageBody,
+    user: User = Depends(get_current_user),
 ):
     """发送消息并获取 AI 回复。"""
     db = SessionLocal()
@@ -849,6 +893,11 @@ async def send_message(
         # 绑定股票提示
         if conv.stock_symbol and conv.stock_market:
             system_content += f"\n\n当前对话关联股票：{conv.stock_market}:{conv.stock_symbol}"
+
+        # 用户交易风格画像(影子账户落库, 精简注入; 无画像则完全向后兼容)
+        shadow_profile_block = _build_shadow_profile_block(getattr(user, "shadow_profile_json", None))
+        if shadow_profile_block:
+            system_content += "\n\n--- 用户交易风格画像 ---\n" + shadow_profile_block
 
         # 前端页面快照（对话创建时传入）
         if conv.initial_context:

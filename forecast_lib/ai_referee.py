@@ -100,18 +100,23 @@ def _build_eval_message(
     prediction_result: dict,
     direction: str,
     expected_pct: float,
+    profile_block: str = "",
 ) -> str:
     """组装发给对话助手的评估消息。
 
     明确要求: 用工具核实 → 评估可信度 → 只输出 JSON(便于程序解析)。
+    profile_block: 用户交易风格画像段(可选)。有画像时注入, 只影响建议贴合度,
+    不改 verdict/direction 判断。
     """
     model_summary = _summarize_models(prediction_result)
+    profile_section = f"\n{profile_block}\n" if profile_block else ""
     return (
         f"【AI 裁判任务】请对模型预测结果做裁判评估(标的 {symbol} {stock_name}, 最新收盘 {last_close})。\n\n"
         f"=== 4 模型加权投票预测(8010 预测引擎产出) ===\n"
         f"{model_summary}\n"
         f"- 加权投票方向: {direction}\n"
-        f"- 预期涨幅: {expected_pct:+.2f}%\n\n"
+        f"- 预期涨幅: {expected_pct:+.2f}%\n"
+        f"{profile_section}"
         f"=== 你的职责 ===\n"
         f"1. 先用工具核实真实盘面: get_main_intent(主力意图, 逐笔口径, 判断吸筹/派发), "
         f"get_capital_flow(资金流向, 东财口径), get_technical_analysis(技术面/支撑压力), "
@@ -123,6 +128,58 @@ def _build_eval_message(
         f"   - verdict=adjust : 不认可模型方向, direction 必须给出你建议的方向(up/down), reason 说明依据\n"
         f"   - 若盘面证据不足/工具拉取失败, 默认 confirm 并说明。\n"
         f"注意: 只输出 JSON, 严格用英文双引号, 不要用 markdown 代码块。"
+    )
+
+
+# 画像注入(B方案, 2026-08-13): profile_text 截断 + rules 只取前 N 条, 控制 token
+_SHADOW_PROFILE_TEXT_MAX = 300
+_SHADOW_PROFILE_RULES_MAX = 3
+
+
+def _build_profile_block(user_profile: dict | None) -> str:
+    """从 users.shadow_profile_json 构建裁判 prompt 的画像段(无画像返回空串)。
+
+    画像只影响"建议表达方式"(如短线风格强调进出场节奏/仓位管理,
+    潜伏风格强调耐心持有), 不改 verdict/direction —— 方向判断仍由盘面工具数据决定。
+    """
+    if not user_profile or not isinstance(user_profile, dict):
+        return ""
+    parts: list[str] = []
+
+    profile_text = (user_profile.get("profile_text") or "").strip()
+    if profile_text:
+        if len(profile_text) > _SHADOW_PROFILE_TEXT_MAX:
+            profile_text = profile_text[:_SHADOW_PROFILE_TEXT_MAX] + "…"
+        parts.append(f"画像: {profile_text}")
+
+    rules = user_profile.get("rules") or []
+    if rules:
+        rule_lines = []
+        for rule in rules[:_SHADOW_PROFILE_RULES_MAX]:
+            if isinstance(rule, dict) and rule.get("human_text"):
+                rule_lines.append(f"- {rule['human_text']}")
+        if rule_lines:
+            parts.append("交易规则:\n" + "\n".join(rule_lines))
+
+    preferred_markets = user_profile.get("preferred_markets") or []
+    if preferred_markets:
+        parts.append("偏好市场: " + ", ".join(str(m) for m in preferred_markets))
+
+    holding_days = user_profile.get("typical_holding_days")
+    if holding_days:
+        if isinstance(holding_days, (list, tuple)) and len(holding_days) == 2:
+            parts.append(f"典型持仓天数: 中位 {holding_days[0]} 天 / P75 {holding_days[1]} 天")
+        else:
+            parts.append(f"典型持仓天数: {holding_days} 天")
+
+    if not parts:
+        return ""
+    return (
+        "=== 用户交易风格参考(仅用于建议贴合度, 不改预测) ===\n"
+        "以下为用户交易风格画像。你的裁判结论(verdict/direction)必须仍由盘面工具数据决定, "
+        "画像只影响建议表达方式: 如用户是短线/高换手风格就强调进出场节奏与仓位管理, "
+        "潜伏/长持风格就强调耐心与止损纪律。\n"
+        + "\n".join(parts)
     )
 
 
@@ -169,6 +226,7 @@ def evaluate_prediction(
     direction: str,
     expected_pct: float,
     run_id: int = 0,
+    user_profile: dict | None = None,
 ) -> dict:
     """把模型预测交给 PanWatch 对话助手评估, 返回裁判结论。
 
@@ -181,6 +239,10 @@ def evaluate_prediction(
         expected_pct: 加权预期涨跌幅(%)
         run_id: prediction_runs.id(可选)。>0 时裁判结论落 prediction_referee_evals 表;
                 不传则由落库层按 symbol 自动补最新 run。
+        user_profile: 用户影子画像 dict(users.shadow_profile_json, 可选)。
+                有画像时注入评估 prompt 的"用户交易风格参考"段: 只影响建议表达
+                贴合度(短线/潜伏/持仓节奏), 不影响 verdict/direction 判断。
+                无画像(None)行为与旧版完全一致。
 
     Returns:
         {"verdict": "confirm"|"adjust", "direction": "up"|"down"|None,
@@ -226,12 +288,20 @@ def evaluate_prediction(
             raise RuntimeError(f"建会话返回无 id: {conv_data}")
 
         # 2) 发评估消息(对话助手自动调工具核实, 最耗时)
+        # 画像注入(B方案): 有画像时 prompt 带"用户交易风格参考"段, 只影响建议贴合度
+        profile_block = _build_profile_block(user_profile)
+        if profile_block:
+            logger.info(
+                "AI 裁判已注入用户画像(仅影响建议贴合度, 不改方向): %s %s",
+                symbol, stock_name,
+            )
         msg_resp = requests.post(
             f"{base_url}/api/chat/conversations/{conv_id}/messages",
             json={
                 "content": _build_eval_message(
                     symbol, stock_name, last_close,
                     prediction_result, direction, expected_pct,
+                    profile_block=profile_block,
                 )
             },
             headers=headers,

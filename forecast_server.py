@@ -14,6 +14,7 @@ import sys
 import io
 import json
 import time
+import logging
 import threading
 from datetime import datetime, timedelta
 
@@ -66,6 +67,32 @@ from forecast_utils import (
 )
 
 app = FastAPI(title="A股预测引擎", version="0.3.0")
+
+logger = logging.getLogger(__name__)
+
+
+def _get_owner_shadow_profile() -> dict | None:
+    """拉当前 owner 的影子画像(经 8000 GET /api/shadow/profile, 服务 token)。
+
+    预测引擎是独立进程(8010), 不能直查 PanWatch DB(users.shadow_profile_json 在
+    8000 容器内), 走 HTTP 拿落库画像。响应是统一包装 {code, success, data, message},
+    data 即 {profile: {...}|None, saved: bool}。
+    任何失败返回 None —— 裁判按无画像运行, 不阻断预测主流程。
+    """
+    try:
+        from panwatch_client import request_json
+        resp = request_json("/api/shadow/profile", timeout=10)
+    except Exception as exc:
+        logger.warning("获取用户画像失败(裁判按无画像运行): %s", exc)
+        return None
+    if not isinstance(resp, dict):
+        return None
+    data = resp.get("data") if isinstance(resp.get("data"), dict) else resp
+    profile = data.get("profile") if isinstance(data, dict) else None
+    if isinstance(profile, dict) and profile:
+        logger.info("AI 裁判注入用户画像: %s", str(profile.get("shadow_id", "?"))[:24])
+        return profile
+    return None
 
 
 @app.get("/health")
@@ -222,8 +249,9 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
         dragon_tiger = []
 
 
-    # sanity clip: 单模型预测偏离基准 >±40% 视为异常, 截断(防模型外推爆炸污染)
-    def _clip_arr(arr, base, lo=0.6, hi=1.4):
+    # sanity clip: 单模型预测偏离基准 >±25% 视为异常, 截断(防模型外推爆炸污染)。
+    # 之前 ±40% 形同虚设(linreg 外推 +39.7% 刚好卡在阈值内, 污染投票)。
+    def _clip_arr(arr, base, lo=0.75, hi=1.25):
         a = np.array(arr, dtype=float)
         return np.clip(a, base * lo, base * hi)
 
@@ -269,13 +297,37 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
         final = final * (1 + adjust_pct / 100)
         _log(tid, f"应用情绪修正 {adjust_pct:+.2f}%")
 
+    # 单日涨跌停约束(2026-08-13 修复): A股主板单日 ±10%, 预测序列必须物理可行。
+    # 之前模型外推(如 linreg +39.7%)导致 T+1 跳变 +13%, 违反涨跌停规则。
+    # 做法: 计算序列最大单日步长, 若 >10% 整体压缩(等比缩放), 保证每一步 ≤10%。
+    _DAY_LIMIT = 0.10  # 主板涨跌停 ±10%
+    changes = np.abs(np.diff(np.concatenate([[last_close], final]))) / last_close
+    max_step = float(changes.max()) if len(changes) else 0.0
+    if max_step > _DAY_LIMIT:
+        # 等比压缩: 把最大单日步长压到 10%, 其余步长同步缩放, 方向保持不变
+        scale = _DAY_LIMIT / max_step
+        final = last_close + (final - last_close) * scale
+        _log(
+            tid,
+            f"涨跌停约束: 原最大单日步长 {max_step*100:.1f}% > 10%, "
+            f"压缩至 {_DAY_LIMIT*100:.0f}% (scale={scale:.2f}), 方向不变",
+        )
+    else:
+        _log(tid, f"涨跌停检查: 最大单日步长 {max_step*100:.1f}% ≤ 10%, 通过")
+
+    # (2026-08-13 用户决策: 不做首日温和化 —— 活跃票涨停是常态,
+    #  神剑股份近一年涨停25次, T+1 接近涨停完全合理, 只要不超 ±10% 物理上限即可)
+
     direction = "up" if final[-1] > last_close else "down" if final[-1] < last_close else "flat"
 
     # --- AI 裁判层(2026-08-12, B方案): 预测交给 PanWatch 对话助手(8000)评估, 可改最终方向 ---
     # 裁判用对话助手的工具(主力意图/资金流/技术面/K线形态)核实盘面后给 verdict;
     # verdict=adjust 且给出方向时强势覆盖 direction; 任何异常降级 confirm, 不阻断主流程。
+    # 用户影子画像(B方案, 2026-08-13): 经 8000 GET /api/shadow/profile 拉 owner 画像,
+    # 注入裁判 prompt 只影响建议贴合度(短线/潜伏等表达), 不改 verdict/direction。
     try:
         from ai_referee import evaluate_prediction
+        user_profile = _get_owner_shadow_profile()  # 失败返回 None, 裁判照常跑
         ai_verdict = evaluate_prediction(
             symbol, stock_name, last_close,
             {
@@ -286,6 +338,7 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
             },
             direction,
             round((float(final[-1]) / last_close - 1) * 100, 2),
+            user_profile=user_profile,
         )
     except Exception as e:
         _log(tid, f"AI 裁判调用异常(降级 confirm): {e}")

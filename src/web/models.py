@@ -36,6 +36,8 @@ class User(Base):
     external_id = Column(String(128), nullable=True)  # 预留: 第三方用户ID
     is_active = Column(Boolean, default=True, nullable=False)
     token_version = Column(Integer, default=1, nullable=False)
+    # 影子账户交易画像(交割单分析落库, profile.to_dict()); NULL=未上传过交割单
+    shadow_profile_json = Column(JSON, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
