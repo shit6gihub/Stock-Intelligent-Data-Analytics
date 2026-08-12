@@ -32,7 +32,7 @@ router = APIRouter(tags=["shadow"])
 _UPLOAD_DIR = Path("/app/data/shadow_uploads") if Path("/app/data").exists() else Path("data/shadow_uploads")
 _REPORT_DIR = Path("/app/data/shadow_reports") if Path("/app/data").exists() else Path("data/shadow_reports")
 
-_ALLOWED_SUFFIX = {".csv", ".xlsx", ".xls"}
+_ALLOWED_SUFFIX = {".csv", ".xlsx", ".xls", ".pdf"}
 
 
 @router.post("/analyze")
