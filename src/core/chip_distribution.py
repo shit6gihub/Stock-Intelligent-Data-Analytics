@@ -23,6 +23,30 @@ DECAY = 1.0
 _NEAR_CHIPS_CACHE: dict[str, tuple[float, dict | None]] = {}
 _NEAR_CHIPS_TTL = 3600.0
 
+# 2026-08-12 磁盘持久化: 筹码分布(10日窗口盘中不变)落盘, 重启不重算
+_NEAR_CHIPS_DISK = None
+
+
+def _chips_persist(load_only: bool = False):
+    """筹码快照写盘(惰性初始化)。load_only=True 只加载不写盘。"""
+    global _NEAR_CHIPS_DISK
+    try:
+        if _NEAR_CHIPS_DISK is None:
+            from src.core.disk_cache import DiskCache, register
+            _NEAR_CHIPS_DISK = DiskCache("near_term_chips", ttl=86400.0, flush_interval=120.0)
+            snap = _NEAR_CHIPS_DISK.get("all")
+            if isinstance(snap, dict) and snap:
+                _NEAR_CHIPS_CACHE.update(snap)
+            register(_NEAR_CHIPS_DISK)
+        if not load_only:
+            _NEAR_CHIPS_DISK.set("all", dict(_NEAR_CHIPS_CACHE))
+    except Exception:
+        pass
+
+
+# 2026-08-12: 模块 import 时加载磁盘缓存, 不写盘
+_chips_persist(load_only=True)
+
 
 def fetch_sina_hist_price(symbol_code: str, start: str, end: str) -> list[dict] | None:
     """新浪历史分价表: 区间内各价位真实累计成交量(2026-08-11 接入)。
@@ -219,6 +243,7 @@ def compute_near_term_chips(symbol_code: str, days: int = 10) -> dict | None:
         source = "sina_hist_price"
     if not rows or len(rows) < 5:
         _NEAR_CHIPS_CACHE[symbol_code] = (_now, None)
+        _chips_persist()
         return None
 
     total = sum(r["volume"] for r in rows)
@@ -278,6 +303,7 @@ def compute_near_term_chips(symbol_code: str, days: int = 10) -> dict | None:
         "window_days": days,
     }
     _NEAR_CHIPS_CACHE[symbol_code] = (_now, _result)
+    _chips_persist()
     return _result
 
 

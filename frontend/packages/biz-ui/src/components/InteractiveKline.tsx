@@ -247,7 +247,8 @@ export default function InteractiveKline(props: {
     setMinuteError('')
     try {
       const res = await fetchAPI<MinuteResponse>(
-        `/quotes/minute/${encodeURIComponent(props.symbol)}?market=${encodeURIComponent(props.market)}`
+        `/quotes/minute/${encodeURIComponent(props.symbol)}?market=${encodeURIComponent(props.market)}`,
+        { cacheMode: 'reload' }  // 分时 30s 轮询需实时, 跳过前端缓存
       )
       setMinutePoints(res.points || [])
       setMinutePrevClose(res.prev_close ?? null)

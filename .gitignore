@@ -31,3 +31,4 @@ pnpm-debug.log*
 docs/superpowers/
 .superpowers/
 panwatch.db
+src/.cache/

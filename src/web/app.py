@@ -72,6 +72,10 @@ app.add_middleware(
 
 # 认证路由（无需登录）
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+# 行情 WebSocket(2026-08-12): 独立 router, 无路由级 auth(WS 握手与 HTTPBearer 冲突)
+from src.web.api.ws_quotes import router as ws_quotes_router
+
+app.include_router(ws_quotes_router, prefix="/api", tags=["quotes-ws"])
 # 市场指数（公共数据，无需登录）
 app.include_router(market.router, prefix="/api/market", tags=["market"])
 # TradingView Alert Webhook(2026-08-12): 免登录, secret 鉴权

@@ -56,6 +56,35 @@ def _tencent_code(symbol: Symbol) -> str | None:
 _TICKS_CACHE: dict[str, tuple[float, list[dict], int, int]] = {}
 _TICKS_TTL = 30.0
 
+# 2026-08-12 磁盘持久化: 逐笔快照落盘(/app/data/cache), 重启后同交易日
+# 直接从 last_page 增量续拉, 免全量翻页(冷启动 3.7s → ~0.5s)。
+_TICKS_DISK = None
+_TICKS_DISK_FLUSH_TTL = 60.0  # 写盘节流: 缓存 30s 一更新, 每 60s 刷一次即可
+
+
+def _ticks_persist(load_only: bool = False):
+    """逐笔快照写盘(惰性初始化 + 节流由 DiskCache 控制)。
+
+    load_only=True 时只从磁盘加载到内存(模块 import 时用), 不写盘。
+    """
+    global _TICKS_DISK
+    try:
+        if _TICKS_DISK is None:
+            from src.core.disk_cache import DiskCache, register
+            _TICKS_DISK = DiskCache("dark_flow_ticks", ttl=86400.0, flush_interval=_TICKS_DISK_FLUSH_TTL)
+            snap = _TICKS_DISK.get("all")
+            if isinstance(snap, dict) and snap:
+                _TICKS_CACHE.update(snap)
+            register(_TICKS_DISK)
+        if not load_only:
+            _TICKS_DISK.set("all", dict(_TICKS_CACHE))
+    except Exception:
+        pass
+
+
+# 2026-08-12: 模块 import 时加载磁盘缓存(重启后首次调用前就绪), 不写盘
+_ticks_persist(load_only=True)
+
 
 def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
     """翻页拉取全天全量逐笔(增量续拉), 返回 [{direction, amount, volume, time}]。
@@ -79,6 +108,7 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
             from src.core.dark_l2 import fetch_l2_ticks  # 预留模块, 接入L2时实现
             ticks = fetch_l2_ticks(code, DARK_SOURCE)
             _TICKS_CACHE[code] = (now, ticks, 0, 0)
+            _ticks_persist()  # 2026-08-12: 快照落盘
             return ticks
         except Exception:
             pass  # L2 未接入/异常, 回退腾讯逐笔
@@ -159,6 +189,7 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
         if start >= max_pages:
             # 已拉满上限, 刷新缓存时间即可
             _TICKS_CACHE[code] = (now, old_ticks, old_last_page, old_last_seq)
+            _ticks_persist()  # 2026-08-12: 快照落盘
             return old_ticks
         new_ticks: list[dict] = []
         _new_ticks, last_page, last_seq = _drain_pages(start, max_pages, new_ticks)
@@ -175,12 +206,14 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
                 for t in merged:
                     t.pop("_seq", None)
                 _TICKS_CACHE[code] = (now, merged, last_page, last_seq)
+                _ticks_persist()  # 2026-08-12: 快照落盘
                 return merged
             # 序号断裂(新交易日/数据重置) → 全量重拉
             _TICKS_CACHE.pop(code, None)
         else:
             # 无新增(可能盘前/刚开盘): 刷新缓存时间, 保留旧数据
             _TICKS_CACHE[code] = (now, old_ticks, old_last_page, old_last_seq)
+            _ticks_persist()  # 2026-08-12: 快照落盘
             return old_ticks
 
     # ---- 全量拉取(无缓存 / 序号断裂后) ----
@@ -199,6 +232,7 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
             consecutive_empty += 1
             if consecutive_empty >= 2:
                 _TICKS_CACHE[code] = (now, ticks, last_full, max((t.get("_seq", -1) for t in ticks), default=-1))
+                _ticks_persist()  # 2026-08-12: 快照落盘
                 return ticks
 
     # 阶段2: 并发拉剩余页(每页70条, 全天通常 10-200 页)
@@ -208,11 +242,13 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
         for t in ticks:
             t.pop("_seq", None)
         _TICKS_CACHE[code] = (now, ticks, last_page, last_seq)
+        _ticks_persist()  # 2026-08-12: 快照落盘
         return ticks
 
     for t in ticks:
         t.pop("_seq", None)
     _TICKS_CACHE[code] = (now, ticks, last_full, max((t.get("_seq", -1) for t in ticks), default=-1))
+    _ticks_persist()  # 2026-08-12: 快照落盘
     return ticks
 
 

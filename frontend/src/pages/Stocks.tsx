@@ -716,6 +716,10 @@ export default function StocksPage() {
     return items
   }, [stocks, portfolioRaw])
 
+  // 2026-08-12: SSE 推送需要最新 items(闭包陷阱), 用 ref 同步
+  const buildQuoteItemsRef = useRef(buildQuoteItems)
+  buildQuoteItemsRef.current = buildQuoteItems
+
   const refreshQuotes = useCallback(async () => {
     const items = buildQuoteItems()
     if (items.length === 0) return
@@ -759,6 +763,53 @@ export default function StocksPage() {
     })()
   }, [stocks, portfolioRaw, refreshQuotes])
 
+  // 2026-08-12 行情推送(WebSocket): 自选股实时行情免手动刷新。
+  // 后端每 5s 批量推一次(腾讯批量接口)。⚠️ 曾用 EventSource/SSE, uvicorn 下
+  // StreamingResponse+while True 生成器挂起, 改 WebSocket 稳定。断线自动重连。
+  useEffect(() => {
+    const token = getToken()
+    let ws: WebSocket | null = null
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+
+    const connect = () => {
+      if (!token) return
+      ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/quotes/ws?token=${encodeURIComponent(token)}`)
+      ws.onmessage = (ev) => {
+        try {
+          const payload = JSON.parse(ev.data)
+          if (!payload || payload.type !== 'quotes' || !payload.data) return
+          // payload.data: {symbol: {price, change_pct, prev_close, name}}
+          setQuotes(prev => {
+            const next = { ...prev }
+            const items = buildQuoteItemsRef.current
+            for (const item of items) {
+              const q = payload.data[item.symbol]
+              if (!q || typeof q.price !== 'number') continue
+              next[`${item.market}:${item.symbol}`] = {
+                current_price: q.price,
+                change_pct: q.change_pct ?? null,
+                quote_time: null,
+                quote_date: null,
+                daily_pnl_period: prev[`${item.market}:${item.symbol}`]?.daily_pnl_period ?? 'unknown',
+              }
+            }
+            return next
+          })
+        } catch { /* 忽略坏帧 */ }
+      }
+      ws.onclose = () => {
+        // 断线 5s 后重连(EventSource 原生有重连, WebSocket 需手动)
+        retryTimer = setTimeout(connect, 5000)
+      }
+    }
+
+    connect()
+    return () => {
+      if (retryTimer) clearTimeout(retryTimer)
+      ws?.close()
+    }
+  }, [])
+
   // 刷新 K 线摘要（并发受限的单个请求，避免批量接口慢）；并防止重入
   const refreshKlines = useCallback(async () => {
     if (klineRefreshInFlight.current) return klineRefreshInFlight.current
@@ -773,7 +824,7 @@ export default function StocksPage() {
           const i = idx++
           const it = items[i]
           try {
-            const res = await fetchAPI<{ symbol: string; market: string; summary: KlineSummary }>(`/klines/${encodeURIComponent(it.symbol)}/summary?market=${encodeURIComponent(it.market)}`)
+            const res = await fetchAPI<{ symbol: string; market: string; summary: KlineSummary }>(`/klines/${encodeURIComponent(it.symbol)}/summary?market=${encodeURIComponent(it.market)}`, { cacheMode: 'reload' })
             if (res && (res as any).summary) {
               map[`${it.market}:${it.symbol}`] = (res as any).summary as KlineSummary
             }
