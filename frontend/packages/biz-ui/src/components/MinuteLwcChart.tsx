@@ -120,10 +120,20 @@ export default function MinuteLwcChart({ points, prevClose, isIndex, swings }: P
     // 拉升/下探段标记(2026-08-12): 段起点标箭头(红↑真拉升 / 绿↓真出货),
     // 段内成交额标注在箭头 tooltip。仅个股非指数。
     // 注意: 分时点 t 为 "0930" 格式, 段 start/end 为 "09:48" 格式 → 统一转 "HH:MM" 比较。
+    // 2026-08-12 用户反馈: "0.00"价格变动是噪音, 去掉——金额保留, 价格变动≥0.01才显示。
     const hmOf = (t: string) => (t.includes(':') ? t.slice(0, 5) : `${t.slice(0, 2)}:${t.slice(2, 4)}`)
+    const fmtPrice = (p: number | undefined | null, sign = false) => {
+      const v = p ?? 0
+      if (Math.abs(v) < 0.01) return ''
+      return sign ? (v > 0 ? ` +${v.toFixed(2)}` : ` ${v.toFixed(2)}`) : ` ${v.toFixed(2)}`
+    }
+    // 2026-08-12 用户反馈2: 主力净额 < 100万 的段是噪音(50万/78万/负10万等), 过滤不标,
+    // 减少重叠遮挡(截图 15-20 个标记挤一起看不清)。金额保留显示。
+    const MIN_MAIN_NET = 100e4  // 100万元
     if (!isIndex && swings && (swings.rallies?.length || swings.dips?.length)) {
       const markers: any[] = []
       for (const r of swings.rallies || []) {
+        if (Math.abs(r.main_net) < MIN_MAIN_NET) continue  // 过滤小金额段
         const idx = points.findIndex(p => hmOf(p.t) === r.start)
         if (idx < 0) continue
         const trueRally = r.verdict.includes('放量上涨') || r.verdict.includes('疑似真拉升')
@@ -132,11 +142,12 @@ export default function MinuteLwcChart({ points, prevClose, isIndex, swings }: P
           position: 'belowBar',
           color: trueRally ? '#f43f5e' : 'rgba(244, 63, 94, 0.5)',
           shape: 'arrowUp',
-          text: `拉升 ${(r.price_up ?? 0).toFixed(2)} 主力${(r.main_net / 1e4).toFixed(0)}万`,
+          text: `拉升${fmtPrice(r.price_up, true)} 主力${(r.main_net / 1e4).toFixed(0)}万`,
           size: 1,
         })
       }
       for (const d of swings.dips || []) {
+        if (Math.abs(d.main_net) < MIN_MAIN_NET) continue  // 过滤小金额段
         const idx = points.findIndex(p => hmOf(p.t) === d.start)
         if (idx < 0) continue
         const trueDip = d.verdict.includes('放量下杀') || d.verdict.includes('疑似出货')
@@ -145,7 +156,7 @@ export default function MinuteLwcChart({ points, prevClose, isIndex, swings }: P
           position: 'aboveBar',
           color: trueDip ? '#10b981' : 'rgba(16, 185, 129, 0.5)',
           shape: 'arrowDown',
-          text: `下探 ${(d.price_down ?? 0).toFixed(2)} 主力${(d.main_net / 1e4).toFixed(0)}万`,
+          text: `下探${fmtPrice(d.price_down, true)} 主力${(d.main_net / 1e4).toFixed(0)}万`,
           size: 1,
         })
       }
