@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Plus, Trash2, Pencil, Search, X, TrendingUp, Bot, Play, RefreshCw, Wallet, PiggyBank, ArrowUpRight, ArrowDownRight, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink, BarChart3, Brain, Activity } from 'lucide-react'
-import { fetchAPI, stocksApi, type AIService, type NotifyChannel } from '@panwatch/api'
+import { fetchAPI, getToken, stocksApi, type AIService, type NotifyChannel } from '@panwatch/api'
 import { useLocalStorage } from '@/lib/utils'
 import { SuggestionBadge, type SuggestionInfo, type KlineSummary } from '@panwatch/biz-ui/components/suggestion-badge'
 import { buildKlineSuggestion } from '@/lib/kline-scorer'
@@ -781,7 +781,8 @@ export default function StocksPage() {
           // payload.data: {symbol: {price, change_pct, prev_close, name}}
           setQuotes(prev => {
             const next = { ...prev }
-            const items = buildQuoteItemsRef.current
+            // ⚠️ ref 存的是函数, 必须调用拿数组(2026-08-12 白屏根因: 迭代了函数本身)
+            const items = buildQuoteItemsRef.current()
             for (const item of items) {
               const q = payload.data[item.symbol]
               if (!q || typeof q.price !== 'number') continue

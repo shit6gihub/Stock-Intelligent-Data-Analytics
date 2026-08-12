@@ -61,9 +61,10 @@ export async function fetchAPI<T>(path: string, options?: ApiRequestOptions): Pr
     headers['Content-Type'] = 'application/json'
   }
 
-  // 2026-08-12: GET 缓存命中直接返回(除非 cache:'reload')
+  // 2026-08-12: GET 缓存命中直接返回(除非 cacheMode:'reload')
+  const _CACHE_ENABLED = true
   const ckey = _cacheKey(path, options)
-  if (ckey && options?.cacheMode !== 'reload' && options?.cacheMode !== false) {
+  if (_CACHE_ENABLED && ckey && options?.cacheMode !== 'reload' && options?.cacheMode !== false) {
     const hit = _RESP_CACHE.get(ckey)
     if (hit && Date.now() - hit.ts < _CACHE_TTL_DEFAULT) {
       return hit.data as T
