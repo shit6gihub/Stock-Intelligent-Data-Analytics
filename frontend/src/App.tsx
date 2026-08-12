@@ -1,25 +1,27 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
 import { TrendingUp, Bot, ScrollText, Settings, List, Database, Clock, LayoutDashboard, Github, BellRing, Sparkles, Activity, LineChart, FileText, BookOpen, Shield } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
 import { appApi, fetchAPI, isAuthenticated } from '@panwatch/api'
-import DashboardPage from '@/pages/Dashboard'
-import OpportunitiesPage from '@/pages/Opportunities'
-import StocksPage from '@/pages/Stocks'
-import AgentsPage from '@/pages/Agents'
-import SettingsPage from '@/pages/Settings'
-import DataSourcesPage from '@/pages/DataSources'
-import HistoryPage from '@/pages/History'
-import ReportsPage from '@/pages/Reports'
-import StrategiesPage from '@/pages/Strategies'
-import AnalysisDetailPage from '@/pages/AnalysisDetail'
-import PriceAlertsPage from '@/pages/PriceAlerts'
-import PaperTradingPage from '@/pages/PaperTrading'
-import LoginPage from '@/pages/Login'
-import ForecastPage from '@/pages/Forecast'
-import IndexDetailPage from '@/pages/IndexDetail'
-import ShadowAccountPage from '@/pages/ShadowAccount'
-import NotificationsPage from '@/pages/Notifications'
+// 2026-08-12 性能优化: 路由懒加载 — 17 个页面原本静态 import 打进单 bundle 1.2MB,
+// 点任意路由都要下载/解析整个应用。改为 React.lazy 按需加载, 首屏只下载登录页+当前页。
+const DashboardPage = lazy(() => import('@/pages/Dashboard'))
+const OpportunitiesPage = lazy(() => import('@/pages/Opportunities'))
+const StocksPage = lazy(() => import('@/pages/Stocks'))
+const AgentsPage = lazy(() => import('@/pages/Agents'))
+const SettingsPage = lazy(() => import('@/pages/Settings'))
+const DataSourcesPage = lazy(() => import('@/pages/DataSources'))
+const HistoryPage = lazy(() => import('@/pages/History'))
+const ReportsPage = lazy(() => import('@/pages/Reports'))
+const StrategiesPage = lazy(() => import('@/pages/Strategies'))
+const AnalysisDetailPage = lazy(() => import('@/pages/AnalysisDetail'))
+const PriceAlertsPage = lazy(() => import('@/pages/PriceAlerts'))
+const PaperTradingPage = lazy(() => import('@/pages/PaperTrading'))
+const LoginPage = lazy(() => import('@/pages/Login'))
+const ForecastPage = lazy(() => import('@/pages/Forecast'))
+const IndexDetailPage = lazy(() => import('@/pages/IndexDetail'))
+const ShadowAccountPage = lazy(() => import('@/pages/ShadowAccount'))
+const NotificationsPage = lazy(() => import('@/pages/Notifications'))
 import LogsModal from '@panwatch/biz-ui/components/logs-modal'
 import AmbientBackground from '@panwatch/biz-ui/components/AmbientBackground'
 import NotificationBell from '@panwatch/biz-ui/components/notification-bell'
@@ -86,6 +88,18 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+/** 懒加载路由的轻量占位(2026-08-12): 纯静态骨架, 不依赖任何懒加载模块 */
+function PageFallback() {
+  return (
+    <div className="w-full h-[60vh] flex items-center justify-center">
+      <div className="flex flex-col items-center gap-3 text-muted-foreground">
+        <div className="w-6 h-6 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+        <span className="text-[12px]">加载中…</span>
+      </div>
+    </div>
+  )
+}
+
 function App() {
   const { mode, setMode } = useTheme()
   const location = useLocation()
@@ -126,9 +140,11 @@ function App() {
   // 登录页面不显示导航
   if (location.pathname === '/login') {
     return (
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-      </Routes>
+      <Suspense fallback={<PageFallback />}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+        </Routes>
+      </Suspense>
     )
   }
 
@@ -274,26 +290,28 @@ function App() {
 
       {/* Content */}
       <main className="px-4 md:px-6 py-4 md:py-6 w-full">
-        <Routes>
-          <Route path="/" element={<DashboardPage />} />
-          <Route path="/opportunities" element={<OpportunitiesPage />} />
-          <Route path="/forecast" element={<ForecastPage />} />
-          <Route path="/index/:symbol" element={<IndexDetailPage />} />
-          <Route path="/portfolio" element={<StocksPage />} />
-          <Route path="/stocks" element={<LegacyStocksRedirect />} />
-          <Route path="/agents" element={<AgentsPage />} />
-          <Route path="/history" element={<HistoryPage />} />
-          <Route path="/reports" element={<ReportsPage />} />
-          <Route path="/strategies" element={<StrategiesPage />} />
-          <Route path="/shadow" element={<ShadowAccountPage />} />
-          <Route path="/paper-trading" element={<PaperTradingPage />} />
-          <Route path="/alerts" element={<PriceAlertsPage />} />
-          <Route path="/notifications" element={<NotificationsPage />} />
-          <Route path="/datasources" element={<DataSourcesPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/analysis/:symbol/:date" element={<AnalysisDetailPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <Suspense fallback={<PageFallback />}>
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/opportunities" element={<OpportunitiesPage />} />
+            <Route path="/forecast" element={<ForecastPage />} />
+            <Route path="/index/:symbol" element={<IndexDetailPage />} />
+            <Route path="/portfolio" element={<StocksPage />} />
+            <Route path="/stocks" element={<LegacyStocksRedirect />} />
+            <Route path="/agents" element={<AgentsPage />} />
+            <Route path="/history" element={<HistoryPage />} />
+            <Route path="/reports" element={<ReportsPage />} />
+            <Route path="/strategies" element={<StrategiesPage />} />
+            <Route path="/shadow" element={<ShadowAccountPage />} />
+            <Route path="/paper-trading" element={<PaperTradingPage />} />
+            <Route path="/alerts" element={<PriceAlertsPage />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
+            <Route path="/datasources" element={<DataSourcesPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/analysis/:symbol/:date" element={<AnalysisDetailPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
       </main>
       <ChatWidget />
       <LogsModal open={logsOpen} onOpenChange={setLogsOpen} />
