@@ -251,6 +251,16 @@ async def add_position_eval(req: AddPositionEvalRequest, db: Session = Depends(g
 
     try:
         client = _get_ai_client(db, req.model_id)
+        # 2026-08-13 统一 LLM 配置中心: insights 场景绑定覆盖模型(无绑定回落原模型)
+        try:
+            from src.core.ai_client import get_model_for_scene
+            from src.agents.base import _coerce_bound_model
+            m = get_model_for_scene(db, "insights")
+            if m:
+                bound = _coerce_bound_model(m)
+                client.model = bound.get("model", client.model)
+        except Exception:
+            pass
         content = await client.chat(system_prompt, user_content, temperature=0.3)
     except Exception as e:
         raise HTTPException(502, f"AI 评估失败: {e}")
@@ -338,7 +348,18 @@ async def announcement_eval(req: AnnouncementEvalRequest, db: Session = Depends(
     )
     user_content = f"标的 {name}({market}:{req.symbol}) 近期公告:\n{listing}"
     try:
-        content = await _get_ai_client(db, req.model_id).chat(
+        client = _get_ai_client(db, req.model_id)
+        # 2026-08-13 统一 LLM 配置中心: insights 场景绑定覆盖模型(无绑定回落原模型)
+        try:
+            from src.core.ai_client import get_model_for_scene
+            from src.agents.base import _coerce_bound_model
+            m = get_model_for_scene(db, "insights")
+            if m:
+                bound = _coerce_bound_model(m)
+                client.model = bound.get("model", client.model)
+        except Exception:
+            pass
+        content = await client.chat(
             system_prompt, user_content, temperature=0.2
         )
     except Exception as e:

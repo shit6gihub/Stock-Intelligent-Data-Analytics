@@ -358,6 +358,190 @@ def _classify_split(seq: list[dict], prev_close: float | None) -> dict:
     }
 
 
+# ── 内盘外盘口诀(2026-08-13)──────────────────────────────────────────────
+# 7 条实战口诀(规则预判, 只提示不改结论)。数据基础: 腾讯 Quote 的
+# volume_outer(外盘/主动买) + volume_inner(内盘/主动卖) + change_pct + volume_ratio。
+_MNEMONIC_STRONG = 55.0       # ①~④ 单边占比阈值(外盘或内盘 >55%)
+_MNEMONIC_BALANCE = 10.0      # ⑤ 内外盘相当: |买%-卖%| < 10%
+_MNEMONIC_DOUBLE_LOW = 30.0   # ⑥ 双小: 主动买+主动卖 < 30% 总成交量
+_MNEMONIC_DOUBLE_HIGH = 85.0  # ⑦ 双大: 主动买+主动卖 > 85% 总成交量
+_MNEMONIC_VOL_RATIO = 1.5     # ① ② 放量: 量比 > 1.5
+_MNEMONIC_MOVE = 0.5          # 有效涨跌: |涨跌%| > 0.5 才算涨/跌(剔除噪音)
+_MNEMONIC_FLAT = 1.0          # ⑦ 价格不动: |涨跌%| <= 1.0
+_MNEMONIC_OSCILLATE = 3.0     # ⑥ 震荡: 0.5% < |涨跌%| <= 3%(有波动无单边)
+
+
+def _num(v) -> float | None:
+    """安全转 float, 失败/None 返回 None。"""
+    try:
+        if v is None:
+            return None
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _position_from_range(quote: dict | None) -> str:
+    """今日振幅区间内估算位置(无K线时的简化口径): 分位 >=0.66 high / <=0.33 low / 其他 mid。"""
+    try:
+        if not quote:
+            return "unknown"
+        hi = _num(quote.get("high_price"))
+        lo = _num(quote.get("low_price"))
+        price = _num(quote.get("current_price"))
+        if hi and lo and price and hi > lo:
+            pct = (price - lo) / (hi - lo)
+            if pct >= 0.66:
+                return "high"
+            if pct <= 0.33:
+                return "low"
+            return "mid"
+    except Exception:
+        pass
+    return "unknown"
+
+
+def _estimate_position(symbol: Symbol, quote: dict | None = None) -> str:
+    """现价位置估算: 20日K线分位优先, 失败回退今日振幅区间, 再失败 unknown。"""
+    try:
+        from marketdata.vendors.kline import fetch_tencent_kline_raw
+        code = _tencent_code(symbol)
+        if code:
+            bars = fetch_tencent_kline_raw(code, 20)
+            if bars and len(bars) >= 5:
+                highs = [b.high for b in bars if b.high]
+                lows = [b.low for b in bars if b.low]
+                if highs and lows:
+                    hi, lo = max(highs), min(lows)
+                    price = _num(bars[-1].close) or _num((quote or {}).get("current_price"))
+                    if hi > lo and price:
+                        pct = (price - lo) / (hi - lo)
+                        if pct >= 0.66:
+                            return "high"
+                        if pct <= 0.33:
+                            return "low"
+                        return "mid"
+    except Exception:
+        pass
+    return _position_from_range(quote)
+
+
+def _signal_direction(signal: str) -> int:
+    """从主力意图 signal 文本粗判方向: +1 偏多 / -1 偏空 / 0 中性。
+
+    用于口诀 divergence(背离)判定: 信号文本同时含多空词(如"净流出…疑洗盘吸筹")
+    视为中性, 不判背离, 避免把模糊信号误报成背离。
+    """
+    s = signal or ""
+    bull = ("净流入" in s) or ("吸筹" in s)
+    bear = ("净流出" in s) or ("派发" in s) or ("出货" in s) or ("抛压" in s)
+    if bull and not bear:
+        return 1
+    if bear and not bull:
+        return -1
+    return 0
+
+
+def _judge_mnemonic(dark: dict, quote: dict | None = None) -> dict | None:
+    """内盘外盘 7 口诀判定(规则预判, 只提示不改结论)。
+
+    输入: compute_dark_flow 结果 dark + 腾讯 Quote 字段 dict(volume_outer/
+    volume_inner/change_pct/volume_ratio/high_price/low_price/current_price/volume)。
+    buy_pct = 外盘/(外盘+内盘)*100, sell_pct 反向; 涨跌/放量/位置按阈值判定。
+
+    命中返回 {mnemonic: 口诀名, direction: 看涨/看跌/观望/警惕/关注/中性,
+    divergence: bool(口诀方向与主力意图 signal 方向是否背离), detail: 解析文本};
+    无命中返回 None。
+
+    判定优先级(避免多口诀同时命中时自相矛盾):
+      ⑥ 双小(结构)→ ⑤ 平衡(良性解读优先, 否则每个横盘日都被 ⑦ 误报对倒)→ ⑦ 双大
+      → ① ② 放量确认的强信号 → ③ ④ 位置信号
+    注意: 腾讯口径 volume≈外盘+内盘(active_ratio≈100%), 故 ⑥ 双小在当前数据源
+    几乎不触发(保留规则, 未来 L2 含中性盘时生效); ⑦ 仅在单边失衡+价格不动时触发。
+    """
+    if not dark or not quote:
+        return None
+    outer = _num(quote.get("volume_outer"))
+    inner = _num(quote.get("volume_inner"))
+    change_pct = _num(quote.get("change_pct"))
+    volume_ratio = _num(quote.get("volume_ratio"))
+    if outer is None or inner is None or (outer + inner) <= 0 or change_pct is None:
+        return None
+
+    total = outer + inner
+    buy_pct = outer / total * 100
+    sell_pct = inner / total * 100
+
+    # 位置: 优先 compute_dark_flow 的 inner_outer.position(20日分位), 缺失回退今日振幅
+    position = ((dark.get("inner_outer") or {}).get("position")) or _position_from_range(quote)
+
+    # 成交量口径: 主动盘(外+内)占总成交量比例(腾讯 volume 总手)
+    quote_vol = _num(quote.get("volume"))
+    active_ratio = total / quote_vol * 100 if (quote_vol and quote_vol > 0) else 100.0
+
+    # 涨跌/放量/形态
+    up = change_pct > _MNEMONIC_MOVE
+    down = change_pct < -_MNEMONIC_MOVE
+    flat = abs(change_pct) <= _MNEMONIC_MOVE
+    no_move = abs(change_pct) <= _MNEMONIC_FLAT       # ⑦ 价格不动
+    oscillate = _MNEMONIC_MOVE < abs(change_pct) <= _MNEMONIC_OSCILLATE  # ⑥ 震荡
+    volume_up = volume_ratio is not None and volume_ratio > _MNEMONIC_VOL_RATIO  # 放量
+    double_small = active_ratio < _MNEMONIC_DOUBLE_LOW   # ⑥ 双小
+    double_big = active_ratio > _MNEMONIC_DOUBLE_HIGH     # ⑦ 双大
+    balance = abs(buy_pct - sell_pct) < _MNEMONIC_BALANCE  # ⑤ 内外盘相当
+
+    head = (
+        f"外盘{buy_pct:.1f}%/内盘{sell_pct:.1f}%, 涨跌{change_pct:+.2f}%, "
+        f"量比{volume_ratio:.2f}, 位置:{position}, 主动盘占比{active_ratio:.0f}%"
+    )
+
+    # (条件, 口诀名, 方向, 解析文本) —— 按优先级排列
+    rules = [
+        # ⑥ 内外盘双小(主动盘<30%成交)+震荡 → 控盘洗盘(关注)
+        (double_small and oscillate, "控盘洗盘", "关注",
+         "主动买卖盘占比<30%却仍在震荡 → 交投清淡, 疑似主力高度控盘后的洗盘(关注)"),
+        # ⑤ 内外盘相当(|买-卖|<10%)+横盘 → 多空平衡(观望)
+        (balance and flat, "多空平衡", "观望",
+         "内外盘占比接近且横盘 → 多空力量平衡, 方向不明(观望)"),
+        # ⑦ 内外盘双大(主动盘>85%)+价格不动 → 对倒造假(警惕)
+        (double_big and no_move, "对倒造假", "警惕",
+         "主动买卖盘占比>85%但价格几乎不动, 且内外盘单边失衡 → 疑似对倒制造成交量, 警惕出货陷阱(警惕)"),
+        # ① 外盘大(>55%)+涨+放量 → 真金进攻(看涨)
+        (buy_pct > _MNEMONIC_STRONG and up and volume_up, "真金进攻", "看涨",
+         "外盘占比高+上涨+放量 → 主动性买盘真金进攻(看涨)"),
+        # ② 内盘大(>55%)+跌+放量 → 主力撤退(看跌)
+        (sell_pct > _MNEMONIC_STRONG and down and volume_up, "主力撤退", "看跌",
+         "内盘占比高+下跌+放量 → 主动性卖盘汹涌, 疑似主力撤退(看跌)"),
+        # ③ 外盘大+跌+高位 → 诱多出货(警惕)
+        (buy_pct > _MNEMONIC_STRONG and down and position == "high", "诱多出货", "警惕",
+         "外盘占比高却下跌且处高位 → 疑似边拉边出诱多, 警惕高位派发(警惕)"),
+        # ④ 内盘大+涨+低位 → 压盘吸筹(看涨)
+        (sell_pct > _MNEMONIC_STRONG and up and position == "low", "压盘吸筹", "看涨",
+         "内盘占比高但上涨且处低位 → 疑似压盘吸筹, 低位换手收集筹码(看涨)"),
+        # ⑤ 内外盘相当(|买-卖|<10%)+横盘 → 多空平衡(观望)
+        (balance and flat, "多空平衡", "观望",
+         "内外盘占比接近且横盘 → 多空力量平衡, 方向不明(观望)"),
+    ]
+    for cond, name, direction, text in rules:
+        if not cond:
+            continue
+        # 背离: 口诀方向与主力意图 signal 方向相反(仅数据充分且信号方向明确时判定)
+        divergence = False
+        if dark.get("data_status") == "ok":
+            sig_dir = _signal_direction(dark.get("signal", ""))
+            mn_dir = {"看涨": 1, "看跌": -1}.get(direction, 0)
+            divergence = sig_dir != 0 and mn_dir != 0 and sig_dir != mn_dir
+        if divergence:
+            text += " ⚠️ 与主力资金意图方向背离, 优先以主力意图为准!"
+        return {
+            "mnemonic": name,
+            "direction": direction,
+            "divergence": divergence,
+            "detail": f"{head} → {text}",
+        }
+    return None
+
+
 def compute_dark_flow(symbol: Symbol) -> dict | None:
     """计算暗盘资金 v5: 三分类 + 大单/暗盘分层 + 价格维度 + 时段。"""
     code = _tencent_code(symbol)
@@ -369,10 +553,20 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
 
     # 昨收(用于套牢区判断: 涨中卖+低于昨收=散户解套, 非主力派发)
     prev_close = None
+    quote_dict = None
     try:
         from marketdata.vendors.tencent import TencentQuoteVendor
         q = TencentQuoteVendor().fetch([symbol], {})[0]
         prev_close = q.prev_close if q.prev_close else None
+        quote_dict = {
+            "current_price": q.current_price,
+            "high_price": q.high_price,
+            "low_price": q.low_price,
+            "change_pct": q.change_pct,
+            "volume_ratio": q.volume_ratio,
+            "volume_outer": q.volume_outer,
+            "volume_inner": q.volume_inner,
+        }
     except Exception:
         pass
 
@@ -455,6 +649,18 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
         "auction_vol": round(auction_vol),   # 竞价撮合手数
         "main_intensity": round(main_intensity, 1) if main_intensity is not None else None,  # 主力参与度%
         "main_buy_ratio": round(main_buy_ratio, 1) if main_buy_ratio is not None else None,  # 主力买占比%
+        # 2026-08-13: 内盘外盘结构化字段(分时卡片用)。buy_amt/sell_amt = 主动买/卖金额(元),
+        # buy_pct/sell_pct = 占比(基于 vol, 含中性盘分母); volume_ratio/change_pct 取自腾讯 Quote;
+        # position = 现价位置(20日分位优先, 回退今日振幅, 再失败 unknown)
+        "inner_outer": {
+            "buy_amt": round(buy_amt),
+            "sell_amt": round(sell_amt),
+            "buy_pct": round(buy_vol / (buy_vol + sell_vol + m_vol) * 100, 1) if (buy_vol + sell_vol + m_vol) else None,
+            "sell_pct": round(sell_vol / (buy_vol + sell_vol + m_vol) * 100, 1) if (buy_vol + sell_vol + m_vol) else None,
+            "volume_ratio": (quote_dict or {}).get("volume_ratio"),
+            "change_pct": (quote_dict or {}).get("change_pct"),
+            "position": _estimate_position(symbol, quote_dict),
+        },
         "segments": {k: round(v) for k, v in seg.items()},
         "tick_count": len(ticks),
         # 2026-08-12: 盘中数据量门槛 —— 竞价/开盘初期(非竞价成交<30笔)不算主力意图,

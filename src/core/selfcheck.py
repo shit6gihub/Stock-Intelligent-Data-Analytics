@@ -95,18 +95,29 @@ async def probe_datasource(source) -> dict:
                      int((time.monotonic() - t0) * 1000), str(e))
 
 
-async def probe_ai_model(model, service) -> dict:
-    """复用 AIClient.chat 发一个极短 ping。"""
+async def probe_ai_model(model, service, db=None) -> dict:
+    """复用 AIClient.chat 发一个极短 ping。
+
+    统一 LLM 配置中心: 有 db 时模型改走 get_model_for_scene(db, "selfcheck") 场景绑定,
+    无绑定/无 db → 回落该模型自身配置(向后兼容)。
+    """
     from src.core.ai_client import AIClient
+    from src.agents.base import resolve_scene_model
 
     name = model.name or model.model
+    model_name = model.model
+    if db is not None:
+        model_name = resolve_scene_model(db, "selfcheck", model_name) or model_name
     t0 = time.monotonic()
     try:
-        client = AIClient(base_url=service.base_url, api_key=service.api_key, model=model.model)
+        client = AIClient(base_url=service.base_url, api_key=service.api_key, model=model_name)
         await client.chat(system_prompt="You are a helpful assistant.",
                           user_content="Say 'OK'.", temperature=0)
         latency = int((time.monotonic() - t0) * 1000)
-        return _item("ai", f"ai:{model.id}", name, _status_for(True, latency), latency)
+        note = None
+        if model_name != model.model:
+            note = f"场景绑定模型: {model_name}"
+        return _item("ai", f"ai:{model.id}", name, _status_for(True, latency), latency, note=note)
     except Exception as e:
         return _item("ai", f"ai:{model.id}", name, "fail",
                      int((time.monotonic() - t0) * 1000), str(e))
@@ -249,7 +260,7 @@ def _identity(t: dict) -> dict:
     return {"category": t["category"], "key": t["key"], "name": t["name"], "group": t.get("group")}
 
 
-def _probe_for(t: dict, notify_send: bool):
+def _probe_for(t: dict, notify_send: bool, db=None):
     kind = t["_kind"]
     if kind == "db":
         return probe_db()
@@ -260,7 +271,7 @@ def _probe_for(t: dict, notify_send: bool):
     if kind == "ds":
         return probe_datasource(t["_obj"])
     if kind == "ai":
-        return probe_ai_model(t["_obj"], t["_service"])
+        return probe_ai_model(t["_obj"], t["_service"], db=db)
     return probe_notify_channel(t["_obj"], send=notify_send)
 
 
@@ -282,7 +293,7 @@ async def run_selfcheck(*, db=None, notify_send: bool = False, keys=None, includ
     try:
         keyset = set(keys) if keys is not None else None
         targets = [t for t in _enumerate(db, include_system) if keyset is None or t["key"] in keyset]
-        tasks = [_guard(_probe_for(t, notify_send), _identity(t)) for t in targets]
+        tasks = [_guard(_probe_for(t, notify_send, db), _identity(t)) for t in targets]
         items = list(await asyncio.gather(*tasks)) if tasks else []
         summary = {
             "total": len(items),

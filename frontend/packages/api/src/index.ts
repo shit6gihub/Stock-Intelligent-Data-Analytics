@@ -15,6 +15,7 @@ export * from './paper-trading'
 export * from './chat'
 export * from './tradingagents'
 export * from './datasources'
+export * from './providers'
 export * from './reports'
 export * from "./strategies"
 export * from './tdx'

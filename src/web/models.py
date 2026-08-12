@@ -94,6 +94,32 @@ class AIModel(Base):
     service = relationship("AIService", back_populates="models")
 
 
+class AISceneBinding(Base):
+    """AI 使用场景绑定(2026-08-12 统一 LLM 配置中心)。
+
+    每个使用场景可绑定模型池(ai_models)中的任意模型,模型源(服务商)统一在
+    ai_services 管理。model_id 为 NULL = 未绑定,使用点回落默认模型
+    (is_default)或模型池第一个模型。
+
+    场景取值(6 个):
+      - chat: 对话助手(日常问答/个股咨询)
+      - trading_agents: TradingAgents 深度分析
+      - reports: 报告复盘 Agent(盘前/盘后复盘)
+      - referee: AI 裁判(多模型结果裁决/交叉验证)
+      - selfcheck: 自检(AI 质量自检)
+      - insights: 机会评分(投资机会评分/洞察)
+    """
+
+    __tablename__ = "ai_scene_bindings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    scene = Column(String(64), unique=True, nullable=False)
+    model_id = Column(
+        Integer, ForeignKey("ai_models.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class NotifyChannel(Base):
     __tablename__ = "notify_channels"
 

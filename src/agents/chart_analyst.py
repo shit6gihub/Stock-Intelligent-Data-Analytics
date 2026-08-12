@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from src.agents.base import BaseAgent, AgentContext, AnalysisResult
+from src.agents.base import BaseAgent, AgentContext, AnalysisResult, apply_scene_binding
 from src.collectors.screenshot_collector import ScreenshotCollector, ChartScreenshot
 from src.core.signals import SignalPackBuilder
 
@@ -182,6 +182,9 @@ class ChartAnalystAgent(BaseAgent):
         将截图作为图片传给 AI
         """
         system_prompt, user_content = self.build_prompt(data, context)
+
+        # 统一 LLM 配置中心: reports 场景模型绑定 + 画像注入(无 db/绑定失败则原样)
+        system_prompt = apply_scene_binding(context, "reports", system_prompt)
 
         # 收集图片路径
         screenshots: list[ChartScreenshot] = data.get("screenshots", [])

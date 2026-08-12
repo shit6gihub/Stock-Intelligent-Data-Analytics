@@ -38,6 +38,7 @@ from src.web.api import (
     tdx,
     shadow,
     ths,
+    darkflow,
 )
 from src.web.api import factors
 from src.web.api import notifications
@@ -258,6 +259,13 @@ app.include_router(
     ths.router,
     prefix="/api/ths",
     tags=["ths"],
+    dependencies=protected,
+)
+# 内盘外盘口诀 + 主力意图(分时卡片轻接口, 2026-08-13)
+app.include_router(
+    darkflow.router,
+    prefix="/api/dark-flow",
+    tags=["dark-flow"],
     dependencies=protected,
 )
 

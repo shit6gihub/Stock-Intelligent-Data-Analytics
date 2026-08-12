@@ -2,6 +2,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from src.core.ai_client import AIClient
 from src.core.notifier import NotifierManager
@@ -12,6 +13,94 @@ from src.core.notify_policy import NotifyPolicy
 from src.core.log_context import log_context
 
 logger = logging.getLogger(__name__)
+
+
+# ── LLM 配置中心: 场景模型绑定 + 画像注入(统一调用点改造)──────────────
+# 子任务 A 在 src/core/ai_client.py 提供 get_model_for_scene / build_system_prompt;
+# 本模块一律惰性 import + try/except,配置中心未就绪/绑定失败 → 原样降级(不崩)。
+
+
+def _scene_db(context) -> tuple[Any, bool]:
+    """解析场景绑定需要的 db session: 优先 context.db, 否则开短生命周期 SessionLocal。
+
+    Returns:
+        (db, own): own=True 表示本函数开的 session, 调用方负责关闭。
+    """
+    db = getattr(context, "db", None)
+    if db is not None:
+        return db, False
+    try:
+        from src.web.database import SessionLocal
+
+        return SessionLocal(), True
+    except Exception:
+        return None, False
+
+
+def _coerce_bound_model(bound) -> str | None:
+    """get_model_for_scene 返回值可能是模型名字符串或 AIModel 对象 → 统一成字符串。"""
+    if bound is None:
+        return None
+    if isinstance(bound, str):
+        return bound.strip() or None
+    m = getattr(bound, "model", None)
+    return str(m).strip() if m else None
+
+
+def apply_scene_binding(context, scene: str, system_prompt: str) -> str:
+    """统一 LLM 配置中心调用点: 场景模型绑定 + 系统提示词组装(画像自动追加)。
+
+    - 有 db(注入或自开) → 模型改走 get_model_for_scene(db, scene), 提示词经
+      build_system_prompt(db, scene, base_prompt, user) 组装。
+    - 拿不到 db / 配置中心函数未就绪 / 绑定失败 → 原样返回, 完全向后兼容。
+    """
+    db, own = _scene_db(context)
+    if db is None:
+        return system_prompt
+    try:
+        try:
+            from src.core.ai_client import build_system_prompt, get_model_for_scene
+        except (ImportError, AttributeError):
+            return system_prompt
+        # 1) 场景模型绑定: 有绑定 → 覆盖 ai_client.model
+        try:
+            bound = _coerce_bound_model(get_model_for_scene(db, scene))
+            if bound:
+                logger.info(
+                    f"Agent scene={scene} 模型绑定: "
+                    f"{getattr(context.ai_client, 'model', '')} -> {bound}"
+                )
+                context.ai_client.model = bound
+        except Exception as e:
+            logger.debug(f"场景模型绑定失败 scene={scene}: {e}")
+        # 2) 系统提示词组装(画像注入; user 可空)
+        try:
+            user = getattr(context, "user", None)
+            out = build_system_prompt(db, scene, system_prompt, user)
+            if isinstance(out, str) and out:
+                return out
+        except Exception as e:
+            logger.debug(f"场景提示词组装失败 scene={scene}: {e}")
+        return system_prompt
+    finally:
+        if own:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+
+def resolve_scene_model(db, scene: str, default_model: str | None = None) -> str | None:
+    """按场景取绑定模型名(供不自带 system prompt 的调用点用); 无绑定回落 default_model。"""
+    if db is None:
+        return default_model
+    try:
+        from src.core.ai_client import get_model_for_scene
+
+        bound = _coerce_bound_model(get_model_for_scene(db, scene))
+        return bound or default_model
+    except Exception:
+        return default_model
 
 
 @dataclass
@@ -124,6 +213,9 @@ class AgentContext:
     model_label: str = ""  # e.g. "智谱/glm-4-flash"
     notify_policy: NotifyPolicy | None = None
     suppress_notify: bool = False
+    # LLM 配置中心(场景绑定 + 画像注入):API/调度层可注入;None 时调用点宽松降级
+    db: Any = None
+    user: Any = None
 
     @property
     def watchlist(self) -> list[StockConfig]:
@@ -170,6 +262,8 @@ class BaseAgent(ABC):
     async def analyze(self, context: AgentContext, data: dict) -> AnalysisResult:
         """调用 AI 分析"""
         system_prompt, user_content = self.build_prompt(data, context)
+        # 统一 LLM 配置中心: reports 场景模型绑定 + 画像注入(无 db/绑定失败则原样)
+        system_prompt = apply_scene_binding(context, "reports", system_prompt)
         content = await context.ai_client.chat(system_prompt, user_content)
 
         # 标题含股票信息

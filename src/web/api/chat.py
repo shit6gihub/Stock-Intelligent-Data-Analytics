@@ -447,20 +447,92 @@ class CreateConversationBody(BaseModel):
     stock_symbol: str | None = None
     stock_market: str | None = None
     initial_context: str | None = None
+    # 统一 LLM 配置中心(2026-08-13): AI 裁判等场景经 ai_model_id 指定会话模型,
+    # send_message 的 _get_ai_client 优先用它(显式模型 > chat 场景绑定 > 默认)。
+    ai_model_id: int | None = None
 
 
 class SendMessageBody(BaseModel):
     content: str
 
 
+def _client_from_scene_cfg(db: Session, cfg) -> AIClient | None:
+    """把场景绑定配置归一为 AIClient(兼容多种返回形态), 无法识别返回 None。
+
+    形态兼容(基础设施 A 子任务的 get_model_for_scene 未定型前尽量宽松):
+    - dict 直给连接参数 {base_url, api_key, model}
+    - dict 带 model_id/ai_model_id → 查 AIModel 行拼 AIClient
+    - AIModel 实例 → 拼其 service
+    - (AIModel, AIService) 元组
+    """
+    if not cfg:
+        return None
+    # 形态1: dict
+    if isinstance(cfg, dict):
+        base_url = cfg.get("base_url")
+        model_name = cfg.get("model")
+        if base_url and model_name:
+            return AIClient(
+                base_url=base_url,
+                api_key=cfg.get("api_key") or "",
+                model=model_name,
+            )
+        mid = cfg.get("model_id") or cfg.get("ai_model_id")
+        if mid:
+            m = db.query(AIModel).filter(AIModel.id == mid).first()
+            if m:
+                s = db.query(AIService).filter(AIService.id == m.service_id).first()
+                if s:
+                    return AIClient(base_url=s.base_url, api_key=s.api_key, model=m.model)
+        return None
+    # 形态2: AIModel 实例
+    if isinstance(cfg, AIModel):
+        s = db.query(AIService).filter(AIService.id == cfg.service_id).first()
+        if s:
+            return AIClient(base_url=s.base_url, api_key=s.api_key, model=cfg.model)
+        return None
+    # 形态3: (model, service) 元组
+    if isinstance(cfg, (tuple, list)) and len(cfg) == 2:
+        m, s = cfg[0], cfg[1]
+        if isinstance(m, AIModel) and s is not None:
+            return AIClient(
+                base_url=getattr(s, "base_url", ""),
+                api_key=getattr(s, "api_key", ""),
+                model=m.model,
+            )
+    return None
+
+
 def _get_ai_client(db: Session, model_id: int | None = None) -> AIClient:
-    """获取 AI 客户端实例。"""
+    """获取 AI 客户端实例。
+
+    模型选择优先级(2026-08-13 统一 LLM 配置中心):
+    1. 会话显式指定模型(conv.ai_model_id —— AI 裁判等经 ai_model_id 建会话时用)
+    2. ai_scene_bindings 的 chat 场景绑定(基础设施 A 子任务提供
+       ai_client.get_model_for_scene(db, "chat"); 未落地/异常时向后兼容回落)
+    3. AIModel 表 is_default
+    4. AIModel 表任意一条
+    5. Settings 默认配置
+    """
     model = None
     service = None
 
+    # 1) 会话显式模型(裁判场景绑定等传入 ai_model_id 创建会话)
     if model_id:
         model = db.query(AIModel).filter(AIModel.id == model_id).first()
 
+    # 2) chat 场景绑定优先(统一配置中心); 函数未落地 → ImportError 自然回落
+    if not model:
+        try:
+            from src.core.ai_client import get_model_for_scene
+
+            scene_client = _client_from_scene_cfg(db, get_model_for_scene(db, "chat"))
+            if scene_client is not None:
+                return scene_client
+        except Exception as e:
+            logger.warning(f"chat 场景绑定不可用(回落 AIModel 默认): {e}")
+
+    # 3) AIModel 默认/兜底
     if not model:
         model = db.query(AIModel).filter(AIModel.is_default == True).first()  # noqa: E712
 
@@ -778,6 +850,7 @@ def create_conversation(
         stock_symbol=body.stock_symbol if body else None,
         stock_market=body.stock_market if body else None,
         initial_context=body.initial_context if body else None,
+        ai_model_id=body.ai_model_id if body else None,
     )
     db.add(conv)
     db.commit()
