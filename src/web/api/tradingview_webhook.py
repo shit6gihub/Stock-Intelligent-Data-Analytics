@@ -23,7 +23,11 @@ from pydantic import BaseModel
 
 router = APIRouter()
 
-_WEBHOOK_SECRET = os.environ.get("PANWATCH_TV_WEBHOOK_SECRET", "")
+
+def _webhook_secret() -> str:
+    """每次请求动态读取 env(2026-08-12): 模块级常量在 import 时求值,
+    测试/多环境切换时 env 可能未就绪, 动态读保证 secret 变更/测试隔离生效。"""
+    return os.environ.get("PANWATCH_TV_WEBHOOK_SECRET", "")
 
 
 class TVAlertPayload(BaseModel):
@@ -40,14 +44,14 @@ class TVAlertPayload(BaseModel):
 
 
 def _secret_ok(secret: str | None) -> bool:
-    if not _WEBHOOK_SECRET or not secret:
+    if not _webhook_secret() or not secret:
         return False
-    return hmac.compare_digest(secret, _WEBHOOK_SECRET)
+    return hmac.compare_digest(secret, _webhook_secret())
 
 
 @router.post("/tradingview")
 async def tradingview_alert(request: Request):
-    if not _WEBHOOK_SECRET:
+    if not _webhook_secret():
         return {"ok": False, "error": "webhook_disabled"}
     secret = request.headers.get("X-PanWatch-Secret", "")
     if not _secret_ok(secret):

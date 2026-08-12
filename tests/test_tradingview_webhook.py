@@ -10,21 +10,22 @@ from unittest.mock import patch
 
 import pytest
 
-os.environ["PANWATCH_TV_WEBHOOK_SECRET"] = "test-secret-123"
-
 from src.web.api.tradingview_webhook import TVAlertPayload, _secret_ok
 
 
 class TestSecret:
     def test_ok(self):
-        assert _secret_ok("test-secret-123") is True
+        with patch.dict(os.environ, {"PANWATCH_TV_WEBHOOK_SECRET": "test-secret-123"}, clear=False):
+            assert _secret_ok("test-secret-123") is True
 
     def test_wrong(self):
-        assert _secret_ok("wrong") is False
+        with patch.dict(os.environ, {"PANWATCH_TV_WEBHOOK_SECRET": "test-secret-123"}, clear=False):
+            assert _secret_ok("wrong") is False
 
     def test_missing(self):
-        assert _secret_ok(None) is False
-        assert _secret_ok("") is False
+        with patch.dict(os.environ, {"PANWATCH_TV_WEBHOOK_SECRET": ""}, clear=False):
+            assert _secret_ok(None) is False
+            assert _secret_ok("") is False
 
 
 class TestPayload:
@@ -58,9 +59,7 @@ class TestEndpoint:
         from fastapi.testclient import TestClient
         from src.web.app import app
 
-        with patch.dict(os.environ, {}, clear=False):
-            from src.web.api import tradingview_webhook
-            tradingview_webhook._WEBHOOK_SECRET = ""
+        with patch.dict(os.environ, {"PANWATCH_TV_WEBHOOK_SECRET": ""}, clear=False):
             client = TestClient(app)
             r = client.post("/api/webhooks/tradingview", json={"ticker": "600519"})
             assert r.status_code == 200
@@ -72,8 +71,6 @@ class TestEndpoint:
         from src.web.app import app
 
         with patch.dict(os.environ, {"PANWATCH_TV_WEBHOOK_SECRET": "test-secret-123"}, clear=False):
-            from src.web.api import tradingview_webhook
-            tradingview_webhook._WEBHOOK_SECRET = "test-secret-123"
             client = TestClient(app)
             r = client.post(
                 "/api/webhooks/tradingview",
@@ -89,8 +86,6 @@ class TestEndpoint:
         from src.web.app import app
 
         with patch.dict(os.environ, {"PANWATCH_TV_WEBHOOK_SECRET": "test-secret-123"}, clear=False):
-            from src.web.api import tradingview_webhook
-            tradingview_webhook._WEBHOOK_SECRET = "test-secret-123"
             client = TestClient(app)
             with patch("src.core.notify_center.push_notification") as mock_push:
                 r = client.post(
