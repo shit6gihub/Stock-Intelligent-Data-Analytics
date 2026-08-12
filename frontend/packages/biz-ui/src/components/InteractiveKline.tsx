@@ -49,6 +49,7 @@ export interface SwingSegment {
   score: number
   signals?: string[]
   post?: { main_net: number; price_change: number } | null
+  spread?: number
 }
 
 export interface MinuteSwings {
@@ -56,6 +57,7 @@ export interface MinuteSwings {
   current_price: number
   rallies: SwingSegment[]
   dips: SwingSegment[]
+  flats?: SwingSegment[]
   summary?: { n_rallies?: number; n_dips?: number; true_rallies?: number; true_dips?: number; main_net_total?: number }
 }
 

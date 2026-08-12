@@ -378,6 +378,104 @@ def _judge_dip(stats: dict, post: dict | None, price_down: float) -> dict:
     }
 
 
+# 横盘段识别参数(2026-08-12 用户反馈: 尾盘放量横盘没标注)
+FLAT_MIN_MINS = 5           # 最少连续分钟数
+FLAT_MAX_SPREAD = 0.003     # 段内收盘价最大波幅(0.3%)
+FLAT_VOL_MULT = 3.0         # 段累计额 ≥ 前10分钟均额 x3(放量)
+FLAT_MIN_MAIN = 200e4       # 主力净额绝对值 ≥200万 才值得标注
+
+
+def _find_flat_segments(minutes: OrderedDict, times: list[str]) -> list[dict]:
+    """识别放量横盘段: 连续N分钟价格波动<0.3% 且 累计成交额显著放大。
+
+    尾盘"放量横盘"常是托盘出货/压盘吸筹(价格不动但量巨大)——拉升/下探
+    识别(要求价格剧烈变动)会漏掉这类主力行为。
+
+    返回 [{start, end, hi, lo, spread, amt, avg}]。
+    """
+    segs: list[dict] = []
+    cur: dict | None = None
+    for i, t in enumerate(times):
+        m = minutes[t]
+        if cur is None:
+            cur = {"start": t, "end": t, "hi": m["c"], "lo": m["c"], "amt": m["amt"], "n": 1}
+            continue
+        # 扩展当前段: 新分钟收盘仍在 [lo, hi] 波幅内 → 继续横盘
+        new_hi = max(cur["hi"], m["c"])
+        new_lo = min(cur["lo"], m["c"])
+        spread = (new_hi - new_lo) / max(new_lo, 1e-9)
+        if spread <= FLAT_MAX_SPREAD:
+            cur["end"] = t
+            cur["hi"], cur["lo"] = new_hi, new_lo
+            cur["amt"] += m["amt"]
+            cur["n"] += 1
+        else:
+            if cur["n"] >= FLAT_MIN_MINS:
+                segs.append(cur)
+            cur = {"start": t, "end": t, "hi": m["c"], "lo": m["c"], "amt": m["amt"], "n": 1}
+    if cur and cur["n"] >= FLAT_MIN_MINS:
+        segs.append(cur)
+
+    # 放量过滤: 段累计额 ≥ 段前10分钟均额 x3
+    out = []
+    for seg in segs:
+        end_idx = times.index(seg["end"]) if seg["end"] in times else -1
+        if end_idx < 0:
+            continue
+        w = times[max(0, end_idx - 10):end_idx + 1]
+        avg = sum(minutes[hm]["amt"] for hm in w) / max(len(w), 1)
+        if avg > 0 and seg["amt"] >= FLAT_VOL_MULT * avg:
+            seg["avg"] = avg
+            seg["spread"] = round((seg["hi"] - seg["lo"]) / max(seg["lo"], 1e-9), 4)
+            out.append(seg)
+    return out
+
+
+def _judge_flat(stats: dict, seg: dict) -> dict:
+    """判别放量横盘性质: 托盘出货 / 压盘吸筹 / 对倒换手 / 中性。
+
+    托盘出货(危险): 主力净卖 + 主动买占<45%(大单托价, 小单出货)
+    压盘吸筹: 主力净买 + 主动买占>55%(压价收筹)
+    对倒换手: 主力净额≈0 但 主力成交占比高(自买自卖造量)
+    """
+    buy_ratio = stats["buy_ratio"] or 0
+    main_net = stats["main_net"]
+    main_turnover = stats.get("main_buy", 0) + stats.get("main_sell", 0)
+    signals = []
+    score = 0
+    verdict = "中性"
+
+    if buy_ratio < 45:
+        signals.append(f"主动买占{buy_ratio:.0f}%<45%(卖压重)")
+        score -= 2
+    elif buy_ratio > 55:
+        signals.append(f"主动买占{buy_ratio:.0f}%>55%(买盘强)")
+        score += 2
+    else:
+        signals.append(f"主动买占{buy_ratio:.0f}%(均衡)")
+
+    if main_net < -FLAT_MIN_MAIN:
+        signals.append(f"主力净{main_net/1e4:+.0f}万(大单托盘出货)")
+        score -= 2
+    elif main_net > FLAT_MIN_MAIN:
+        signals.append(f"主力净{main_net/1e4:+.0f}万(压盘吸筹)")
+        score += 2
+    else:
+        if main_turnover > 500e4:
+            signals.append(f"主力双向{main_turnover/1e4:.0f}万净额≈0(对倒嫌疑)")
+            score -= 1
+        else:
+            signals.append(f"主力净{main_net/1e4:+.0f}万(无主力参与)")
+
+    if score <= -2:
+        verdict = "托盘出货"
+    elif score >= 2:
+        verdict = "压盘吸筹"
+    elif score == -1:
+        verdict = "对倒换手"
+    return {"verdict": verdict, "score": score, "signals": signals}
+
+
 def analyze_swings(symbol: str) -> dict | None:
     """分析当日盘中顺势拉升段 + 瞬时下探段(供分时K线标记)。
 
@@ -399,9 +497,11 @@ def analyze_swings(symbol: str) -> dict | None:
         mdsym = MDSymbol.parse(symbol, "CN")
         code = _tencent_code(mdsym)
         if not code:
+            logger.warning(f"analyze_swings {symbol}: 无代码")
             return None
         ticks = _fetch_all_ticks(code)
         if not ticks:
+            logger.warning(f"analyze_swings {symbol}: 无逐笔数据(code={code})")
             return None
 
         minutes, times = _build_minutes(ticks)
@@ -464,6 +564,23 @@ def analyze_swings(symbol: str) -> dict | None:
                 "post": post,
             })
 
+        # 放量横盘段(2026-08-12): 托盘出货/压盘吸筹/对倒换手
+        out_flats = []
+        for seg in _find_flat_segments(minutes, times):
+            stats = _segment_stats(ticks, seg["start"], seg["end"])
+            judge = _judge_flat(stats, seg)
+            out_flats.append({
+                "start": seg["start"], "end": seg["end"],
+                "spread": seg.get("spread", 0), "amt": stats["amt"], "ticks": stats["ticks"],
+                "main_net": stats["main_net"], "main_buy": stats["main_buy"],
+                "main_sell": stats["main_sell"],
+                "retail_net": stats["retail_net"],
+                "retail_buy": stats["retail_buy"], "retail_sell": stats["retail_sell"],
+                "buy_ratio": stats["buy_ratio"],
+                "verdict": judge["verdict"], "score": judge["score"],
+                "signals": judge["signals"],
+            })
+
         all_non_auc = [t for t in ticks if t["t"] >= "09:30"]
         all_bb = sum(t["amt"] for t in all_non_auc if (t["amt"] >= MAIN_AMT or t["vol"] >= MAIN_VOL) and t["d"] == "B")
         all_bs = sum(t["amt"] for t in all_non_auc if (t["amt"] >= MAIN_AMT or t["vol"] >= MAIN_VOL) and t["d"] == "S")
@@ -473,16 +590,19 @@ def analyze_swings(symbol: str) -> dict | None:
             "current_price": ticks[-1]["price"],
             "rallies": out_rallies,
             "dips": out_dips,
+            "flats": out_flats,
             "summary": {
                 "n_rallies": len(out_rallies),
                 "n_dips": len(out_dips),
+                "n_flats": len(out_flats),
                 "true_rallies": sum(1 for r in out_rallies if "放量上涨" in r["verdict"] or "疑似真拉升" in r["verdict"]),
                 "true_dips": sum(1 for d in out_dips if "诱空" in d["verdict"] or "疑似诱空" in d["verdict"]),
+                "flat_verdicts": [f["verdict"] for f in out_flats],
                 "main_net_total": round(all_bb - all_bs),
             },
         }
     except Exception as e:
-        logger.warning(f"拉升/下探段分析失败 {symbol}: {e}")
+        logger.warning(f"拉升/下探段分析失败 {symbol}: {e}", exc_info=True)
         return None
 
 

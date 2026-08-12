@@ -21,7 +21,7 @@ const fmtWan = (v: number) => `${v >= 0 ? '+' : ''}${(v / 1e4).toFixed(0)}万`
 /** 主力/散户 段标记类型(2026-08-12 v3: 箭头+数字, 散户三角, 图例, tooltip) */
 interface SwingMark {
   time: number
-  kind: 'rally' | 'dip'
+  kind: 'rally' | 'dip' | 'flat'
   main_net: number
   main_buy: number
   main_sell: number
@@ -37,6 +37,8 @@ interface SwingMark {
   amt: number
   price_up?: number
   price_down?: number
+  buy_ratio?: number
+  spread?: number
 }
 
 function getLW(): any {
@@ -104,6 +106,13 @@ export default function MinuteLwcChart({ points, prevClose, isIndex, swings }: P
         rightOffset: 1,
         barSpacing: 6,
         minBarSpacing: 1,
+        // 2026-08-12 用户反馈: 底部时间轴显示"12日"太粗 → 改成 HH:MM 分钟格式
+        tickMarkFormatter: (time: any) => {
+          const d = new Date((typeof time === 'number' ? time : 0) * 1000)
+          return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
+        },
+        timeVisible: true,
+        secondsVisible: false,
       },
       grid: {
         vertLines: { color: 'rgba(148, 163, 184, 0.08)' },
@@ -125,6 +134,29 @@ export default function MinuteLwcChart({ points, prevClose, isIndex, swings }: P
       priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
     })
     priceSeries.setData(points.map(p => ({ time: hhmmToTs(p.t), value: p.price })))
+
+    // 2026-08-12 用户反馈: 分时波动幅度太小没视觉冲击 → Y轴紧凑化。
+    // 券商风格: 以价格线自身为中心对称缩放(半幅=实际波动半幅 或 昨收0.8% 取大, 留15%余量),
+    // 让涨跌占满图表高度。之前默认 autoscale 把昨收线/均价线也算进范围, 线被压扁。
+    // 昨收虚线必须保留可见 → 下界向下延伸到昨收(若昨收在范围外)。
+    if (!isIndex) {
+      const priceValues = points.map(p => p.price)
+      const hi = Math.max(...priceValues)
+      const lo = Math.min(...priceValues)
+      const center = (hi + lo) / 2
+      const half = Math.max((hi - lo) / 2, prevC * 0.008)  // 最小半幅=昨收0.8%, 防波动太小看不出
+      const pad = half * 0.15
+      let minV = center - half - pad
+      let maxV = center + half + pad
+      // 昨收线可见性: 若昨收在下界下方, 下界延伸到昨收-小幅余量; 上界同理
+      if (prevC < minV) minV = prevC - half * 0.1
+      if (prevC > maxV) maxV = prevC + half * 0.1
+      priceSeries.applyOptions({
+        autoscaleInfoProvider: () => ({
+          priceRange: { minValue: minV, maxValue: maxV },
+        }),
+      })
+    }
 
     if (!isIndex) {
       const avgSeries = addLineSeries(chart, LW, {
@@ -176,11 +208,38 @@ export default function MinuteLwcChart({ points, prevClose, isIndex, swings }: P
           start: d.start, end: d.end, amt: d.amt, price_down: d.price_down,
         })
       }
+      // 放量横盘段(2026-08-12): 托盘出货/压盘吸筹/对倒换手
+      for (const f of swings.flats || []) {
+        if (Math.abs(f.main_net ?? 0) < 100e4) continue  // 横盘主力净额 <100万 太弱, 不标
+        const idx = points.findIndex(p => hmOf(p.t) === f.start)
+        if (idx < 0) continue
+        marks.push({
+          time: hhmmToTs(points[idx].t), kind: 'flat',
+          main_net: f.main_net, main_buy: f.main_buy ?? 0, main_sell: f.main_sell ?? 0,
+          retail_net: f.retail_net, retail_buy: f.retail_buy ?? 0, retail_sell: f.retail_sell ?? 0,
+          verdict: f.verdict, score: f.score, signals: f.signals,
+          start: f.start, end: f.end, amt: f.amt, buy_ratio: f.buy_ratio, spread: f.spread,
+        })
+      }
     }
 
     if (marks.length) {
-      // 主力箭头 + 数字(红↑真拉升 / 绿↓真出货; 半透明=存疑)
+      // 主力标记: 拉升红↑ / 下探绿↓ / 横盘灰紫■(2026-08-12)
       const mainMarkers: any[] = marks.map(m => {
+        if (m.kind === 'flat') {
+          // 横盘段: 方形标记, 托盘出货=紫 / 压盘吸筹=青 / 对倒=灰
+          const flatColor = m.verdict.includes('出货') ? '#8b5cf6'
+            : m.verdict.includes('吸筹') ? '#06b6d4'
+            : '#94a3b8'
+          return {
+            time: m.time,
+            position: 'belowBar',
+            color: flatColor,
+            shape: 'square',
+            text: fmtWan(m.main_net),
+            size: 1,
+          }
+        }
         const isRally = m.kind === 'rally'
         const confirmed = isRally
           ? (m.verdict.includes('放量上涨') || m.verdict.includes('疑似真拉升'))
@@ -195,15 +254,15 @@ export default function MinuteLwcChart({ points, prevClose, isIndex, swings }: P
           size: 1,
         }
       })
-      // 散户圆点(橙●=散户净买追涨 / 蓝●=散户净卖抛压; 与主力箭头相反侧)
-      // 2026-08-12 用户确认: 散户单笔本就<20万, 不再过滤——每个主力段都显示散户净额,
+      // 散户圆点(橙●=散户净买追涨 / 蓝●=散户净卖抛压; 与主力标记相反侧)
+      // 2026-08-12 用户确认: 散户单笔本就<20万, 不再过滤——每个段都显示散户净额,
       // 让"主力拉升+散户没追/散户在抛"的对比完整可见。
       const retailMarkers: any[] = marks.map(m => {
         const net = m.retail_net ?? 0
         const isBuy = net > 0
         return {
           time: m.time,
-          position: m.kind === 'rally' ? 'aboveBar' : 'belowBar',  // 与主力箭头相反侧
+          position: m.kind === 'rally' ? 'aboveBar' : 'belowBar',  // 与主力标记相反侧
           color: isBuy ? '#f59e0b' : '#3b82f6',  // 黄=散户买(追) / 蓝=散户卖(抛)
           shape: 'circle',
           text: fmtWan(net),
@@ -278,9 +337,10 @@ export default function MinuteLwcChart({ points, prevClose, isIndex, swings }: P
         color: p.price >= prevC ? 'rgba(239, 68, 68, 0.4)' : 'rgba(16, 185, 129, 0.4)',
       }))
     )
-    // 分时只显示最近约 2/3 区间(留右侧空白)
+    // 2026-08-12 用户反馈: 分时默认显示全天完整K线(9:30-15:00 全在框内),
+    // 不再裁剪到最近 2/3(之前 setVisibleLogicalRange 只显示部分)
     const total = points.length
-    chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, total - Math.floor(total * 0.75)), to: total + 8 })
+    chart.timeScale().setVisibleLogicalRange({ from: 0, to: Math.max(total - 1, 10) + 4 })
 
     const ro = new ResizeObserver(() => {
       chart.applyOptions({ width: el.clientWidth })
@@ -320,6 +380,12 @@ export default function MinuteLwcChart({ points, prevClose, isIndex, swings }: P
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500" />
             <span>散户净卖(抛压)</span>
           </div>
+          <div className="flex items-center gap-1.5 mt-0.5 border-t border-border/40 pt-0.5">
+            <span className="inline-block w-2 h-2 bg-violet-500" />
+            <span>横盘托盘出货</span>
+            <span className="inline-block w-2 h-2 bg-cyan-500 ml-1" />
+            <span>横盘压盘吸筹</span>
+          </div>
           <button
             className="mt-0.5 text-[9px] text-muted-foreground hover:text-foreground text-left"
             onClick={() => setShowLegend(false)}
@@ -347,16 +413,18 @@ export default function MinuteLwcChart({ points, prevClose, isIndex, swings }: P
 /** 段标记完整分析 tooltip 内容 */
 function SwingTooltip({ mark }: { mark: SwingMark }) {
   const isRally = mark.kind === 'rally'
-  const dir = isRally ? '拉升' : '下探'
+  const dir = mark.kind === 'rally' ? '拉升' : mark.kind === 'dip' ? '下探' : '横盘'
   const mainRatio = mark.main_buy + mark.main_sell > 0
     ? Math.round((mark.main_buy / (mark.main_buy + mark.main_sell)) * 100)
     : 0
   const retailDir = mark.retail_net > 0 ? '净买(追涨)' : mark.retail_net < 0 ? '净卖(抛压)' : '持平'
   const verdictCls = mark.verdict.includes('出货') || mark.verdict.includes('对倒')
     ? 'text-rose-500'
-    : mark.verdict.includes('诱空') || mark.verdict.includes('下杀')
-      ? 'text-emerald-500'
-      : 'text-amber-500'
+    : mark.verdict.includes('吸筹')
+      ? 'text-cyan-500'
+      : mark.verdict.includes('诱空') || mark.verdict.includes('下杀')
+        ? 'text-emerald-500'
+        : 'text-amber-500'
   return (
     <div className="space-y-0.5">
       <div className="font-medium text-[11px] mb-1">
@@ -364,6 +432,11 @@ function SwingTooltip({ mark }: { mark: SwingMark }) {
         <span className={`ml-1.5 ${verdictCls}`}>{mark.verdict}</span>
         <span className="ml-1 text-muted-foreground">score {mark.score}</span>
       </div>
+      {mark.spread !== undefined && (
+        <div className="text-muted-foreground">
+          波幅 {(mark.spread * 100).toFixed(2)}% · 成交{fmtWan(mark.amt)} · 买占{mark.buy_ratio ?? 0}%
+        </div>
+      )}
       <div>
         <span className="text-rose-500">主力</span>{' '}
         买{fmtWan(mark.main_buy)} / 卖{fmtWan(mark.main_sell)} → 净{fmtWan(mark.main_net)}

@@ -300,7 +300,8 @@ async def get_minute(symbol: str, market: str = "CN"):
         try:
             from src.core.rally_analysis import analyze_swings
             swings = analyze_swings(symbol)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"minute swings 计算失败 {symbol}: {e}", exc_info=True)
             swings = None
     _MINUTE_CACHE[cache_key] = (_time.time(), points, prev_close, swings)
     return {"symbol": symbol, "market": market, "points": points,
