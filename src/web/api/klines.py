@@ -205,16 +205,21 @@ def get_kline_summary(symbol: str, market: str = "CN"):
     main_intent_structured = None
     if market_code.value == "CN":
         try:
-            from src.agents.intraday_monitor import _main_intent_summary
-            main_intent = _main_intent_summary(symbol)
+            # 2026-08-12 性能优化: 一次 compute_dark_flow 同时产出字符串+结构化,
+            # 避免 summary+structured 各调一次(逐笔翻页/分价表各跑一遍)
+            from src.agents.intraday_monitor import _main_intent_both
+            main_intent, main_intent_structured = _main_intent_both(symbol)
         except Exception:
-            main_intent = None
-        # 结构化主力意图(2026-08-12): 供前端K线 markers/筹码叠加, 不依赖字符串解析
-        try:
-            from src.agents.intraday_monitor import _main_intent_structured
-            main_intent_structured = _main_intent_structured(symbol)
-        except Exception:
-            main_intent_structured = None
+            try:
+                from src.agents.intraday_monitor import _main_intent_summary
+                main_intent = _main_intent_summary(symbol)
+            except Exception:
+                main_intent = None
+            try:
+                from src.agents.intraday_monitor import _main_intent_structured
+                main_intent_structured = _main_intent_structured(symbol)
+            except Exception:
+                main_intent_structured = None
     return {
         "symbol": symbol,
         "market": market_code.value,

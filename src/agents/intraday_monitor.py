@@ -25,6 +25,100 @@ logger = logging.getLogger(__name__)
 _realtime_volume_ratio_cache: dict[str, tuple[float, float | None]] = {}
 
 
+def _main_intent_both(symbol: str) -> tuple[str, dict | None]:
+    """主力意图字符串+结构化一次计算(2026-08-12 性能优化)。
+
+    summary 接口原本 `_main_intent_summary` + `_main_intent_structured` 各调一次
+    compute_dark_flow(逐笔翻页/分价表/5日资金流各跑一遍 → 接口 1s+)。合并后
+    compute_dark_flow 只跑一次, 两个产出共享同一份 dark 结果。
+    """
+    try:
+        from marketdata import Symbol as MDSymbol
+        from src.core.dark_flow import compute_dark_flow
+        mdsym = MDSymbol.parse(symbol, "CN")
+        dark = compute_dark_flow(mdsym)
+        if not dark:
+            return "", None
+
+        # ---- 字符串摘要(与原 _main_intent_summary 同格式) ----
+        parts = []
+        main_net = dark.get("main_net", 0) or 0
+        big_net = dark.get("big_net", 0) or 0
+        mid_net = dark.get("mid_net", 0) or 0
+        tag = "净流入" if main_net > 500e4 else ("净流出" if main_net < -500e4 else "平衡")
+        parts.append(f"主力{tag}{main_net / 1e4:+.0f}万(超大单{big_net / 1e4:+.0f}/大单{mid_net / 1e4:+.0f})")
+        if dark.get("main_intensity") is not None:
+            parts.append(f"参与度{dark['main_intensity']:.0f}%买占{dark.get('main_buy_ratio') or 0:.0f}%")
+        if dark.get("phase"):
+            parts.append(f"阶段[{dark['phase']}]")
+        if dark.get("auction_amt"):
+            parts.append(f"竞价{dark['auction_amt'] / 1e4:.0f}万")
+        chips = None
+        try:
+            from src.core.chip_distribution import compute_near_term_chips
+            tc = f"{'sh' if symbol.startswith('6') else 'sz'}{symbol}"
+            chips = compute_near_term_chips(tc, days=10)
+            if chips:
+                band = chips.get("cost_band")
+                bstr = f" 成本带{band['low']}-{band['high']}" if band else ""
+                parts.append(f"筹码峰{chips['peak_price']} 获利{chips['profit_ratio'] * 100:.0f}%{bstr}")
+        except Exception:
+            pass
+        summary_str = " | ".join(parts)
+
+        # ---- 结构化(与原 _main_intent_structured 同逻辑) ----
+        intensity = dark.get("main_intensity")
+        buy_ratio = dark.get("main_buy_ratio")
+        seg = dark.get("segments") or {}
+        tail = seg.get("tail", 0)
+        if dark.get("data_status") == "insufficient":
+            structured = {
+                "direction": "neutral",
+                "main_net": main_net,
+                "big_net": big_net,
+                "mid_net": mid_net,
+                "participation": intensity,
+                "buy_ratio": buy_ratio,
+                "auction_amt": dark.get("auction_amt", 0) or 0,
+                "phase": dark.get("phase"),
+                "signal": dark.get("signal"),
+                "tail_net": tail,
+                "data_status": "insufficient",
+                "tick_count": dark.get("tick_count", 0),
+            }
+        else:
+            strong_absorb = (intensity or 0) >= 35 and (buy_ratio or 0) >= 48
+            if main_net > 500e4:
+                direction = "buy"
+            elif main_net < -500e4:
+                direction = "wash" if strong_absorb else "sell"
+            else:
+                direction = "absorb" if strong_absorb else "neutral"
+            structured = {
+                "direction": direction,
+                "main_net": main_net,
+                "big_net": big_net,
+                "mid_net": mid_net,
+                "participation": intensity,
+                "buy_ratio": buy_ratio,
+                "auction_amt": dark.get("auction_amt", 0) or 0,
+                "phase": dark.get("phase"),
+                "signal": dark.get("signal"),
+                "tail_net": tail,
+                "data_status": dark.get("data_status", "ok"),
+                "tick_count": dark.get("tick_count", 0),
+            }
+            if chips:
+                structured["chip_peak"] = chips.get("peak_price")
+                band = chips.get("cost_band")
+                if band:
+                    structured["chip_band"] = {"low": band["low"], "high": band["high"]}
+                structured["profit_ratio"] = chips.get("profit_ratio")
+        return summary_str, structured
+    except Exception:
+        return "", None
+
+
 def _main_intent_summary(symbol: str) -> str:
     """主力意图结构化摘要(2026-08-11): 供通知/卡片展示, 不依赖 LLM 复述。
 

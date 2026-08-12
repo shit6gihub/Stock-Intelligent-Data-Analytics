@@ -1,5 +1,6 @@
 """账户和持仓管理 API"""
 import logging
+import threading
 import time
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -23,75 +24,53 @@ router = APIRouter()
 # 汇率缓存
 _hkd_rate_cache: dict = {"rate": 0.92, "ts": 0}  # 港币默认汇率 0.92
 _usd_rate_cache: dict = {"rate": 7.25, "ts": 0}  # 美元默认汇率 7.25
-EXCHANGE_RATE_TTL = 3600  # 1 小时缓存
+EXCHANGE_RATE_TTL = 3600  # 成功缓存 1 小时
+# 2026-08-12: 海外节点新浪超时(每次冷启动白等 3s×2)。失败缓存短 TTL(5分钟)防反复撞墙;
+# 成功后回到 1 小时长缓存。另用线程锁保证 HKD/USD 并发拉取不重复等待。
+EXCHANGE_RATE_FAIL_TTL = 300
+_fx_lock = threading.Lock()
+
+
+def _fetch_fx_rate(url: str, cache: dict, name: str, fail_ttl: int = EXCHANGE_RATE_FAIL_TTL) -> float:
+    """拉取单个汇率(带失败短缓存)。返回当前生效汇率。"""
+    if time.time() - cache["ts"] < EXCHANGE_RATE_TTL:
+        return cache["rate"]
+    try:
+        # 2026-08-12: 数据源从新浪(hq.sinajs.cn)换成腾讯 qt.gtimg.cn——
+        # 海外节点新浪超时(冷启动白等 3s×2), 腾讯 0.1s 秒回且支持外汇。
+        # 腾讯格式: v_whUSDCNY="310~美元人民币~USDCNY~6.7461~0~时间~..."; GBK 编码
+        resp = httpx.get(url, timeout=3, headers={
+            "User-Agent": "Mozilla/5.0",
+        })
+        text = resp.content.decode("gbk", "replace")
+        if "=" in text and "~" in text:
+            val = text.split("=", 1)[1].strip().strip(";").strip('"')
+            parts = val.split("~")
+            if len(parts) > 3:
+                rate = float(parts[3])  # 第4字段 = 现价
+                cache["rate"], cache["ts"] = rate, time.time()  # 成功: 长 TTL
+                logger.info(f"更新{name}汇率: {rate}")
+                return rate
+    except Exception as e:
+        # 海外节点超时(2026-08-12): 失败也刷新 ts(短TTL), 防每次请求都撞超时
+        logger.warning(f"获取{name}汇率失败，使用缓存: {e}")
+    if time.time() - cache["ts"] >= fail_ttl:
+        cache["ts"] = time.time()  # 失败: 短 TTL 后重试
+    return cache["rate"]
 
 
 def get_hkd_cny_rate() -> float:
-    """获取港币兑人民币汇率"""
+    """获取港币兑人民币汇率(腾讯 qt.gtimg.cn, 海外可达)"""
     global _hkd_rate_cache
-
-    # 检查缓存
-    if time.time() - _hkd_rate_cache["ts"] < EXCHANGE_RATE_TTL:
-        return _hkd_rate_cache["rate"]
-
-    # 从新浪财经获取汇率
-    try:
-        resp = httpx.get(
-            "https://hq.sinajs.cn/list=fx_shkdcny",
-            timeout=5,
-            headers={
-                "User-Agent": "Mozilla/5.0",
-                "Referer": "https://finance.sina.com.cn/"
-            }
-        )
-        # 格式: var hq_str_fx_shkdcny="时间,汇率,..."
-        text = resp.text
-        if "=" in text and "," in text:
-            data = text.split('"')[1]
-            parts = data.split(",")
-            if len(parts) > 1:
-                rate = float(parts[1])
-                _hkd_rate_cache = {"rate": rate, "ts": time.time()}
-                logger.info(f"更新港币汇率: {rate}")
-                return rate
-    except Exception as e:
-        logger.warning(f"获取港币汇率失败，使用缓存: {e}")
-
-    return _hkd_rate_cache["rate"]
+    with _fx_lock:
+        return _fetch_fx_rate("https://qt.gtimg.cn/q=whHKDCNY", _hkd_rate_cache, "港币")
 
 
 def get_usd_cny_rate() -> float:
-    """获取美元兑人民币汇率"""
+    """获取美元兑人民币汇率(腾讯 qt.gtimg.cn, 海外可达)"""
     global _usd_rate_cache
-
-    # 检查缓存
-    if time.time() - _usd_rate_cache["ts"] < EXCHANGE_RATE_TTL:
-        return _usd_rate_cache["rate"]
-
-    # 从新浪财经获取汇率
-    try:
-        resp = httpx.get(
-            "https://hq.sinajs.cn/list=fx_susdcny",
-            timeout=5,
-            headers={
-                "User-Agent": "Mozilla/5.0",
-                "Referer": "https://finance.sina.com.cn/"
-            }
-        )
-        # 格式: var hq_str_fx_susdcny="时间,汇率,..."
-        text = resp.text
-        if "=" in text and "," in text:
-            data = text.split('"')[1]
-            parts = data.split(",")
-            if len(parts) > 1:
-                rate = float(parts[1])
-                _usd_rate_cache = {"rate": rate, "ts": time.time()}
-                logger.info(f"更新美元汇率: {rate}")
-                return rate
-    except Exception as e:
-        logger.warning(f"获取美元汇率失败，使用缓存: {e}")
-
-    return _usd_rate_cache["rate"]
+    with _fx_lock:
+        return _fetch_fx_rate("https://qt.gtimg.cn/q=whUSDCNY", _usd_rate_cache, "美元")
 
 
 # ========== Pydantic Models ==========

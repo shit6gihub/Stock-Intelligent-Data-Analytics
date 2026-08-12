@@ -50,20 +50,26 @@ def _tencent_code(symbol: Symbol) -> str | None:
     return None
 
 
-# 逐笔缓存: {code -> (ts, ticks)}。盘中 TTL 30s, 避免每轮监控重复翻页(翻页~200次请求)
-_TICKS_CACHE: dict[str, tuple[float, list[dict]]] = {}
+# 逐笔缓存: {code -> (ts, ticks, last_page, last_seq)}。盘中 TTL 30s, 避免每轮监控重复翻页。
+# 2026-08-12 增量续拉: 缓存记录"拉到的页码+末条序号", 过期后只从上次页码往后拉新增页
+# (9:35 拉 19 页 → 9:50 只拉 19 页之后), 序号断裂(新交易日/数据重置)才全量重拉。
+_TICKS_CACHE: dict[str, tuple[float, list[dict], int, int]] = {}
 _TICKS_TTL = 30.0
 
 
 def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
-    """翻页拉取全天全量逐笔, 返回 [{direction, amount, volume, time}]。
+    """翻页拉取全天全量逐笔(增量续拉), 返回 [{direction, amount, volume, time}]。
 
     2026-08-11 打磨: 加 30s 缓存(盘中每轮监控复用) + 单页重试(腾讯偶发限流)。
+    2026-08-12 增量续拉(用户设计): 缓存记录 last_page+last_seq, 过期后只拉
+      新增页合并; 并发拉页(全天 19 页串行 2.9s → 并发 ~0.9s); 空页判定 ['']。
     数据源: 默认 tencent_ticks; 未来 L2 接入在此分发(PANWATCH_DARK_SOURCE)。
     """
     import time as _time
     now = _time.time()
     cached = _TICKS_CACHE.get(code)
+
+    # 2026-08-12: TTL 内直接返回(盘中 30s 窗口零请求; 重构时勿丢此分支)
     if cached and now - cached[0] < _TICKS_TTL:
         return cached[1]
 
@@ -72,16 +78,13 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
         try:
             from src.core.dark_l2 import fetch_l2_ticks  # 预留模块, 接入L2时实现
             ticks = fetch_l2_ticks(code, DARK_SOURCE)
-            _TICKS_CACHE[code] = (now, ticks)
+            _TICKS_CACHE[code] = (now, ticks, 0, 0)
             return ticks
         except Exception:
             pass  # L2 未接入/异常, 回退腾讯逐笔
 
-    ticks: list[dict] = []
-    # 2026-08-12: 连续空页才停(腾讯偶发限流单页返回空, 遇首个空页就 break 会
-    # 在盘中实时拉取时中途截断 → 主力意图算在残缺数据上)。实测: 第60页首次空、重试有数据。
-    empty_streak = 0
-    for p in range(max_pages):
+    def _fetch_page(p: int) -> tuple[int, list[dict]]:
+        """拉单页, 返回 (页码, ticks)。失败/空页返回 (p, [])。"""
         url = f"https://stock.gtimg.cn/data/index.php?appn=detail&action=data&c={code}&p={p}"
         body = None
         # 单页重试(最多2次): 腾讯偶发限流/超时
@@ -95,25 +98,16 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
                 if attempt == 1:
                     break
         if body is None:
-            empty_streak += 1
-            if empty_streak >= 2:
-                break
-            continue
+            return p, []
         m = re.search(r'\[(\d+),"(.*?)"\]', body)
         if not m:
-            empty_streak += 1
-            if empty_streak >= 2:
-                break
-            continue
+            return p, []
         rows = m.group(2).split("|")
         # 空页判定(2026-08-12 修复): 只有 1 行(如竞价首笔 09:25)是正常数据页,
         # 不能按 len<2 当空页丢弃! 真正的空页是 [''](腾讯翻页到尾返回空字符串)。
         if not rows or (len(rows) == 1 and len(rows[0].strip()) == 0):
-            empty_streak += 1
-            if empty_streak >= 2:
-                break
-            continue
-        empty_streak = 0
+            return p, []
+        out: list[dict] = []
         for r in rows:
             parts = r.split("/")
             if len(parts) < 7:
@@ -124,12 +118,101 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
                 price = float(parts[2])
                 direction = parts[6]
                 t = parts[1]
+                seq = int(parts[0]) if parts[0].isdigit() else -1
             except (ValueError, IndexError):
                 continue
             if amt > 0:
-                ticks.append({"d": direction, "amt": amt, "vol": vol, "price": price, "t": t})
-    # 缓存(含空结果, 防止每次失败都重新翻页; 空结果缓存短些 10s)
-    _TICKS_CACHE[code] = (now, ticks)
+                out.append({"d": direction, "amt": amt, "vol": vol, "price": price, "t": t, "_seq": seq})
+        return p, out
+
+    def _drain_pages(start: int, max_pages: int, ticks: list[dict], batch: int = 10) -> tuple[list[dict], int, int]:
+        """分批并发拉页: 每批 batch 页, 连续2空页即停。避免一次性提交 200 个 future
+        (ThreadPool with 退出会等待未运行任务, 空页判定后仍慢)。"""
+        import concurrent.futures as _cf
+        last_page = -1
+        last_seq = -1
+        empty_run = 0
+        p = start
+        while p < max_pages:
+            hi = min(p + batch, max_pages)
+            with _cf.ThreadPoolExecutor(max_workers=5) as ex:
+                futs = {ex.submit(_fetch_page, i): i for i in range(p, hi)}
+                for fut in _cf.as_completed(futs):
+                    pg, page_ticks = fut.result()
+                    if page_ticks:
+                        ticks.extend(page_ticks)
+                        last_page = max(last_page, pg)
+                        last_seq = max(last_seq, max((t.get("_seq", -1) for t in page_ticks), default=-1))
+                        empty_run = 0
+                    else:
+                        empty_run += 1
+                    if empty_run >= 2:
+                        return ticks, last_page, last_seq
+            p = hi
+        return ticks, last_page, last_seq
+
+    # ---- 增量续拉: 缓存存在且过期(>30s) ----
+    if cached:
+        _, old_ticks, old_last_page, old_last_seq = cached
+        # 从上次页码开始拉(最后一页盘中可能未满, 重新拉完整版) + 后续新页
+        start = old_last_page
+        if start >= max_pages:
+            # 已拉满上限, 刷新缓存时间即可
+            _TICKS_CACHE[code] = (now, old_ticks, old_last_page, old_last_seq)
+            return old_ticks
+        new_ticks: list[dict] = []
+        _new_ticks, last_page, last_seq = _drain_pages(start, max_pages, new_ticks)
+        if _new_ticks:
+            new_first_seq = min(t.get("_seq", -1) for t in _new_ticks)
+            if new_first_seq <= 0 or old_last_seq <= 0 or new_first_seq >= old_last_seq:
+                # 序号连续/推进(新 seq ≥ 旧末条 seq) → 合并去重(旧最后一页可能被新完整版覆盖)
+                merged = old_ticks + _new_ticks
+                # 按 seq 去重: 同 seq 保留新数据(后出现的覆盖前面的)
+                dedup: dict[int, dict] = {}
+                for t in merged:
+                    dedup[t.get("_seq", 0)] = t
+                merged = sorted(dedup.values(), key=lambda t: t.get("_seq", 0))
+                for t in merged:
+                    t.pop("_seq", None)
+                _TICKS_CACHE[code] = (now, merged, last_page, last_seq)
+                return merged
+            # 序号断裂(新交易日/数据重置) → 全量重拉
+            _TICKS_CACHE.pop(code, None)
+        else:
+            # 无新增(可能盘前/刚开盘): 刷新缓存时间, 保留旧数据
+            _TICKS_CACHE[code] = (now, old_ticks, old_last_page, old_last_seq)
+            return old_ticks
+
+    # ---- 全量拉取(无缓存 / 序号断裂后) ----
+    # 阶段1: 串行探前 6 页(确定页数 + 拿首批数据; 盘中数据少时 6 页内就到尾)
+    probe_pages = 6
+    ticks: list[dict] = []
+    last_full = -1
+    consecutive_empty = 0
+    for p in range(min(probe_pages, max_pages)):
+        _, page_ticks = _fetch_page(p)
+        if page_ticks:
+            ticks.extend(page_ticks)
+            last_full = p
+            consecutive_empty = 0
+        else:
+            consecutive_empty += 1
+            if consecutive_empty >= 2:
+                _TICKS_CACHE[code] = (now, ticks, last_full, max((t.get("_seq", -1) for t in ticks), default=-1))
+                return ticks
+
+    # 阶段2: 并发拉剩余页(每页70条, 全天通常 10-200 页)
+    if last_full >= 0 and consecutive_empty < 2:
+        ticks, last_page, last_seq = _drain_pages(probe_pages, max_pages, ticks)
+        ticks.sort(key=lambda t: t.get("_seq", 0))
+        for t in ticks:
+            t.pop("_seq", None)
+        _TICKS_CACHE[code] = (now, ticks, last_page, last_seq)
+        return ticks
+
+    for t in ticks:
+        t.pop("_seq", None)
+    _TICKS_CACHE[code] = (now, ticks, last_full, max((t.get("_seq", -1) for t in ticks), default=-1))
     return ticks
 
 
