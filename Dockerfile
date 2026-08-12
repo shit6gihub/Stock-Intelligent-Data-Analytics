@@ -101,7 +101,8 @@ COPY requirements.txt ./
 COPY packages/ ./packages/
 
 # 安装 Python 依赖
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --timeout 300 --retries 8 -r requirements.txt && \
+    python -c "from sqlalchemy import create_engine; from marketdata.vendors.tencent_panel import fetch_price_distribution; assert create_engine and fetch_price_distribution"
 
 # 注意: Playwright 浏览器将在首次启动时自动安装到 data 目录
 # 这样可以减小镜像体积，并支持跨版本持久化
