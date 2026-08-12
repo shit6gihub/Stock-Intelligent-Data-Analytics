@@ -38,8 +38,11 @@ WORKDIR /app
 # - tzdata: 时区数据（zoneinfo 模块需要）
 # - 中文字体（K线截图需要）
 # - Playwright Chromium 依赖的系统库
-RUN apt-get -o Acquire::Retries=8 -o Acquire::http::Timeout=120 -o Acquire::http::Pipeline-Depth=0 update \
-    && apt-get -o Acquire::Retries=8 -o Acquire::http::Timeout=120 -o Acquire::http::Pipeline-Depth=0 install -y --no-install-recommends \
+RUN set -eux; \
+    apt-get -o Acquire::Retries=8 -o Acquire::http::Timeout=120 -o Acquire::http::Pipeline-Depth=0 update; \
+    install_succeeded=0; \
+    for install_attempt in 1 2 3 4 5; do \
+      if apt-get -o Acquire::Retries=8 -o Acquire::http::Timeout=120 -o Acquire::http::Pipeline-Depth=0 install -y --no-install-recommends \
     tzdata \
     # git: requirements.txt 中含 git+https 直链(tradingagents)
     git \
@@ -79,9 +82,17 @@ RUN apt-get -o Acquire::Retries=8 -o Acquire::http::Timeout=120 -o Acquire::http
     libxshmfence1 \
     libegl1 \
     libfontconfig1 \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/* \
-    && fc-cache -fv
+        libglib2.0-0; then \
+        install_succeeded=1; \
+        break; \
+      fi; \
+      echo "APT 安装第 ${install_attempt} 次失败，保留已下载包并重试"; \
+      rm -rf /var/cache/apt/archives/partial/*; \
+      apt-get -o Acquire::Retries=8 -o Acquire::http::Timeout=120 -o Acquire::http::Pipeline-Depth=0 update; \
+    done; \
+    test "$install_succeeded" = 1; \
+    rm -rf /var/lib/apt/lists/*; \
+    fc-cache -fv
 
 # 复制依赖文件
 COPY requirements.txt ./
