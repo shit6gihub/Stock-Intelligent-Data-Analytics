@@ -1,7 +1,8 @@
-import { useState } from 'react'
-import { Upload, FileText, Download, TrendingUp, Activity, Target, Shield, AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Upload, FileText, Download, TrendingUp, Activity, Target, Shield, AlertTriangle, CheckCircle2, Loader2, RefreshCw, UserRound } from 'lucide-react'
 import { fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
+import { formatDateTime } from '@/lib/utils'
 
 interface ShadowResult {
   shadow_id: string
@@ -36,11 +37,34 @@ function StatCard({ icon: Icon, label, value, sub, color }: { icon: any; label: 
   )
 }
 
+interface ShadowProfileResponse {
+  profile: Record<string, any> | null
+  saved: boolean
+}
+
 export default function ShadowAccountPage() {
   const [result, setResult] = useState<ShadowResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [dragOver, setDragOver] = useState(false)
+  // "我的画像": 进页面自动加载已存画像(users.shadow_profile_json 落库版)
+  const [myProfile, setMyProfile] = useState<Record<string, any> | null>(null)
+  const [profileLoading, setProfileLoading] = useState(true)
+  const [profileFailed, setProfileFailed] = useState(false)
+
+  const loadProfile = async () => {
+    try {
+      const d = await fetchAPI<ShadowProfileResponse>('/shadow/profile', { cacheMode: 'reload' })
+      setMyProfile(d?.profile ?? null)
+    } catch {
+      // 静默失败: 画像区不显示, 不阻断上传功能
+      setProfileFailed(true)
+    } finally {
+      setProfileLoading(false)
+    }
+  }
+
+  useEffect(() => { loadProfile() }, [])
 
   const upload = async (file: File) => {
     setLoading(true)
@@ -54,6 +78,8 @@ export default function ShadowAccountPage() {
         timeoutMs: 180000, // 交割单解析+画像可能 60-120s(586笔实测75s), 默认20s不够
       })
       setResult((d as any)?.data ?? d)
+      // 分析完成落库后, 刷新"我的画像"区
+      loadProfile()
     } catch (e: any) {
       setError(e?.message || '分析失败，请检查交割单格式')
     } finally {
@@ -96,6 +122,89 @@ export default function ShadowAccountPage() {
         <p className="text-[12px] text-muted-foreground mt-1">
           上传你的交易交割单（同花顺 / 东财 / 富途 / 通用 CSV），AI 提炼你的真实交易行为画像、盈利模式与风险习惯。
         </p>
+      </div>
+
+      {/* 我的画像: 进页面自动加载已存画像(users.shadow_profile_json 落库版), 不用重新上传 */}
+      <div className="rounded-xl bg-card border border-border p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-[14px] font-semibold text-foreground flex items-center gap-2">
+            <UserRound className="w-4 h-4 text-primary" /> 我的画像
+          </h2>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-[11px]"
+            onClick={() => document.getElementById('shadow-file-input')?.click()}
+          >
+            <RefreshCw className="w-3 h-3 mr-1" /> 更新画像
+          </Button>
+        </div>
+
+        {profileLoading ? (
+          /* 加载中: 骨架屏 */
+          <div className="space-y-3">
+            <div className="h-3.5 w-40 animate-pulse rounded bg-accent/30" />
+            <div className="h-3 w-full animate-pulse rounded bg-accent/20" />
+            <div className="h-3 w-3/4 animate-pulse rounded bg-accent/20" />
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 pt-1">
+              {[0, 1, 2, 3, 4].map(i => (
+                <div key={i} className="h-16 animate-pulse rounded-xl bg-accent/20" />
+              ))}
+            </div>
+          </div>
+        ) : profileFailed ? null : !myProfile ? (
+          /* 空态: 无画像, 引导上传 */
+          <div className="flex items-center gap-3 rounded-xl bg-accent/20 border border-dashed border-border px-4 py-3">
+            <UserRound className="w-4 h-4 text-muted-foreground shrink-0" />
+            <p className="text-[12px] text-muted-foreground">
+              还没有交易画像。上传交割单后自动生成你的行为画像，下次进来直接查看。
+            </p>
+          </div>
+        ) : (
+          /* 已存画像展示 */
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] text-muted-foreground">
+                更新时间: {formatDateTime(myProfile.created_at) || '--'}
+              </span>
+              {Array.isArray(myProfile.date_range) && myProfile.date_range.length >= 2 && (
+                <span className="text-[11px] text-muted-foreground">
+                  交易区间: {formatDateTime(myProfile.date_range[0])} ~ {formatDateTime(myProfile.date_range[1])}
+                </span>
+              )}
+            </div>
+            <p className="text-[12px] leading-relaxed text-foreground whitespace-pre-line">{myProfile.profile_text}</p>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <StatCard icon={CheckCircle2} label="盈利回合" value={fmt(myProfile.profitable_roundtrips)} color="text-emerald-500" />
+              <StatCard icon={Activity} label="总回合" value={fmt(myProfile.total_roundtrips)} color="text-blue-500" />
+              <StatCard
+                icon={Target}
+                label="胜率"
+                value={myProfile.total_roundtrips ? `${((myProfile.profitable_roundtrips / myProfile.total_roundtrips) * 100).toFixed(0)}%` : '--'}
+                color="text-violet-500"
+              />
+              <StatCard
+                icon={TrendingUp}
+                label="偏好市场"
+                value={(myProfile.preferred_markets || []).join(', ') || '--'}
+                color="text-amber-500"
+              />
+              <StatCard
+                icon={Activity}
+                label="持仓中位(天)"
+                value={Array.isArray(myProfile.typical_holding_days) && myProfile.typical_holding_days[0] != null ? fmt(myProfile.typical_holding_days[0]) : '--'}
+                color="text-sky-500"
+              />
+            </div>
+            {myProfile.rules && myProfile.rules.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {myProfile.rules.map((r: string) => (
+                  <span key={r} className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-1 text-[11px] text-primary">{r}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 上传区 */}
