@@ -202,17 +202,25 @@ def get_kline_summary(symbol: str, market: str = "CN"):
     summary = collector.get_kline_summary(symbol)
     # 主力意图+筹码(2026-08-11): A股附加, 供前端个股窗口独立展示
     main_intent = None
+    main_intent_structured = None
     if market_code.value == "CN":
         try:
             from src.agents.intraday_monitor import _main_intent_summary
             main_intent = _main_intent_summary(symbol)
         except Exception:
             main_intent = None
+        # 结构化主力意图(2026-08-12): 供前端K线 markers/筹码叠加, 不依赖字符串解析
+        try:
+            from src.agents.intraday_monitor import _main_intent_structured
+            main_intent_structured = _main_intent_structured(symbol)
+        except Exception:
+            main_intent_structured = None
     return {
         "symbol": symbol,
         "market": market_code.value,
         "summary": summary,
         "main_intent": main_intent,
+        "main_intent_structured": main_intent_structured,
     }
 
 

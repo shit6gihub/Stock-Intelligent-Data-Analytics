@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
-import MinuteEChart from './MinuteEChart'
+import MinuteLwcChart from './MinuteLwcChart'
 
 type BusinessDay = { year: number; month: number; day: number }
 
@@ -36,6 +36,22 @@ type MinuteResponse = {
   points: MinutePoint[]
   prev_close?: number | null
   is_index?: boolean
+}
+
+/** 主力意图结构化数据(2026-08-12): 后端 klines summary API 返回, 供 K线 markers/筹码叠加 */
+export interface MainIntentStructured {
+  direction: 'buy' | 'sell' | 'neutral'
+  main_net: number
+  big_net?: number
+  mid_net?: number
+  participation?: number | null
+  buy_ratio?: number | null
+  auction_amt?: number
+  phase?: string | null
+  signal?: string | null
+  chip_peak?: number | null
+  chip_band?: { low: number; high: number } | null
+  profit_ratio?: number | null
 }
 
 type HoverTipRow = {
@@ -150,21 +166,21 @@ function getLW() {
   return (window as any)?.LightweightCharts || null
 }
 
-function addCandles(chart: any, LW: any, options: any) {
+function addCandles(chart: any, LW: any, options: any, paneIndex?: number) {
   if (typeof chart?.addCandlestickSeries === 'function') return chart.addCandlestickSeries(options)
-  if (typeof chart?.addSeries === 'function' && LW?.CandlestickSeries) return chart.addSeries(LW.CandlestickSeries, options)
+  if (typeof chart?.addSeries === 'function' && LW?.CandlestickSeries) return chart.addSeries(LW.CandlestickSeries, options, paneIndex)
   throw new Error('Candlestick series API not available')
 }
 
-function addLine(chart: any, LW: any, options: any) {
+function addLine(chart: any, LW: any, options: any, paneIndex?: number) {
   if (typeof chart?.addLineSeries === 'function') return chart.addLineSeries(options)
-  if (typeof chart?.addSeries === 'function' && LW?.LineSeries) return chart.addSeries(LW.LineSeries, options)
+  if (typeof chart?.addSeries === 'function' && LW?.LineSeries) return chart.addSeries(LW.LineSeries, options, paneIndex)
   throw new Error('Line series API not available')
 }
 
-function addHistogram(chart: any, LW: any, options: any) {
+function addHistogram(chart: any, LW: any, options: any, paneIndex?: number) {
   if (typeof chart?.addHistogramSeries === 'function') return chart.addHistogramSeries(options)
-  if (typeof chart?.addSeries === 'function' && LW?.HistogramSeries) return chart.addSeries(LW.HistogramSeries, options)
+  if (typeof chart?.addSeries === 'function' && LW?.HistogramSeries) return chart.addSeries(LW.HistogramSeries, options, paneIndex)
   throw new Error('Histogram series API not available')
 }
 
@@ -173,9 +189,13 @@ export default function InteractiveKline(props: {
   market: string
   initialInterval?: '1d' | '1w' | '1m'
   initialDays?: '60' | '120' | '250'
+  /** 主力意图结构化数据(可选): 传了才在K线上画 markers/筹码叠加 */
+  mainIntent?: MainIntentStructured | null
 }) {
   const [lwReady, setLwReady] = useState(!!getLW())
   const [libError, setLibError] = useState(false)
+  // 主力意图结构化数据(2026-08-12): 组件自取 summary API, 用于K线 markers/筹码叠加
+  const [mainIntentData, setMainIntentData] = useState<MainIntentStructured | null>(null)
   const [interval, setIntervalValue] = useState<'1d' | '1w' | '1m'>(props.initialInterval || '1d')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>('')
@@ -232,7 +252,24 @@ export default function InteractiveKline(props: {
   }, [props.initialDays, interval])
 
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const macdRef = useRef<HTMLDivElement | null>(null)
+
+  // 拉取主力意图结构化数据(2026-08-12): 仅 A 股, 失败静默
+  useEffect(() => {
+    if (!props.symbol || props.market !== 'CN') return
+    let cancelled = false
+    fetchAPI<{ main_intent_structured?: MainIntentStructured | null }>(
+      `/klines/${encodeURIComponent(props.symbol)}/summary?market=CN`
+    )
+      .then((res: { main_intent_structured?: MainIntentStructured | null }) => {
+        if (!cancelled) setMainIntentData(res.main_intent_structured ?? null)
+      })
+      .catch(() => {
+        if (!cancelled) setMainIntentData(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [props.symbol, props.market])
 
   const load = async () => {
     if (!props.symbol) return
@@ -350,10 +387,8 @@ export default function InteractiveKline(props: {
     if (!series.candles.length) return
 
     const container = containerRef.current
-    const macdEl = macdRef.current
 
     container.innerHTML = ''
-    if (macdEl) macdEl.innerHTML = ''
 
     const rootStyle = getComputedStyle(document.documentElement)
     const bg = rootStyle.getPropertyValue('--card').trim()
@@ -396,14 +431,13 @@ export default function InteractiveKline(props: {
     })
     candleSeries.setData(series.candles)
 
+    // 量能 pane 1 (v5 multi-pane, 2026-08-12 从 scaleMargins 挤压改为真 pane)
     const volSeries = addHistogram(chart, LW, {
-      priceScaleId: 'vol',
       priceFormat: { type: 'volume' },
-    })
+    }, 1)
     volSeries.setData(series.volumes)
-    chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } })
-    const volMa5Series = addLine(chart, LW, { priceScaleId: 'vol', color: 'rgba(245, 158, 11, 0.9)', lineWidth: 1 })
-    const volMa10Series = addLine(chart, LW, { priceScaleId: 'vol', color: 'rgba(14, 165, 233, 0.9)', lineWidth: 1 })
+    const volMa5Series = addLine(chart, LW, { color: 'rgba(245, 158, 11, 0.9)', lineWidth: 1 }, 1)
+    const volMa10Series = addLine(chart, LW, { color: 'rgba(14, 165, 233, 0.9)', lineWidth: 1 }, 1)
 
     const ma5Series = addLine(chart, LW, { color: 'rgba(99, 102, 241, 0.85)', lineWidth: 2 })
     const ma10Series = addLine(chart, LW, { color: 'rgba(245, 158, 11, 0.85)', lineWidth: 2 })
@@ -423,80 +457,44 @@ export default function InteractiveKline(props: {
     volMa5Series.setData(mapLine(series.volMa5) as any)
     volMa10Series.setData(mapLine(series.volMa10) as any)
 
-    // MACD chart
-    let macdChart: any = null
-    let rsiChart: any = null
-    if (macdEl) {
-      macdChart = LW.createChart(macdEl, {
-        width: macdEl.clientWidth,
-        height: 150,
-        layout: {
-          background: { color: `hsl(${bg})` },
-          textColor: `hsl(${fg} / 0.75)`,
-        },
-        rightPriceScale: { borderVisible: false },
-        timeScale: { borderVisible: false, visible: false },
-        grid: {
-          vertLines: { color: 'rgba(148, 163, 184, 0.06)' },
-          horzLines: { color: 'rgba(148, 163, 184, 0.06)' },
-        },
-        crosshair: { mode: 0 },
-      })
-      const macdLine = addLine(macdChart, LW, { color: 'rgba(99, 102, 241, 0.85)', lineWidth: 2 })
-      const sigLine = addLine(macdChart, LW, { color: 'rgba(14, 165, 233, 0.85)', lineWidth: 2 })
-      const hist = addHistogram(macdChart, LW, {
-        priceFormat: { type: 'price', precision: 3, minMove: 0.001 },
-      })
+    // MACD pane 2 + RSI pane 3 (v5 multi-pane, 2026-08-12 从独立 chart + 手动 sync 改为原生多面板)
+    const macdLine = addLine(chart, LW, { color: 'rgba(99, 102, 241, 0.85)', lineWidth: 2 }, 2)
+    const sigLine = addLine(chart, LW, { color: 'rgba(14, 165, 233, 0.85)', lineWidth: 2 }, 2)
+    const hist = addHistogram(chart, LW, {
+      priceFormat: { type: 'price', precision: 3, minMove: 0.001 },
+    }, 2)
 
-      const macdLineData = series.klines
-        .map((k, i) => {
-          const v = series.macd.macd[i]
-          return v == null ? null : { time: parseBusinessDay(k.date) as BusinessDay, value: v }
-        })
-        .filter(Boolean)
-      const sigLineData = series.klines
-        .map((k, i) => {
-          const v = series.macd.signal[i]
-          return v == null ? null : { time: parseBusinessDay(k.date) as BusinessDay, value: v }
-        })
-        .filter(Boolean)
-      const histData = series.klines
-        .map((k, i) => {
-          const v = series.macd.hist[i]
-          if (v == null) return null
-          return {
-            time: parseBusinessDay(k.date) as BusinessDay,
-            value: v,
-            color: v >= 0 ? 'rgba(239, 68, 68, 0.35)' : 'rgba(16, 185, 129, 0.35)',
-          }
-        })
-        .filter(Boolean)
-
-      macdLine.setData(macdLineData as any)
-      sigLine.setData(sigLineData as any)
-      hist.setData(histData as any)
-    }
-
-    // RSI chart
-    if (showRsi && macdEl) {
-      const rsiRoot = document.createElement('div')
-      rsiRoot.className = 'mt-2'
-      macdEl.parentElement?.appendChild(rsiRoot)
-      rsiChart = LW.createChart(rsiRoot, {
-        width: macdEl.clientWidth,
-        height: 110,
-        layout: {
-          background: { color: `hsl(${bg})` },
-          textColor: `hsl(${fg} / 0.75)`,
-        },
-        rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.15, bottom: 0.1 } },
-        timeScale: { borderVisible: false, visible: false },
-        grid: {
-          vertLines: { color: 'rgba(148, 163, 184, 0.06)' },
-          horzLines: { color: 'rgba(148, 163, 184, 0.06)' },
-        },
+    const macdLineData = series.klines
+      .map((k, i) => {
+        const v = series.macd.macd[i]
+        return v == null ? null : { time: parseBusinessDay(k.date) as BusinessDay, value: v }
       })
-      const rsiLine = addLine(rsiChart, LW, { color: 'rgba(234, 88, 12, 0.9)', lineWidth: 2 })
+      .filter(Boolean)
+    const sigLineData = series.klines
+      .map((k, i) => {
+        const v = series.macd.signal[i]
+        return v == null ? null : { time: parseBusinessDay(k.date) as BusinessDay, value: v }
+      })
+      .filter(Boolean)
+    const histData = series.klines
+      .map((k, i) => {
+        const v = series.macd.hist[i]
+        if (v == null) return null
+        return {
+          time: parseBusinessDay(k.date) as BusinessDay,
+          value: v,
+          color: v >= 0 ? 'rgba(239, 68, 68, 0.35)' : 'rgba(16, 185, 129, 0.35)',
+        }
+      })
+      .filter(Boolean)
+
+    macdLine.setData(macdLineData as any)
+    sigLine.setData(sigLineData as any)
+    hist.setData(histData as any)
+
+    // RSI pane 3 (开关控制)
+    if (showRsi) {
+      const rsiLine = addLine(chart, LW, { color: 'rgba(234, 88, 12, 0.9)', lineWidth: 2 }, 3)
       const rsiData = series.klines
         .map((k, i) => {
           const v = series.rsi6[i]
@@ -508,15 +506,96 @@ export default function InteractiveKline(props: {
       rsiLine.createPriceLine?.({ price: 30, color: 'rgba(16,185,129,0.45)', lineWidth: 1, lineStyle: 2, title: '30' })
     }
 
-    const sync = (range: any) => {
-      try {
-        macdChart?.timeScale().setVisibleRange(range)
-        rsiChart?.timeScale().setVisibleRange(range)
-      } catch {
-        // ignore
+    // 主力意图 markers + 筹码叠加 (2026-08-12)
+    const mainIntent = props.mainIntent ?? mainIntentData
+    if (mainIntent) {
+      // ① 主力意图箭头: 标在最后一根K线上 (买↑红 / 卖↓绿 / 平衡中性)
+      if (series.klines.length) {
+        const lastK = series.klines[series.klines.length - 1]
+        const arrowUp = LW.SeriesMarkerShape ? 'arrowUp' : 'arrowUp'
+        const markers: any[] = []
+        if (mainIntent.direction === 'buy') {
+          markers.push({
+            time: parseBusinessDay(lastK.date) as BusinessDay,
+            position: 'belowBar',
+            color: '#ef4444',
+            shape: arrowUp,
+            text: '主力吸筹',
+            size: 1,
+          })
+        } else if (mainIntent.direction === 'sell') {
+          markers.push({
+            time: parseBusinessDay(lastK.date) as BusinessDay,
+            position: 'aboveBar',
+            color: '#10b981',
+            shape: 'arrowDown',
+            text: '主力派发',
+            size: 1,
+          })
+        }
+        // ② 涨停/跌停点 (近 60 根): 涨幅≥9.8% 标红箭头, 跌幅≤-9.8% 标绿箭头
+        const fromIdx = Math.max(0, series.klines.length - 60)
+        for (let i = fromIdx; i < series.klines.length; i++) {
+          const k = series.klines[i]
+          const prev = i > 0 ? series.klines[i - 1] : null
+          if (!prev || !prev.close) continue
+          const chg = ((k.close - prev.close) / prev.close) * 100
+          if (chg >= 9.8) {
+            markers.push({
+              time: parseBusinessDay(k.date) as BusinessDay,
+              position: 'belowBar',
+              color: 'rgba(239, 68, 68, 0.9)',
+              shape: 'arrowUp',
+              text: '涨停',
+              size: 0,
+            })
+          } else if (chg <= -9.8) {
+            markers.push({
+              time: parseBusinessDay(k.date) as BusinessDay,
+              position: 'aboveBar',
+              color: 'rgba(16, 185, 129, 0.9)',
+              shape: 'arrowDown',
+              text: '跌停',
+              size: 0,
+            })
+          }
+        }
+        if (markers.length) {
+          candleSeries.setMarkers?.(markers)
+        }
+      }
+      // ③ 筹码叠加: 筹码峰 + 成本带上/下沿画在价格 pane
+      if (mainIntent.chip_peak != null) {
+        candleSeries.createPriceLine?.({
+          price: mainIntent.chip_peak,
+          color: 'rgba(234, 179, 8, 0.6)',
+          lineWidth: 1,
+          lineStyle: 1,
+          title: '筹码峰',
+          axisLabelVisible: true,
+        })
+      }
+      if (mainIntent.chip_band) {
+        candleSeries.createPriceLine?.({
+          price: mainIntent.chip_band.high,
+          color: 'rgba(148, 163, 184, 0.45)',
+          lineWidth: 1,
+          lineStyle: 3,
+          title: '成本上沿',
+          axisLabelVisible: true,
+        })
+        candleSeries.createPriceLine?.({
+          price: mainIntent.chip_band.low,
+          color: 'rgba(148, 163, 184, 0.45)',
+          lineWidth: 1,
+          lineStyle: 3,
+          title: '成本下沿',
+          axisLabelVisible: true,
+        })
       }
     }
-    chart.timeScale().subscribeVisibleTimeRangeChange(sync)
+
+    // v5 多面板共用 X 轴, 无需手动同步可见范围(2026-08-12 移除旧版独立 chart sync)
     chart.subscribeCrosshairMove?.((param: any) => {
       const point = param?.point
       const dateKey = parseCrosshairDateKey(param?.time)
@@ -571,16 +650,27 @@ export default function InteractiveKline(props: {
 
     const ro = new ResizeObserver(() => {
       chart.applyOptions({ width: container.clientWidth })
-      if (macdEl) macdChart?.applyOptions({ width: macdEl.clientWidth })
-      if (macdEl && rsiChart) rsiChart?.applyOptions({ width: macdEl.clientWidth })
     })
     ro.observe(container)
-    if (macdEl) ro.observe(macdEl)
 
     const total = series.candles.length
     const from = Math.max(0, total - defaultBars)
     const to = Math.max(total - 1, 0)
     chart.timeScale().setVisibleLogicalRange({ from, to })
+    // 多面板高度分配 (v5): 价格 55% / 量能 15% / MACD 15% / RSI 15%
+    try {
+      const panes = chart.panes?.()
+      if (Array.isArray(panes) && panes.length >= 2) {
+        const totalH = 380 + (showRsi ? 240 : 160)
+        panes[0]?.setHeight?.(Math.round(totalH * 0.55))
+        panes[1]?.setHeight?.(Math.round(totalH * 0.15))
+        panes[2]?.setHeight?.(Math.round(totalH * 0.15))
+        if (panes[3]) panes[3]?.setHeight?.(Math.round(totalH * 0.15))
+        chart.applyOptions({ height: totalH })
+      }
+    } catch {
+      // v4 无 panes API, 忽略
+    }
     return () => {
       ro.disconnect()
       try {
@@ -588,18 +678,36 @@ export default function InteractiveKline(props: {
       } catch {
         // ignore
       }
-      try {
-        macdChart?.remove()
-      } catch {
-        // ignore
-      }
-      try {
-        rsiChart?.remove()
-      } catch {
-        // ignore
-      }
     }
-  }, [series, lwReady, showRsi, indexByDate, interval, mode])
+  }, [series, lwReady, showRsi, indexByDate, interval, mode, mainIntentData])
+
+  // 主力意图图例(2026-08-12): 展示方向/筹码峰/成本带, 仅在传入结构化数据时显示
+  const mi = props.mainIntent ?? mainIntentData
+  const mainIntentLegend = mi ? (
+    <div className="mt-3 rounded-lg bg-rose-500/5 border border-rose-500/15 px-2.5 py-2 text-[11px] text-foreground/80">
+      <span className="font-medium text-rose-400 mr-2">主力意图</span>
+      {mi.direction === 'buy' ? (
+        <span className="text-rose-500 font-medium">吸筹↑</span>
+      ) : mi.direction === 'sell' ? (
+        <span className="text-emerald-500 font-medium">派发↓</span>
+      ) : (
+        <span className="text-muted-foreground font-medium">平衡→</span>
+      )}
+      {typeof mi.main_net === 'number' && (
+        <span className="ml-2 font-mono">
+          {(mi.main_net / 1e4).toFixed(0)}万
+          {typeof mi.big_net === 'number' && ` (超大${(mi.big_net / 1e4).toFixed(0)}/大${(mi.mid_net ?? 0) / 1e4 >= 0 ? '+' : ''}${((mi.mid_net ?? 0) / 1e4).toFixed(0)})`}
+        </span>
+      )}
+      {mi.chip_peak != null && <span className="ml-2">筹码峰 <span className="font-mono">{mi.chip_peak.toFixed(2)}</span></span>}
+      {mi.chip_band && (
+        <span className="ml-2">成本带 <span className="font-mono">{mi.chip_band.low.toFixed(2)}-{mi.chip_band.high.toFixed(2)}</span></span>
+      )}
+      {typeof mi.profit_ratio === 'number' && (
+        <span className="ml-2">获利 <span className="font-mono">{(mi.profit_ratio * 100).toFixed(0)}%</span></span>
+      )}
+    </div>
+  ) : null
 
   return (
     <div className="card p-4 md:p-5">
@@ -698,7 +806,7 @@ export default function InteractiveKline(props: {
                 </div>
               </div>
               <div className="w-full rounded-xl border border-border/50 bg-card">
-                <MinuteEChart points={minutePoints} prevClose={minutePrevClose} isIndex={minuteIsIndex} />
+                <MinuteLwcChart points={minutePoints} prevClose={minutePrevClose} isIndex={minuteIsIndex} />
               </div>
               <div className="mt-2 flex gap-4 text-[11px] text-muted-foreground">
                 <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-rose-400" /> 价格</span>
@@ -772,21 +880,7 @@ export default function InteractiveKline(props: {
           </div>
         ) : null}
       </div>
-      <div className="mt-3 grid grid-cols-1 gap-3">
-        <div>
-          <div className="text-[11px] text-muted-foreground mb-1">动能指标（MACD{showRsi ? ' + RSI强弱线' : ''}）</div>
-          <div className="text-[11px] text-muted-foreground mb-2 rounded-lg bg-accent/15 border border-border/40 px-2.5 py-1.5">
-            MACD 用来看趋势动能和拐点；RSI 用来看是否偏热/偏弱（一般 70 以上偏热，30 以下偏弱）。
-          </div>
-          {showSkeleton ? (
-            <div className="w-full h-[150px] rounded-xl overflow-hidden border border-border/50 animate-pulse">
-              <div className="h-full w-full bg-accent/20" />
-            </div>
-          ) : (
-            <div ref={macdRef} className="w-full h-[150px] rounded-xl overflow-hidden border border-border/50" />
-          )}
-        </div>
-      </div>
+      {mainIntentLegend}
       </>
       )}
     </div>
