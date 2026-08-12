@@ -26,6 +26,17 @@
     --input: 220 15% 90%;
     --ring: 234 85% 55%;
     --radius: 0.75rem;
+
+    /* 界面密度体系:normal(默认)= 4px 基准。
+       compact=3px / comfortable=6px 由 <html data-density> 属性覆盖(见下方)。
+       后续页面间距请用 --density-* 派生变量,例如:
+         style={{ gap: 'var(--density-2)' }}  ≈ Tailwind gap-2(8px),随档位自动缩放 */
+    --density-unit: 4px;
+    --density-1: var(--density-unit);
+    --density-2: calc(var(--density-unit) * 2);
+    --density-3: calc(var(--density-unit) * 3);
+    --density-4: calc(var(--density-unit) * 4);
+    --density-6: calc(var(--density-unit) * 6);
   }
 
   .dark {
@@ -50,6 +61,16 @@
     --border: 224 15% 16%;
     --input: 224 15% 18%;
     --ring: 234 85% 62%;
+  }
+
+  /* 密度档位覆盖(normal 为默认,不加选择器即保持原样):
+     compact   = 3px 基准(信息更密集,类 IDE 紧凑模式)
+     comfortable = 6px 基准(更宽松,适合大屏阅读) */
+  :root[data-density='compact'] {
+    --density-unit: 3px;
+  }
+  :root[data-density='comfortable'] {
+    --density-unit: 6px;
   }
 }
 

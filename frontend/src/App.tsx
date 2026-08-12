@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef, lazy, Suspense } from 'react'
-import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
+import { Fragment, useState, useEffect, useRef, lazy, Suspense } from 'react'
+import { Routes, Route, NavLink, useLocation, useNavigate, Navigate } from 'react-router-dom'
 import { TrendingUp, Bot, ScrollText, Settings, List, Database, Clock, LayoutDashboard, Github, BellRing, Sparkles, Activity, LineChart, FileText, BookOpen, Shield } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
+import { useHotkeys } from '@/hooks/use-hotkeys'
 import { appApi, fetchAPI, isAuthenticated } from '@panwatch/api'
 // 2026-08-12 性能优化: 路由懒加载 — 17 个页面原本静态 import 打进单 bundle 1.2MB,
 // 点任意路由都要下载/解析整个应用。改为 React.lazy 按需加载, 首屏只下载登录页+当前页。
@@ -47,8 +48,13 @@ const navItems = [
   { to: '/datasources', icon: Database, label: '数据源' },
   { to: '/settings', icon: Settings, label: '设置' },
 ]
-const desktopPrimaryNavItems = navItems.slice(0, 5)
-const desktopMoreNavItems = navItems.slice(5)
+// 桌面端导航按业务分组(2026-08-12): 行情 / 交易 / 系统, 13 项全部平铺显示, 不再 slice 截断
+const desktopNavGroups = [
+  { key: 'market', items: navItems.filter(n => ['/', '/portfolio', '/opportunities', '/forecast'].includes(n.to)) },
+  { key: 'trading', items: navItems.filter(n => ['/paper-trading', '/alerts', '/shadow'].includes(n.to)) },
+  { key: 'system', items: navItems.filter(n => ['/agents', '/reports', '/strategies', '/history', '/datasources', '/settings'].includes(n.to)) },
+]
+// 移动端保持原样: 前 5 项底部导航, 其余进头像下拉
 const mobilePrimaryNavItems = navItems.slice(0, 5)
 const mobileMoreNavItems = navItems.slice(5)
 
@@ -137,6 +143,38 @@ function App() {
       .catch(() => {})
   }, [version])
 
+  // ===== PC 快捷键(2026-08-12,增量功能,不影响现有交互) =====
+  // 仅桌面端(>=768px)生效,移动端自动禁用;登录页不响应
+  const navigate = useNavigate()
+  const [hotkeysOpen, setHotkeysOpen] = useState(false)
+  // 登录页守卫:登录态外不响应快捷键
+  const runOnDesktop = (fn: () => void) => () => {
+    if (location.pathname === '/login') return
+    fn()
+  }
+
+  useHotkeys([
+    {
+      combo: 'mod+k',
+      handler: runOnDesktop(() => {
+        // 优先聚焦搜索框;当前无全局搜索框,先打开日志弹窗 LogsModal 作为占位,后续接搜索
+        const searchInput = document.querySelector<HTMLInputElement>(
+          'input[type="search"], input[data-search-input], input[placeholder*="搜索" i]',
+        )
+        if (searchInput) {
+          searchInput.focus()
+          searchInput.scrollIntoView({ block: 'center', behavior: 'smooth' })
+          return
+        }
+        setLogsOpen(true)
+      }),
+    },
+    { combo: 'mod+,', handler: runOnDesktop(() => navigate('/settings')) },
+    { sequence: ['g', 'd'], sequenceTimeout: 1500, handler: runOnDesktop(() => navigate('/')) },
+    { sequence: ['g', 'p'], sequenceTimeout: 1500, handler: runOnDesktop(() => navigate('/portfolio')) },
+    { combo: '?', preventDefault: true, handler: runOnDesktop(() => setHotkeysOpen(true)) },
+  ])
+
   // 登录页面不显示导航
   if (location.pathname === '/login') {
     return (
@@ -158,7 +196,7 @@ function App() {
         <header className="card px-4 md:px-5">
           <div className="h-14 flex items-center justify-between">
             {/* Logo */}
-            <NavLink to="/" className="flex items-center gap-2.5 group">
+            <NavLink to="/" className="flex items-center gap-2.5 group shrink-0">
               <div className="w-8 h-8 rounded-2xl bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center shadow-sm">
                 <TrendingUp className="w-4 h-4 text-white" />
               </div>
@@ -166,40 +204,45 @@ function App() {
               {version && <span className="text-[11px] text-muted-foreground/60 font-normal">v{version}</span>}
             </NavLink>
 
-            {/* Nav Links */}
-            <nav className="flex items-center gap-1">
-              {desktopPrimaryNavItems.map(({ to, icon: Icon, label }) => {
-                const isActive = to === '/' ? location.pathname === '/' : location.pathname.startsWith(to)
-                return (
-                  <NavLink
-                    key={to}
-                    to={to}
-                    className="relative"
-                  >
-                    <span
-                      className={`absolute inset-0 rounded-xl transition-all ${
-                        isActive
-                          ? 'bg-[linear-gradient(135deg,hsl(var(--primary)/0.14),hsl(var(--primary)/0.04),hsl(var(--success)/0.06))] ring-1 ring-primary/20 shadow-[0_8px_24px_-18px_hsl(var(--primary)/0.55)]'
-                          : 'bg-transparent'
-                      }`}
-                    />
-                    <span
-                      className={`relative px-3.5 py-2 rounded-xl text-[13px] font-medium transition-all flex items-center gap-1.5 ${
-                        isActive
-                          ? 'text-foreground'
-                          : 'text-muted-foreground hover:text-foreground hover:bg-accent'
-                      }`}
-                    >
-                      <Icon className={`w-4 h-4 ${isActive ? 'text-primary' : ''}`} />
-                      {label}
-                    </span>
-                  </NavLink>
-                )
-              })}
+            {/* Nav Links — 桌面端三组全平铺(行情/交易/系统), 组间 1px 分隔线, 不再 slice(0,5) */}
+            <nav className="flex items-center gap-1 min-w-0 flex-1 justify-center overflow-x-auto">
+              {desktopNavGroups.map((group, gi) => (
+                <Fragment key={group.key}>
+                  {gi > 0 && <div className="w-px h-5 bg-border/50 mx-1 shrink-0" aria-hidden="true" />}
+                  {group.items.map(({ to, icon: Icon, label }) => {
+                    const isActive = to === '/' ? location.pathname === '/' : location.pathname.startsWith(to)
+                    return (
+                      <NavLink
+                        key={to}
+                        to={to}
+                        className="relative shrink-0"
+                      >
+                        <span
+                          className={`absolute inset-0 rounded-xl transition-all ${
+                            isActive
+                              ? 'bg-[linear-gradient(135deg,hsl(var(--primary)/0.14),hsl(var(--primary)/0.04),hsl(var(--success)/0.06))] ring-1 ring-primary/20 shadow-[0_8px_24px_-18px_hsl(var(--primary)/0.55)]'
+                              : 'bg-transparent'
+                          }`}
+                        />
+                        <span
+                          className={`relative px-2.5 py-2 rounded-xl text-[13px] font-medium transition-all flex items-center gap-1.5 ${
+                            isActive
+                              ? 'text-foreground'
+                              : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                          }`}
+                        >
+                          <Icon className={`w-4 h-4 ${isActive ? 'text-primary' : ''}`} />
+                          {label}
+                        </span>
+                      </NavLink>
+                    )
+                  })}
+                </Fragment>
+              ))}
             </nav>
 
-            {/* action wrapper:GitHub + 日志 + 头像(头像下拉含更多导航/主题色/退出) */}
-            <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-2xl bg-accent/20 border border-border/40">
+            {/* action wrapper:GitHub + 日志 + 头像(桌面端头像下拉仅含主题/自检/退出, 导航已平铺) */}
+            <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-2xl bg-accent/20 border border-border/40 shrink-0">
               <button
                 onClick={() => window.open(repoUrl, '_blank', 'noopener,noreferrer')}
                 className="w-9 h-9 rounded-xl flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-background/70 transition-all"
@@ -216,7 +259,7 @@ function App() {
               </button>
               <NotificationBell />
               <AccountMenu
-                navItems={desktopMoreNavItems}
+                navItems={[]}
                 mode={mode}
                 onSetMode={setMode}
                 onOpenSelfCheck={() => setSelfCheckOpen(true)}
@@ -345,6 +388,38 @@ function App() {
             >
               去升级
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {/* 快捷键帮助(2026-08-12):按 ? 打开 */}
+      <Dialog open={hotkeysOpen} onOpenChange={setHotkeysOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>键盘快捷键</DialogTitle>
+            <DialogDescription>仅桌面端生效,移动端自动禁用。</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2.5 text-[13px]">
+            {[
+              { desc: '打开日志(搜索占位)', keys: ['⌘/Ctrl', 'K'] },
+              { desc: '跳转设置', keys: ['⌘/Ctrl', ','] },
+              { desc: '跳转首页', keys: ['G', 'D'] },
+              { desc: '跳转持仓', keys: ['G', 'P'] },
+              { desc: '显示本帮助', keys: ['?'] },
+            ].map(row => (
+              <div key={row.desc} className="flex items-center justify-between gap-4">
+                <span className="text-muted-foreground">{row.desc}</span>
+                <span className="flex items-center gap-1 shrink-0">
+                  {row.keys.map(k => (
+                    <kbd
+                      key={k}
+                      className="px-1.5 py-0.5 rounded-md bg-accent border border-border text-[11px] font-medium text-foreground"
+                    >
+                      {k}
+                    </kbd>
+                  ))}
+                </span>
+              </div>
+            ))}
           </div>
         </DialogContent>
       </Dialog>

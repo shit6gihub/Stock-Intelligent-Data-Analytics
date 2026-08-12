@@ -35,6 +35,7 @@ import BenchChart from '@/components/BenchChart'
 import BenchmarkShareCard from '@/components/BenchmarkShareCard'
 import DiagnosticsShareCard from '@/components/DiagnosticsShareCard'
 import DigestShareCard from '@/components/DigestShareCard'
+import StockContextMenu, { type StockContextMenuState, type StockContextTarget } from '@/components/StockContextMenu'
 
 function pct(v?: number | null, digits = 2): string {
   if (v == null || !isFinite(v)) return '--'
@@ -229,6 +230,27 @@ export default function DashboardPage() {
 
   const openStock = (symbol: string, market: string, name = '', hasPosition = false) =>
     setModal({ open: true, symbol, market: market || 'CN', name, hasPosition })
+
+  // ========== PC 右键菜单 ==========
+  const [stockCtxMenu, setStockCtxMenu] = useState<StockContextMenuState | null>(null)
+
+  const openStockContextMenu = useCallback((e: React.MouseEvent, stock: StockContextTarget) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setStockCtxMenu({ x: e.clientX, y: e.clientY, stock })
+  }, [])
+
+  const addToWatchlistFromMenu = useCallback((stock: StockContextTarget) => {
+    void addToWatchlist(stock.symbol, stock.name || stock.symbol, stock.market || 'CN')
+  }, [addToWatchlist])
+
+  const viewDetailFromMenu = useCallback((stock: StockContextTarget) => {
+    openStock(stock.symbol, stock.market || 'CN', stock.name || stock.symbol, stock.hasPosition)
+  }, [openStock])
+
+  const paperTradeFromMenu = useCallback(() => {
+    navigate('/paper-trading')
+  }, [navigate])
 
   const runAiReview = async () => {
     setAiReviewLoading(true)
@@ -514,10 +536,10 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* 主体:要紧事(7) | 体检(5);机会(5) | 简报(7) */}
+      {/* 主体:PC 工作台 3 列(要紧事3 | 体检6 | 机会3);次级 2 列(简报6 | 机会发现6)。1280px 以下回退 7/5-5/7 两行布局 */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">
-        {/* 今日要紧事(主角) */}
-        <div className="card p-4 lg:col-span-7">
+        {/* 今日要紧事(左列,窄) */}
+        <div className="card p-4 lg:col-span-7 xl:col-span-3">
           <div className="mb-2 flex items-center gap-2">
             <Activity className="h-4 w-4 text-primary" />
             <h2 className="text-sm font-semibold">今日要紧事</h2>
@@ -545,6 +567,10 @@ export default function DashboardPage() {
                     key={i}
                     className={`flex items-center gap-2 py-1 text-[12px] ${t.symbol ? 'cursor-pointer hover:bg-accent/30' : ''}`}
                     onClick={() => t.symbol && openStock(t.symbol, t.market || 'CN', '')}
+                    onContextMenu={(e) => {
+                      if (!t.symbol) return
+                      openStockContextMenu(e, { symbol: t.symbol, name: t.symbol, market: t.market || 'CN', hasPosition: false })
+                    }}
                   >
                     <span className="shrink-0 rounded bg-amber-500/15 px-1 text-[9px] text-amber-600">
                       {t.type === 'no_alert' ? '加提醒' : '将到期'}
@@ -565,6 +591,15 @@ export default function DashboardPage() {
                     key={i}
                     className={`flex items-center gap-3 py-2 ${it.symbol ? 'cursor-pointer hover:bg-accent/30' : ''}`}
                     onClick={() => it.symbol && openStock(it.symbol, it.market || 'CN', it.name || '')}
+                    onContextMenu={(e) => {
+                      if (!it.symbol) return
+                      openStockContextMenu(e, {
+                        symbol: it.symbol,
+                        name: it.name || it.symbol,
+                        market: it.market || 'CN',
+                        hasPosition: it.type === 'holding',
+                      })
+                    }}
                   >
                     <span className={`shrink-0 rounded px-1 text-[9px] ${badge.cls}`}>{badge.label}</span>
                     <div className="min-w-0 flex-1">
@@ -581,8 +616,8 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* 组合体检(并入首页) */}
-        <div className="card p-4 lg:col-span-5">
+        {/* 组合体检(中列,宽) */}
+        <div className="card p-4 lg:col-span-5 xl:col-span-6">
           <div className="mb-2 flex items-center gap-2">
             <ShieldAlert className="h-4 w-4 text-primary" />
             <h2 className="text-sm font-semibold">组合体检</h2>
@@ -741,8 +776,8 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* 机会精选 */}
-        <div className="card p-4 lg:col-span-5">
+        {/* 机会精选(右列,窄) */}
+        <div className="card p-4 lg:col-span-5 xl:col-span-3">
           <div className="mb-2 flex items-center justify-between">
             <h2 className="flex items-center gap-2 text-sm font-semibold">
               <Sparkles className="h-4 w-4 text-primary" />
@@ -767,6 +802,14 @@ export default function DashboardPage() {
                     key={`${o.stock_market}:${o.stock_symbol}`}
                     className="flex cursor-pointer items-center gap-2 py-2 hover:bg-accent/30"
                     onClick={() => openStock(o.stock_symbol, o.stock_market, o.stock_name || o.stock_symbol)}
+                    onContextMenu={(e) =>
+                      openStockContextMenu(e, {
+                        symbol: o.stock_symbol,
+                        name: o.stock_name || o.stock_symbol,
+                        market: o.stock_market || 'CN',
+                        hasPosition: false,
+                      })
+                    }
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
@@ -789,9 +832,9 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* 盘前/盘后简报 */}
+        {/* 盘前/盘后简报(次级,左) */}
         {brief && (brief.title || brief.content) && (
-          <div className="card p-4 lg:col-span-7">
+          <div className="card p-4 lg:col-span-7 xl:col-span-6">
             <div className="mb-1 flex items-center justify-between gap-2">
               <h2 className="flex items-center gap-2 text-sm font-semibold">
                 <Newspaper className="h-4 w-4 text-primary" />
@@ -849,9 +892,12 @@ export default function DashboardPage() {
             )}
           </div>
         )}
-      </div>
 
-      <DiscoveryPanel monitorStocks={scan} onOpenStock={openStock} />
+        {/* 机会发现(次级,右;1280px 以下整行) */}
+        <div className="lg:col-span-12 xl:col-span-6">
+          <DiscoveryPanel monitorStocks={scan} onOpenStock={openStock} />
+        </div>
+      </div>
 
       <StockInsightModal
         open={modal.open}
@@ -890,6 +936,15 @@ export default function DashboardPage() {
           why: it.why,
           change_pct: it.change_pct ?? null,
         }))}
+      />
+
+      {/* PC 右键菜单 */}
+      <StockContextMenu
+        menu={stockCtxMenu}
+        onClose={() => setStockCtxMenu(null)}
+        onAddWatchlist={addToWatchlistFromMenu}
+        onViewDetail={viewDetailFromMenu}
+        onPaperTrade={paperTradeFromMenu}
       />
 
       <Onboarding open={showOnboarding} onComplete={handleOnboardingComplete} hasStocks={hasWatchlist} />
