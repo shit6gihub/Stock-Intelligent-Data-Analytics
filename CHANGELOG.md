@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-08-12 (v0.2.10)
+
+### feature
+
+- **TradingView Lightweight Charts v5 升级**(图表重构):
+  - K线图 multi-pane 原生多面板(价格/量能/MACD/RSI 四区), 替代原 3 个独立 chart + 手动可见范围 sync
+  - 主力意图 markers: 吸筹↑红/派发↓绿 标在最新 K 线, 近 60 根涨停/跌停点自动标注
+  - 筹码叠加: 筹码峰/成本带上沿/下沿 price lines(黄线筹码峰, 灰线成本带)
+  - 主力意图图例卡: 方向/净额/超大单大单/筹码峰/成本带/获利盘
+  - 分时图从 ECharts 迁至 Lightweight(价格+均价+昨收虚线+量能 pane), 砍掉 ECharts 依赖, 前端统一一套图表库
+- **TradingView Alert Webhook 接收端点**: `POST /api/webhooks/tradingview`(X-PanWatch-Secret 鉴权, 环境变量 PANWATCH_TV_WEBHOOK_SECRET; 未配置时禁用), 用户 Pine 策略 Alert 可直接推送 PanWatch 告警 → 站内通知 + 外发渠道
+
+### fix
+
+- klines summary API 新增 `main_intent_structured` 结构化字段(方向/净额/筹码峰/成本带), 前端 markers/筹码叠加不再依赖字符串解析
+
 ## 2026-08-12 (v0.2.9)
 
 ### fix
