@@ -1,7 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { Moon, Sun, Monitor, Check, LogOut, User, Stethoscope, type LucideIcon } from 'lucide-react'
-import { isAuthenticated, logout } from '@panwatch/api'
+import { Moon, Sun, Monitor, Check, LogOut, User, Stethoscope, KeyRound, type LucideIcon } from 'lucide-react'
+import { isAuthenticated, logout, authApi } from '@panwatch/api'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@panwatch/base-ui/components/ui/dialog'
+import { Input } from '@panwatch/base-ui/components/ui/input'
+import { Button } from '@panwatch/base-ui/components/ui/button'
+import { Label } from '@panwatch/base-ui/components/ui/label'
+import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import type { ThemeMode } from '@/hooks/use-theme'
 import { useAvatar } from '@/hooks/use-avatar'
 
@@ -44,10 +49,52 @@ export default function AccountMenu({
   const ref = useRef<HTMLDivElement | null>(null)
   const location = useLocation()
   const avatar = useAvatar()
+  const { toast } = useToast()
+  // 修改密码弹窗
+  const [changePwdOpen, setChangePwdOpen] = useState(false)
+  const [oldPwd, setOldPwd] = useState('')
+  const [newPwd, setNewPwd] = useState('')
+  const [confirmPwd, setConfirmPwd] = useState('')
+  const [pwdError, setPwdError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
   // 仅在支持 hover 的设备(PC)启用悬停展开;触屏维持点击
   const [canHover] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(hover: hover)').matches,
   )
+
+  const openChangePwd = () => {
+    setOpen(false)
+    setOldPwd('')
+    setNewPwd('')
+    setConfirmPwd('')
+    setPwdError(null)
+    setChangePwdOpen(true)
+  }
+
+  const handleChangePassword = async () => {
+    if (newPwd.length < 8) {
+      setPwdError('新密码至少 8 位')
+      return
+    }
+    if (newPwd !== confirmPwd) {
+      setPwdError('两次输入的密码不一致')
+      return
+    }
+    setSubmitting(true)
+    setPwdError(null)
+    try {
+      await authApi.changePassword(oldPwd, newPwd)
+      toast('密码已更新', 'success')
+      setChangePwdOpen(false)
+      setOldPwd('')
+      setNewPwd('')
+      setConfirmPwd('')
+    } catch (e) {
+      setPwdError(e instanceof Error ? e.message : '修改失败,请重试')
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   // 点击外部关闭
   useEffect(() => {
@@ -154,6 +201,14 @@ export default function AccountMenu({
             <>
               <div className="my-1 h-px bg-border/50" />
               <button
+                onClick={openChangePwd}
+                className="flex w-full items-center gap-2.5 px-2.5 py-2 rounded-lg text-[12px] text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                修改密码
+              </button>
+              <div className="my-1 h-px bg-border/50" />
+              <button
                 onClick={logout}
                 className="flex w-full items-center gap-2.5 px-2.5 py-2 rounded-lg text-[12px] text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
               >
@@ -165,6 +220,72 @@ export default function AccountMenu({
           </div>
         </div>
       )}
+
+      {/* 修改密码弹窗 */}
+      <Dialog
+        open={changePwdOpen}
+        onOpenChange={v => {
+          setChangePwdOpen(v)
+          if (!v) setPwdError(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>修改密码</DialogTitle>
+            <DialogDescription>输入旧密码并设置新密码(至少 8 位)</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div>
+              <Label>旧密码</Label>
+              <Input
+                type="password"
+                value={oldPwd}
+                onChange={e => {
+                  setOldPwd(e.target.value)
+                  setPwdError(null)
+                }}
+                placeholder="当前使用的密码"
+                autoComplete="current-password"
+              />
+            </div>
+            <div>
+              <Label>新密码</Label>
+              <Input
+                type="password"
+                value={newPwd}
+                onChange={e => {
+                  setNewPwd(e.target.value)
+                  setPwdError(null)
+                }}
+                placeholder="至少 8 位"
+                autoComplete="new-password"
+              />
+            </div>
+            <div>
+              <Label>确认新密码</Label>
+              <Input
+                type="password"
+                value={confirmPwd}
+                onChange={e => {
+                  setConfirmPwd(e.target.value)
+                  setPwdError(null)
+                }}
+                placeholder="再次输入新密码"
+                autoComplete="new-password"
+              />
+            </div>
+            {pwdError && <div className="text-[12px] text-destructive">{pwdError}</div>}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" onClick={() => setChangePwdOpen(false)} disabled={submitting}>
+                取消
+              </Button>
+              <Button onClick={handleChangePassword} disabled={submitting}>
+                {submitting ? '提交中...' : '确认'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

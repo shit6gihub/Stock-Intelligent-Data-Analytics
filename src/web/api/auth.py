@@ -79,6 +79,11 @@ class SetupRequest(BaseModel):
     password: str
 
 
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+
 class TokenResponse(BaseModel):
     token: str
     expires_at: str
@@ -306,15 +311,17 @@ async def get_me(user: User = Depends(get_current_user)):
 
 @router.post("/change-password")
 async def change_password(
-    data: SetupRequest,
+    data: ChangePasswordRequest,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """修改自己的密码, 同时使该用户既有 Token 失效。"""
-    if len(data.password) < 8:
+    """修改自己的密码, 先校验旧密码, 同时使该用户既有 Token 失效。"""
+    if not verify_password(data.old_password, user.password_hash):
+        raise HTTPException(400, "旧密码不正确")
+    if len(data.new_password) < 8:
         raise HTTPException(400, "密码长度至少 8 位")
 
-    user.password_hash = hash_password(data.password)
+    user.password_hash = hash_password(data.new_password)
     user.token_version += 1  # 踢掉旧 token
     db.commit()
 
