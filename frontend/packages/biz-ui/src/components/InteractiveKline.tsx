@@ -40,7 +40,7 @@ type MinuteResponse = {
 
 /** 主力意图结构化数据(2026-08-12): 后端 klines summary API 返回, 供 K线 markers/筹码叠加 */
 export interface MainIntentStructured {
-  direction: 'buy' | 'sell' | 'neutral'
+  direction: 'buy' | 'sell' | 'neutral' | 'wash' | 'absorb'
   main_net: number
   big_net?: number
   mid_net?: number
@@ -52,6 +52,7 @@ export interface MainIntentStructured {
   chip_peak?: number | null
   chip_band?: { low: number; high: number } | null
   profit_ratio?: number | null
+  tail_net?: number
 }
 
 type HoverTipRow = {
@@ -509,21 +510,40 @@ export default function InteractiveKline(props: {
     // 主力意图 markers + 筹码叠加 (2026-08-12)
     const mainIntent = props.mainIntent ?? mainIntentData
     if (mainIntent) {
-      // ① 主力意图箭头: 标在最后一根K线上 (买↑红 / 卖↓绿 / 平衡中性)
+      // ① 主力意图箭头: 标在最后一根K线上 (买↑红 / 派发↓绿 / 洗盘吸筹↑橙 / 平衡)
       if (series.klines.length) {
         const lastK = series.klines[series.klines.length - 1]
-        const arrowUp = LW.SeriesMarkerShape ? 'arrowUp' : 'arrowUp'
         const markers: any[] = []
-        if (mainIntent.direction === 'buy') {
+        const d = mainIntent.direction
+        if (d === 'buy') {
           markers.push({
             time: parseBusinessDay(lastK.date) as BusinessDay,
             position: 'belowBar',
             color: '#ef4444',
-            shape: arrowUp,
+            shape: 'arrowUp',
             text: '主力吸筹',
             size: 1,
           })
-        } else if (mainIntent.direction === 'sell') {
+        } else if (d === 'wash') {
+          // 净流出但参与度高/买占高 = 洗盘吸筹(对倒换手), 意图仍是吸
+          markers.push({
+            time: parseBusinessDay(lastK.date) as BusinessDay,
+            position: 'belowBar',
+            color: '#f97316',
+            shape: 'arrowUp',
+            text: '洗盘吸筹',
+            size: 1,
+          })
+        } else if (d === 'absorb') {
+          markers.push({
+            time: parseBusinessDay(lastK.date) as BusinessDay,
+            position: 'belowBar',
+            color: '#f59e0b',
+            shape: 'arrowUp',
+            text: '疑似吸筹',
+            size: 1,
+          })
+        } else if (d === 'sell') {
           markers.push({
             time: parseBusinessDay(lastK.date) as BusinessDay,
             position: 'aboveBar',
@@ -683,16 +703,21 @@ export default function InteractiveKline(props: {
 
   // 主力意图图例(2026-08-12): 展示方向/筹码峰/成本带, 仅在传入结构化数据时显示
   const mi = props.mainIntent ?? mainIntentData
+  const intentLabel = mi
+    ? mi.direction === 'buy'
+      ? { text: '吸筹↑', cls: 'text-rose-500 font-medium' }
+      : mi.direction === 'wash'
+        ? { text: '洗盘吸筹↑', cls: 'text-orange-500 font-medium' }
+        : mi.direction === 'absorb'
+          ? { text: '疑似吸筹↑', cls: 'text-amber-500 font-medium' }
+          : mi.direction === 'sell'
+            ? { text: '派发↓', cls: 'text-emerald-500 font-medium' }
+            : { text: '平衡→', cls: 'text-muted-foreground font-medium' }
+    : null
   const mainIntentLegend = mi ? (
     <div className="mt-3 rounded-lg bg-rose-500/5 border border-rose-500/15 px-2.5 py-2 text-[11px] text-foreground/80">
       <span className="font-medium text-rose-400 mr-2">主力意图</span>
-      {mi.direction === 'buy' ? (
-        <span className="text-rose-500 font-medium">吸筹↑</span>
-      ) : mi.direction === 'sell' ? (
-        <span className="text-emerald-500 font-medium">派发↓</span>
-      ) : (
-        <span className="text-muted-foreground font-medium">平衡→</span>
-      )}
+      {intentLabel && <span className={intentLabel.cls}>{intentLabel.text}</span>}
       {typeof mi.main_net === 'number' && (
         <span className="ml-2 font-mono">
           {(mi.main_net / 1e4).toFixed(0)}万

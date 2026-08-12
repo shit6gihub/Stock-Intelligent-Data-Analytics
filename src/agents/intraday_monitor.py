@@ -70,7 +70,13 @@ def _main_intent_structured(symbol: str) -> dict | None:
     """主力意图结构化数据(2026-08-12): 供前端K线 markers/筹码叠加, 不依赖字符串解析。
 
     Returns: {
-        direction: "buy" | "sell" | "neutral"  (主力净额方向, >500万=买 / <-500万=卖)
+        direction: "buy" | "sell" | "neutral" | "wash" | "absorb"
+            (2026-08-12 修正: 与 v14 判据对齐, 不止看净额)
+            buy    = 主力净流入(>500万) → 吸筹
+            wash   = 主力净流出但参与度高/买占高 → 洗盘吸筹(对倒换手, 意图仍是吸)
+            absorb = 主力净额平衡但参与度高 → 疑似吸筹
+            sell   = 主力净流出且买入强度不足 → 派发
+            neutral= 平衡
         main_net: 主力净额(元)
         big_net: 超大单净额(元)
         mid_net: 大单净额(元)
@@ -92,17 +98,31 @@ def _main_intent_structured(symbol: str) -> dict | None:
         if not dark:
             return None
         main_net = dark.get("main_net", 0) or 0
-        direction = "buy" if main_net > 500e4 else ("sell" if main_net < -500e4 else "neutral")
+        big_net = dark.get("big_net", 0) or 0
+        mid_net = dark.get("mid_net", 0) or 0
+        intensity = dark.get("main_intensity")
+        buy_ratio = dark.get("main_buy_ratio")
+        seg = dark.get("segments") or {}
+        tail = seg.get("tail", 0)
+        # v14 判据(与 _judge_signal 对齐): 参与度≥35% 且 买占≥48% = 强吸筹力度
+        strong_absorb = (intensity or 0) >= 35 and (buy_ratio or 0) >= 48
+        if main_net > 500e4:
+            direction = "buy"
+        elif main_net < -500e4:
+            direction = "wash" if strong_absorb else "sell"
+        else:
+            direction = "absorb" if strong_absorb else "neutral"
         out: dict = {
             "direction": direction,
             "main_net": main_net,
-            "big_net": dark.get("big_net", 0) or 0,
-            "mid_net": dark.get("mid_net", 0) or 0,
-            "participation": dark.get("main_intensity"),
-            "buy_ratio": dark.get("main_buy_ratio"),
+            "big_net": big_net,
+            "mid_net": mid_net,
+            "participation": intensity,
+            "buy_ratio": buy_ratio,
             "auction_amt": dark.get("auction_amt", 0) or 0,
             "phase": dark.get("phase"),
             "signal": dark.get("signal"),
+            "tail_net": tail,
         }
         # 筹码(新浪真实分布优先)
         try:
