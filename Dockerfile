@@ -112,8 +112,8 @@ COPY server.py ./
 COPY prompts/ ./prompts/
 COPY strategies/ ./strategies/
 
-# 写入版本号
-RUN echo "${VERSION}" > VERSION
+# 写入版本号，并确保构建异常时不会产出空版本文件
+RUN test -n "${VERSION}" && printf '%s\n' "${VERSION}" > VERSION && test -s VERSION
 
 # 从前端构建阶段复制静态文件
 COPY --from=frontend-builder /app/frontend/dist ./static/
