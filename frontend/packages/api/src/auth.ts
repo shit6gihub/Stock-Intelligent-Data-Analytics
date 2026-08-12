@@ -39,6 +39,11 @@ export const authApi = {
       body: JSON.stringify(payload),
     }),
   me: () => fetchAPI<{ user: UserInfo }>('/auth/me'),
+  changePassword: (oldPassword: string, newPassword: string) =>
+    fetchAPI<{ message: string }>('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+    }),
   // 用户管理(仅 owner)
   listUsers: () => fetchAPI<{ users: UserInfo[] }>('/auth/users'),
   createUser: (payload: { username: string; password: string; role?: string }) =>
