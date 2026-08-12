@@ -32,7 +32,8 @@ RUN pip install --no-cache-dir \
 
 # 预测引擎依赖(含 baostock,fetch_kline 拉日 K)
 COPY forecast_requirements.txt /install/
-RUN pip install --no-cache-dir -r /install/forecast_requirements.txt
+RUN pip install --no-cache-dir --timeout 300 --retries 8 \
+    -r /install/forecast_requirements.txt
 
 
 # ============== Stage 2: 运行时 ==============
