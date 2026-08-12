@@ -13,21 +13,27 @@ from src.core.dark_flow import compute_dark_flow, _judge_signal, _fetch_all_tick
 
 class TestDarkFlowV5:
     def test_real_compute(self):
-        """真实数据: 002361 应返回完整结构。"""
+        """真实数据: 002361 应返回完整结构(盘中/盘后均可)。"""
         r = compute_dark_flow(Symbol.parse("002361", "CN"))
         assert r is not None
         assert "dark_net" in r and "signal" in r
         assert "big_net" in r and "small_net" in r
         assert "segments" in r and "strong_buy_zones" in r
-        assert r["tick_count"] > 100
+        # 2026-08-12: 弹性断言 —— 盘中刚开盘可能只有几十笔, 盘后才是全天量
+        assert r["tick_count"] > 0
 
     def test_tick_full_coverage(self):
-        """逐笔应覆盖全天(尾盘段有数据)。"""
+        """逐笔应覆盖交易时段(盘后含尾盘, 盘中至少非空)。"""
         code = _tencent_code(Symbol.parse("002361", "CN"))
         assert code is not None
         ticks = _fetch_all_ticks(code)
-        assert len(ticks) > 1000
-        assert any(tk["t"] >= "14:30" for tk in ticks)
+        assert len(ticks) > 0
+        # 盘后(15:30+)才要求全天覆盖; 盘中只要求有数据
+        import datetime
+        now = datetime.datetime.now().strftime("%H:%M")
+        if now >= "15:30" or now < "09:25":
+            assert len(ticks) > 1000
+            assert any(tk["t"] >= "14:30" for tk in ticks)
 
     def test_amount_matches_daily(self):
         """逐笔总金额应≈全天成交额。"""

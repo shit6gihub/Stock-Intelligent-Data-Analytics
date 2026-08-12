@@ -106,7 +106,9 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
                 break
             continue
         rows = m.group(2).split("|")
-        if not rows or len(rows) < 2:
+        # 空页判定(2026-08-12 修复): 只有 1 行(如竞价首笔 09:25)是正常数据页,
+        # 不能按 len<2 当空页丢弃! 真正的空页是 [''](腾讯翻页到尾返回空字符串)。
+        if not rows or (len(rows) == 1 and len(rows[0].strip()) == 0):
             empty_streak += 1
             if empty_streak >= 2:
                 break
@@ -336,6 +338,9 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
         "main_buy_ratio": round(main_buy_ratio, 1) if main_buy_ratio is not None else None,  # 主力买占比%
         "segments": {k: round(v) for k, v in seg.items()},
         "tick_count": len(ticks),
+        # 2026-08-12: 盘中数据量门槛 —— 竞价/开盘初期(非竞价成交<30笔)不算主力意图,
+        # 直接给"数据不足"标记, 避免把竞价单/零星成交误判成吸筹派发
+        "data_status": "insufficient" if len(non_auction) < 30 else "ok",
     }
 
     # ---- 价格维度(分价表) ----

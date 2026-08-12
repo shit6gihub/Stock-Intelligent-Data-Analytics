@@ -104,6 +104,23 @@ def _main_intent_structured(symbol: str) -> dict | None:
         buy_ratio = dark.get("main_buy_ratio")
         seg = dark.get("segments") or {}
         tail = seg.get("tail", 0)
+        # 2026-08-12: 竞价/开盘初期数据不足(<30笔非竞价成交) → 标记 insufficient,
+        # 前端显示"数据不足"而非误导性结论
+        if dark.get("data_status") == "insufficient":
+            return {
+                "direction": "neutral",
+                "main_net": main_net,
+                "big_net": big_net,
+                "mid_net": mid_net,
+                "participation": intensity,
+                "buy_ratio": buy_ratio,
+                "auction_amt": dark.get("auction_amt", 0) or 0,
+                "phase": dark.get("phase"),
+                "signal": dark.get("signal"),
+                "tail_net": tail,
+                "data_status": "insufficient",
+                "tick_count": dark.get("tick_count", 0),
+            }
         # v14 判据(与 _judge_signal 对齐): 参与度≥35% 且 买占≥48% = 强吸筹力度
         strong_absorb = (intensity or 0) >= 35 and (buy_ratio or 0) >= 48
         if main_net > 500e4:

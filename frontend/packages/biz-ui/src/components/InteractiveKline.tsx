@@ -53,6 +53,9 @@ export interface MainIntentStructured {
   chip_band?: { low: number; high: number } | null
   profit_ratio?: number | null
   tail_net?: number
+  /** 2026-08-12: 竞价/开盘初期数据不足标记 */
+  data_status?: 'ok' | 'insufficient'
+  tick_count?: number
 }
 
 type HoverTipRow = {
@@ -509,7 +512,7 @@ export default function InteractiveKline(props: {
 
     // 主力意图 markers + 筹码叠加 (2026-08-12)
     const mainIntent = props.mainIntent ?? mainIntentData
-    if (mainIntent) {
+    if (mainIntent && mainIntent.data_status !== 'insufficient') {
       // ① 主力意图箭头: 标在最后一根K线上 (买↑红 / 派发↓绿 / 洗盘吸筹↑橙 / 平衡)
       if (series.klines.length) {
         const lastK = series.klines[series.klines.length - 1]
@@ -703,16 +706,19 @@ export default function InteractiveKline(props: {
 
   // 主力意图图例(2026-08-12): 展示方向/筹码峰/成本带, 仅在传入结构化数据时显示
   const mi = props.mainIntent ?? mainIntentData
+  // 2026-08-12: 竞价/开盘初期数据不足 → 显示占位提示而非误导性结论
   const intentLabel = mi
-    ? mi.direction === 'buy'
-      ? { text: '吸筹↑', cls: 'text-rose-500 font-medium' }
-      : mi.direction === 'wash'
-        ? { text: '洗盘吸筹↑', cls: 'text-orange-500 font-medium' }
-        : mi.direction === 'absorb'
-          ? { text: '疑似吸筹↑', cls: 'text-amber-500 font-medium' }
-          : mi.direction === 'sell'
-            ? { text: '派发↓', cls: 'text-emerald-500 font-medium' }
-            : { text: '平衡→', cls: 'text-muted-foreground font-medium' }
+    ? mi.data_status === 'insufficient'
+      ? { text: `数据不足(${mi.tick_count ?? 0}笔)`, cls: 'text-muted-foreground font-medium' }
+      : mi.direction === 'buy'
+        ? { text: '吸筹↑', cls: 'text-rose-500 font-medium' }
+        : mi.direction === 'wash'
+          ? { text: '洗盘吸筹↑', cls: 'text-orange-500 font-medium' }
+          : mi.direction === 'absorb'
+            ? { text: '疑似吸筹↑', cls: 'text-amber-500 font-medium' }
+            : mi.direction === 'sell'
+              ? { text: '派发↓', cls: 'text-emerald-500 font-medium' }
+              : { text: '平衡→', cls: 'text-muted-foreground font-medium' }
     : null
   const mainIntentLegend = mi ? (
     <div className="mt-3 rounded-lg bg-rose-500/5 border border-rose-500/15 px-2.5 py-2 text-[11px] text-foreground/80">
