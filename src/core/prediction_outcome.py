@@ -56,6 +56,21 @@ def _pick_close_on_or_before(klines: list, target: date) -> float | None:
     return None
 
 
+def _add_trading_days(start: date, n: int) -> date:
+    """从 start 起算 n 个 A股交易日(周一~周五), 返回第 n 个交易日。
+
+    与回测引擎交易日口径一致(weekday()<5 计数), 跳过周末。
+    n<=0 时返回 start 本身。
+    """
+    cur = start
+    added = 0
+    while added < n:
+        cur += timedelta(days=1)
+        if cur.weekday() < 5:
+            added += 1
+    return cur
+
+
 def evaluate_pending_prediction_outcomes(
     *,
     max_horizon_days: int = 10,
@@ -86,7 +101,8 @@ def evaluate_pending_prediction_outcomes(
             continue
 
         horizon = max(1, int(rec.horizon_days or 1))
-        target_day = pred_day + timedelta(days=horizon)
+        # 交易日口径: 从 pred_day 起算 horizon 个工作日(与回测引擎一致)
+        target_day = _add_trading_days(pred_day, horizon)
         if target_day > today:
             stats["skipped_not_due"] += 1
             continue

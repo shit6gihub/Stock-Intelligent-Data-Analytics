@@ -182,12 +182,47 @@ def _load_llm_config() -> dict:
 
 
 
-def llm_sentiment_score(events_text: str, _run_id: int = 0) -> dict:
+def _fetch_tencent_fundflow_5d(symbol: str) -> dict:
+    """腾讯近5日主力资金流(2026-08-12 接入, 免key)。
+
+    返回: {"list": [{date, mainNetIn 元}...], "total_5d": 累计, "text": 摘要文本}
+    失败返回 {"list": [], "total_5d": 0, "text": ""}(调用方降级, 不阻断)。
+    """
+    import urllib.request as _ur
+    sym = symbol.replace(".SZ", "").replace(".SH", "").replace(".BJ", "")
+    code = f"sh{sym}" if sym.startswith(("6", "9")) else f"sz{sym}"
+    try:
+        url = f"https://proxy.finance.qq.com/cgi/cgi-bin/fundflow/hsfundtab?code={code}&type=fiveDayFundFlow&klineNeedDay=20"
+        req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://stockapp.finance.qq.com/"})
+        with _ur.urlopen(req, timeout=12) as resp:
+            body = resp.read().decode("utf-8", "replace")
+        j = json.loads(body)
+        if j.get("code") != 0:
+            return {"list": [], "total_5d": 0, "text": ""}
+        ff = (j.get("data") or {}).get("fiveDayFundFlow") or {}
+        day_list = ff.get("DayMainNetInList") or []
+        rows = []
+        for d in day_list:
+            try:
+                rows.append({"date": str(d.get("date", ""))[:10], "mainNetIn": float(d.get("mainNetIn") or 0)})
+            except Exception:
+                continue
+        total = sum(r["mainNetIn"] for r in rows)
+        # 摘要文本(单位换算万)
+        parts = [f"{r['date'][5:]}:{r['mainNetIn']/1e4:+.0f}万" for r in rows]
+        text = "近5日主力净流入: " + ", ".join(parts) + f" (合计 {total/1e4:+.0f}万)"
+        return {"list": rows, "total_5d": total, "text": text}
+    except Exception:
+        return {"list": [], "total_5d": 0, "text": ""}
+
+
+def llm_sentiment_score(events_text: str, _run_id: int = 0, fundflow_text: str = "") -> dict:
     """LLM 语义情绪打分(替代关键词规则)。
 
     调 agnes-ai chat completions,让 LLM 判断公告/新闻情绪:
     - score: -2(重大利空) ~ +2(重大利好), 0=中性
     - reason: 一句话理由
+    fundflow_text: 可选, 腾讯近5日主力资金流摘要(并入 prompt 做资金面参考)。
     失败时返回 None(调用方降级到关键词规则)。
     _run_id > 0 时: 全程 prompt/response/latency 写到 prediction_sentiment_evals。
     """
@@ -207,13 +242,15 @@ def llm_sentiment_score(events_text: str, _run_id: int = 0) -> dict:
         base_url = cfg.get("base_url", "https://api.agnes-ai.cn/v1").rstrip("/")
         model = cfg.get("model", "agnes-2.5-flash")
 
-        prompt = f"""你是A股短线情绪分析专家。以下是一只股票最近7天的公告/新闻标题:
+        fundflow_block = f"\n资金面参考(腾讯近5日主力净流入):\n{fundflow_text}\n" if fundflow_text else ""
+        prompt = f"""你是A股短线情绪分析专家。以下是一只股票最近7天的公告/新闻标题:{fundflow_block}
 {events_text[:800]}
 
 请判断这些消息对股价的短期(1-5天)影响,只输出JSON:
 {{"score": -2到+2的整数, "reason": "一句话理由"}}
 规则: -2=重大利空(立案/退市/清仓减持/业绩暴雷), -1=利空(小幅减持/问询),
-0=中性/无关, +1=利好(中标/回购/预增), +2=重大利好(重组/大额订单/政策利好)"""
+0=中性/无关, +1=利好(中标/回购/预增), +2=重大利好(重组/大额订单/政策利好)
+注意: 若消息中性但资金面持续大幅净流入, 可给+1; 若消息中性但资金面持续大幅净流出, 可给-1。"""
 
         _payload = {
             "model": model,
@@ -249,7 +286,9 @@ def llm_sentiment_score(events_text: str, _run_id: int = 0) -> dict:
                 score = int(data2.get("score", 0))
                 score = max(-2, min(2, score))
                 _latency = int((_time.monotonic() - _t0) * 1000)
-                _record_sentiment(_run_id, events_text, prompt, _resp_text, score, data2.get("reason", ""), 0.0, _latency, "")
+                # 2026-08-12 修复埋点: adjustment = score*0.75 与 fetch_sentiment 换算口径一致
+                adj_pct = round(score * 0.75, 2)
+                _record_sentiment(_run_id, events_text, prompt, _resp_text, score, data2.get("reason", ""), adj_pct, _latency, "")
                 return {"score": score, "reason": data2.get("reason", ""), "source": "llm"}
             _latency = int((_time.monotonic() - _t0) * 1000)
             _record_sentiment(_run_id, events_text, prompt, _resp_text, 0, f"LLM返回无法解析: {content[:80]}", 0.0, _latency, "parse_fail")
@@ -399,8 +438,14 @@ def fetch_sentiment(symbol: str, _run_id: int = 0) -> dict:
     events_text = " ".join(e.get("title", "") or str(e.get("text", ""))[:100] for e in result["events"])
     adjust = 0.0
 
-    # 4a. LLM 语义打分
-    llm_res = llm_sentiment_score(events_text, _run_id=_run_id)
+    # 4a. 腾讯近5日主力资金流(2026-08-12 接入, 并入 LLM 参考)
+    fundflow = _fetch_tencent_fundflow_5d(symbol)
+    if fundflow.get("text"):
+        result["fundflow_5d"] = fundflow
+        result["notes"].append(fundflow["text"])
+
+    # 4b. LLM 语义打分(带资金面参考)
+    llm_res = llm_sentiment_score(events_text, _run_id=_run_id, fundflow_text=fundflow.get("text", ""))
     if llm_res:
         llm_score = llm_res.get("score", 0)
         # score -2~+2 → 修正 -1.5%~+1.5% (每档 0.75%)
@@ -409,7 +454,7 @@ def fetch_sentiment(symbol: str, _run_id: int = 0) -> dict:
             f"LLM情绪判断: {llm_score:+d} ({llm_res.get('reason', '')}) → {adjust:+.2f}%"
         )
     else:
-        # 4b. 关键词规则(降级)
+        # 4c. 关键词规则(降级)
         bearish_kw = ["减持", "亏损", "立案", "处罚", "警示", "问询", "终止", "退市", "风险提示", "诉讼", "冻结"]
         bullish_kw = ["中标", "签约", "增持", "回购", "业绩预增", "扭亏", "获批", "订单", "涨停", "合同", "战略合作", "产能", "涨价"]
 
@@ -442,7 +487,10 @@ def _record_sentiment(run_id: int, events_text: str, prompt: str, response: str,
     if not run_id:
         return
     try:
-        from forecast_traces import record_sentiment_eval
+        try:
+            from .forecast_traces import record_sentiment_eval
+        except ImportError:
+            from forecast_traces import record_sentiment_eval
         record_sentiment_eval(
             run_id=run_id, source="llm",
             events_text=events_text[:2000],

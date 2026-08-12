@@ -19,6 +19,9 @@
 #   prediction_sentiment_evals(id, run_id, source, events_text,
 #                              score, reason, adjustment_pct, prompt, response,
 #                              latency_ms, error) — 每次 LLM 情绪打分一行
+#   prediction_referee_evals(id, run_id, symbol, verdict, direction, reason,
+#                            conv_id, created_at) — 每次 AI 裁判结论一行
+#                            (verdict=confirm|adjust, direction=up|down|null)
 #   backtest_results(id, symbol, run_at, window_days, horizon_days,
 #                    direction_accuracy_pct, llm_adjustment_win_pct,
 #                    model_hits_json, report_id, samples_json) — 每次回测一行
@@ -103,6 +106,20 @@ def _ensure_tables() -> None:
                 FOREIGN KEY (run_id) REFERENCES prediction_runs(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_se_run ON prediction_sentiment_evals(run_id);
+
+            CREATE TABLE IF NOT EXISTS prediction_referee_evals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL DEFAULT 0,
+                symbol TEXT DEFAULT '',
+                verdict TEXT DEFAULT '',
+                direction TEXT,
+                reason TEXT DEFAULT '',
+                conv_id INTEGER,
+                created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                FOREIGN KEY (run_id) REFERENCES prediction_runs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_re_run ON prediction_referee_evals(run_id);
+            CREATE INDEX IF NOT EXISTS idx_re_symbol ON prediction_referee_evals(symbol, created_at DESC);
 
             CREATE TABLE IF NOT EXISTS backtest_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -252,6 +269,55 @@ def record_model_output(
 
 
 @_safe_write
+def record_referee_eval(
+    run_id: int,
+    symbol: str,
+    verdict: str,
+    direction: str | None,
+    reason: str = "",
+    conv_id: int | None = None,
+) -> int:
+    """记录一次 AI 裁判结论 (prediction_referee_evals, 每 run 一条)。
+
+    Args:
+        run_id: prediction_runs.id; 传 0/None 时按 symbol 自动补最新 run
+                (兼容裁判层调用方拿不到 run_id 的场景)。
+        symbol: 6 位 A 股代码
+        verdict: "confirm" | "adjust"
+        direction: "up" | "down" | None (confirm 时可为 None)
+        reason: 裁判理由文本
+        conv_id: PanWatch 对话助手会话 id
+    """
+    if not run_id:
+        try:
+            row = _latest_run_id_for_symbol(symbol)
+            if row:
+                run_id = int(row[0] or 0)
+        except Exception:
+            run_id = 0
+    with _conn() as c:
+        cur = c.execute(
+            """INSERT INTO prediction_referee_evals
+               (run_id, symbol, verdict, direction, reason, conv_id)
+               VALUES (?,?,?,?,?,?)""",
+            (run_id, symbol, verdict, direction, reason, conv_id),
+        )
+        return int(cur.lastrowid or 0)
+
+
+def _latest_run_id_for_symbol(symbol: str):
+    """取某 symbol 最近一次 prediction_runs 主行 id (供 run_id 自动补全)。"""
+    conn = _sqlite3.connect(_HISTORY_DB)
+    try:
+        return conn.execute(
+            "SELECT id FROM prediction_runs WHERE symbol=? ORDER BY id DESC LIMIT 1",
+            (symbol,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+@_safe_write
 def record_sentiment_eval(
     run_id: int,
     source: str,
@@ -362,6 +428,23 @@ def list_model_outputs(run_id: int) -> list[dict]:
             pass
         out.append(d)
     return out
+
+
+def list_referee_evals(run_id: int = 0) -> list[dict]:
+    """查 AI 裁判记录; run_id=0 返回全部(供 referee_impact_stats 全量统计)。"""
+    conn = _sqlite3.connect(_HISTORY_DB)
+    conn.row_factory = _sqlite3.Row
+    if run_id:
+        rows = conn.execute(
+            "SELECT * FROM prediction_referee_evals WHERE run_id=? ORDER BY id",
+            (run_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM prediction_referee_evals ORDER BY id"
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def list_sentiment_evals(run_id: int) -> list[dict]:

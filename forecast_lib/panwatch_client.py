@@ -42,12 +42,22 @@ def _read_auth_settings() -> dict[str, str]:
             continue
         try:
             with sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=3) as conn:
-                return dict(
+                settings = dict(
                     conn.execute(
                         "SELECT key, value FROM app_settings WHERE key IN "
                         "('jwt_secret', 'auth_token_version')"
                     ).fetchall()
                 )
+                # 服务 token 的 sub 必须是真实存在的用户 id(owner),否则 401
+                try:
+                    row = conn.execute(
+                        "SELECT id FROM users WHERE role='owner' ORDER BY created_at LIMIT 1"
+                    ).fetchone()
+                    if row:
+                        settings["owner_user_id"] = row[0]
+                except sqlite3.Error:
+                    pass
+                return settings
         except sqlite3.Error as exc:
             logger.warning("PanWatch 认证配置读取失败 [%s]: %s", path, exc)
     return {}
@@ -57,8 +67,12 @@ def _base64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
 
-def _create_service_token(secret: str, token_version: int) -> tuple[str, float]:
-    """Create a five-minute HS256 token accepted by the PanWatch API."""
+def _create_service_token(secret: str, token_version: int, sub: str = "user") -> tuple[str, float]:
+    """Create a five-minute HS256 token accepted by the PanWatch API.
+
+    sub 必须是 PanWatch users 表里真实存在的用户 id(owner),否则
+    auth.get_current_user 查不到用户 → 401。
+    """
     now = int(time.time())
     expires_at = now + 300
     header = _base64url(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode())
@@ -67,7 +81,7 @@ def _create_service_token(secret: str, token_version: int) -> tuple[str, float]:
             {
                 "exp": expires_at,
                 "iat": now,
-                "sub": "user",
+                "sub": sub,
                 "jti": secrets.token_hex(16),
                 "ver": token_version,
             },
@@ -117,7 +131,8 @@ def get_token() -> str:
     if secret:
         raw_version = settings.get("auth_token_version", "1")
         token_version = int(raw_version) if str(raw_version).isdigit() else 1
-        token, expires_at = _create_service_token(secret, token_version)
+        owner_id = settings.get("owner_user_id", "") or os.getenv("PANWATCH_OWNER_ID", "").strip()
+        token, expires_at = _create_service_token(secret, token_version, sub=owner_id or "user")
         _TOKEN_CACHE.update(token=token, expires_at=expires_at)
         return token
 

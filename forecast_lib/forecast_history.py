@@ -115,7 +115,7 @@ def save_forecast(rec: dict):
 
 
 def list_forecasts(limit: int = 50, symbol: str = ""):
-    """查询历史预测列表。"""
+    """查询历史预测列表(含到期对照 outcome 字段, 2026-08-12 增加)。"""
     conn = _sqlite3.connect(_HISTORY_DB)
     conn.row_factory = _sqlite3.Row
     q = "SELECT * FROM forecasts"
@@ -132,4 +132,55 @@ def list_forecasts(limit: int = 50, symbol: str = ""):
             r["prediction"] = json.loads(r["prediction"])
         except Exception:
             pass
+        _attach_outcome(r)
     return rows
+
+
+def _attach_outcome(r: dict) -> None:
+    """给一条 forecast 记录附加到期对照: outcome_return_pct / outcome_status。
+
+    status: hit(方向对) / miss(方向错) / pending(未到期) / no_data(取不到K线)。
+    用 KlineCollector 拉实际行情, 按 target_date 收盘 vs last_close 判方向。
+    失败/无数据 → no_data(不阻断列表)。
+    """
+    r.setdefault("outcome_return_pct", None)
+    r.setdefault("outcome_status", "pending")
+    try:
+        from datetime import date, datetime
+        target_date = str(r.get("target_date") or "")[:10]
+        last_close = r.get("last_close")
+        direction = r.get("direction")
+        if not target_date or not last_close or not direction:
+            r["outcome_status"] = "no_data"
+            return
+        if target_date > date.today().isoformat():
+            r["outcome_status"] = "pending"
+            return
+        try:
+            from src.collectors.kline_collector import KlineCollector
+            from src.models.market import MarketCode
+            from src.core.context_store import _to_market  # noqa: F401 (兼容)
+        except Exception:
+            from src.collectors.kline_collector import KlineCollector
+            from src.models.market import MarketCode
+
+        symbol = str(r.get("symbol") or "").split(".")[0]
+        market = MarketCode.CN
+        klines = KlineCollector(market).get_klines(symbol, days=60)
+        td = datetime.strptime(target_date, "%Y-%m-%d").date()
+        actual = None
+        for k in klines or []:
+            d = str(getattr(k, "date", ""))[:10]
+            if d and d <= target_date:
+                actual = float(getattr(k, "close", 0) or 0)
+        if actual is None or actual <= 0:
+            r["outcome_status"] = "no_data"
+            return
+        r["outcome_return_pct"] = round((actual / float(last_close) - 1) * 100, 2)
+        actual_dir = "up" if actual > float(last_close) else "down" if actual < float(last_close) else "flat"
+        if actual_dir == "flat":
+            r["outcome_status"] = "pending"  # 平盘视为未定
+            return
+        r["outcome_status"] = "hit" if actual_dir == direction else "miss"
+    except Exception:
+        r["outcome_status"] = "no_data"

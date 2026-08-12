@@ -49,7 +49,7 @@ def _conf_emoji(conf: str) -> str:
 # ── 模型名称中文化 ──────────────────────────────────────────
 MODEL_CN = {
     "kronos": "Kronos(蒙特卡洛)",
-    "lag_llama": "Lag-Llama(时序基础模型)",
+    "chronos": "Chronos-Bolt(时序基础模型)",
     "xgboost": "XGBoost",
     "linear_reg": "线性回归",
     "linreg": "线性回归",
