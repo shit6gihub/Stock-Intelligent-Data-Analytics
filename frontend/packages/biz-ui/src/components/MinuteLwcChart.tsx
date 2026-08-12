@@ -195,10 +195,11 @@ export default function MinuteLwcChart({ points, prevClose, isIndex, swings }: P
           size: 1,
         }
       })
-      // 散户三角(红▲=散户买 / 绿▼=散户卖; 与主力同 time 但用 circle 区分位置)
+      // 散户圆点(橙●=散户净买追涨 / 蓝●=散户净卖抛压; 与主力箭头相反侧)
+      // 2026-08-12 用户确认: 散户单笔本就<20万, 不再过滤——每个主力段都显示散户净额,
+      // 让"主力拉升+散户没追/散户在抛"的对比完整可见。
       const retailMarkers: any[] = marks.map(m => {
         const net = m.retail_net ?? 0
-        if (Math.abs(net) < 20e4) return null  // <20万 散户噪音也过滤
         const isBuy = net > 0
         return {
           time: m.time,
@@ -208,7 +209,7 @@ export default function MinuteLwcChart({ points, prevClose, isIndex, swings }: P
           text: fmtWan(net),
           size: 0,
         }
-      }).filter(Boolean)
+      })
       const allMarkers = [...mainMarkers, ...retailMarkers]
       if (allMarkers.length) {
         // LWC v5: setMarkers 已移除, 改用顶级 createSeriesMarkers(series, markers)
