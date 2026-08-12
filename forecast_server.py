@@ -222,8 +222,9 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
         dragon_tiger = []
 
 
-    # sanity clip: 单模型预测偏离基准 >±40% 视为异常, 截断(防模型外推爆炸污染)
-    def _clip_arr(arr, base, lo=0.6, hi=1.4):
+    # sanity clip: 单模型预测偏离基准 >±25% 视为异常, 截断(防模型外推爆炸污染)。
+    # 之前 ±40% 形同虚设(linreg 外推 +39.7% 刚好卡在阈值内, 污染投票)。
+    def _clip_arr(arr, base, lo=0.75, hi=1.25):
         a = np.array(arr, dtype=float)
         return np.clip(a, base * lo, base * hi)
 
@@ -268,6 +269,27 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
     if adjust_pct != 0:
         final = final * (1 + adjust_pct / 100)
         _log(tid, f"应用情绪修正 {adjust_pct:+.2f}%")
+
+    # 单日涨跌停约束(2026-08-13 修复): A股主板单日 ±10%, 预测序列必须物理可行。
+    # 之前模型外推(如 linreg +39.7%)导致 T+1 跳变 +13%, 违反涨跌停规则。
+    # 做法: 计算序列最大单日步长, 若 >10% 整体压缩(等比缩放), 保证每一步 ≤10%。
+    _DAY_LIMIT = 0.10  # 主板涨跌停 ±10%
+    changes = np.abs(np.diff(np.concatenate([[last_close], final]))) / last_close
+    max_step = float(changes.max()) if len(changes) else 0.0
+    if max_step > _DAY_LIMIT:
+        # 等比压缩: 把最大单日步长压到 10%, 其余步长同步缩放, 方向保持不变
+        scale = _DAY_LIMIT / max_step
+        final = last_close + (final - last_close) * scale
+        _log(
+            tid,
+            f"涨跌停约束: 原最大单日步长 {max_step*100:.1f}% > 10%, "
+            f"压缩至 {_DAY_LIMIT*100:.0f}% (scale={scale:.2f}), 方向不变",
+        )
+    else:
+        _log(tid, f"涨跌停检查: 最大单日步长 {max_step*100:.1f}% ≤ 10%, 通过")
+
+    # (2026-08-13 用户决策: 不做首日温和化 —— 活跃票涨停是常态,
+    #  神剑股份近一年涨停25次, T+1 接近涨停完全合理, 只要不超 ±10% 物理上限即可)
 
     direction = "up" if final[-1] > last_close else "down" if final[-1] < last_close else "flat"
 
