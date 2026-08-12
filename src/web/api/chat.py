@@ -104,6 +104,21 @@ CHAT_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_rally_analysis",
+            "description": "分析股票当日盘中顺势拉升段（逐单明细）：识别所有放量拉升段，逐段拆解主力/散户买卖结构、主动买占比，判别'放量上涨(真拉升)'还是'拉高出货(假拉升)'。回答'拉升是拉高出货还是放量上涨''盘中拉升段分析'等问题。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "股票代码，如 002361"},
+                    "market": {"type": "string", "description": "市场代码：CN/HK/US", "default": "CN"},
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_stock_suggestions",
             "description": "获取某只股票最近的 AI 建议和分析报告。",
             "parameters": {
@@ -237,6 +252,19 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
                 return result or f"未能获取 {symbol} 的主力意图数据。"
             except Exception as e:
                 return f"主力意图获取失败: {str(e)[:100]}"
+        elif name == "get_rally_analysis":
+            symbol = args.get("symbol", "")
+            market = args.get("market", "CN")
+            if market != "CN":
+                return "拉升段分析仅支持 A 股(CN)。"
+            try:
+                from src.core.rally_analysis import analyze_rallies, format_rally_report
+                result = analyze_rallies(symbol)
+                if not result:
+                    return f"未能获取 {symbol} 的拉升段分析数据(可能盘前无数据)。"
+                return format_rally_report(result)
+            except Exception as e:
+                return f"拉升段分析失败: {str(e)[:100]}"
         elif name == "get_stock_suggestions":
             symbol = args.get("symbol", "")
             market = args.get("market", "CN")
