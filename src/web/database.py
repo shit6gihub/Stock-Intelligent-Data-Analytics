@@ -229,6 +229,12 @@ def _migrate(engine):
             "meta",
             "ALTER TABLE stock_suggestions ADD COLUMN meta TEXT DEFAULT '{}'",
         ),
+        # 影子账户画像落库(2026-08-12): users 表加 shadow_profile_json 列
+        (
+            "users",
+            "shadow_profile_json",
+            "ALTER TABLE users ADD COLUMN shadow_profile_json TEXT",
+        ),
     ]
     with engine.connect() as conn:
         for table, column, sql in migrations:

@@ -14,6 +14,7 @@ import sys
 import io
 import json
 import time
+import logging
 import threading
 from datetime import datetime, timedelta
 
@@ -66,6 +67,32 @@ from forecast_utils import (
 )
 
 app = FastAPI(title="A股预测引擎", version="0.3.0")
+
+logger = logging.getLogger(__name__)
+
+
+def _get_owner_shadow_profile() -> dict | None:
+    """拉当前 owner 的影子画像(经 8000 GET /api/shadow/profile, 服务 token)。
+
+    预测引擎是独立进程(8010), 不能直查 PanWatch DB(users.shadow_profile_json 在
+    8000 容器内), 走 HTTP 拿落库画像。响应是统一包装 {code, success, data, message},
+    data 即 {profile: {...}|None, saved: bool}。
+    任何失败返回 None —— 裁判按无画像运行, 不阻断预测主流程。
+    """
+    try:
+        from panwatch_client import request_json
+        resp = request_json("/api/shadow/profile", timeout=10)
+    except Exception as exc:
+        logger.warning("获取用户画像失败(裁判按无画像运行): %s", exc)
+        return None
+    if not isinstance(resp, dict):
+        return None
+    data = resp.get("data") if isinstance(resp.get("data"), dict) else resp
+    profile = data.get("profile") if isinstance(data, dict) else None
+    if isinstance(profile, dict) and profile:
+        logger.info("AI 裁判注入用户画像: %s", str(profile.get("shadow_id", "?"))[:24])
+        return profile
+    return None
 
 
 @app.get("/health")
@@ -296,8 +323,11 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
     # --- AI 裁判层(2026-08-12, B方案): 预测交给 PanWatch 对话助手(8000)评估, 可改最终方向 ---
     # 裁判用对话助手的工具(主力意图/资金流/技术面/K线形态)核实盘面后给 verdict;
     # verdict=adjust 且给出方向时强势覆盖 direction; 任何异常降级 confirm, 不阻断主流程。
+    # 用户影子画像(B方案, 2026-08-13): 经 8000 GET /api/shadow/profile 拉 owner 画像,
+    # 注入裁判 prompt 只影响建议贴合度(短线/潜伏等表达), 不改 verdict/direction。
     try:
         from ai_referee import evaluate_prediction
+        user_profile = _get_owner_shadow_profile()  # 失败返回 None, 裁判照常跑
         ai_verdict = evaluate_prediction(
             symbol, stock_name, last_close,
             {
@@ -308,6 +338,7 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
             },
             direction,
             round((float(final[-1]) / last_close - 1) * 100, 2),
+            user_profile=user_profile,
         )
     except Exception as e:
         _log(tid, f"AI 裁判调用异常(降级 confirm): {e}")
