@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-13 (v0.2.22)
+
+### fix(shadow) — 影子账户页白屏(React #31)
+
+- 根因: rules 是 ShadowRule 对象数组(含 human_text), 前端却当字符串直接渲染 → React error #31 → 整页空白
+- 修复: ruleLabel() 统一取 human_text(兼容字符串/对象), 两处渲染(我的画像区 + 行为画像区)
+- key 改用 rule_id / index(对象不能作 key)
+
+### 实测
+- 前端 build 8.4s
+
+# Changelog
+
 ## 2026-08-13 (v0.2.21)
 
 ### feat(shadow) — 影子账户"我的画像"区
