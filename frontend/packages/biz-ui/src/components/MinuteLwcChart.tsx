@@ -19,15 +19,15 @@ function getLW(): any {
   return (window as any)?.LightweightCharts || null
 }
 
-function addLineSeries(chart: any, LW: any, options: any) {
+function addLineSeries(chart: any, LW: any, options: any, paneIndex?: number) {
   if (typeof chart?.addLineSeries === 'function') return chart.addLineSeries(options)
-  if (typeof chart?.addSeries === 'function' && LW?.LineSeries) return chart.addSeries(LW.LineSeries, options)
+  if (typeof chart?.addSeries === 'function' && LW?.LineSeries) return chart.addSeries(LW.LineSeries, options, paneIndex)
   throw new Error('Line series API not available')
 }
 
-function addHistogramSeries(chart: any, LW: any, options: any) {
+function addHistogramSeries(chart: any, LW: any, options: any, paneIndex?: number) {
   if (typeof chart?.addHistogramSeries === 'function') return chart.addHistogramSeries(options)
-  if (typeof chart?.addSeries === 'function' && LW?.HistogramSeries) return chart.addSeries(LW.HistogramSeries, options)
+  if (typeof chart?.addSeries === 'function' && LW?.HistogramSeries) return chart.addSeries(LW.HistogramSeries, options, paneIndex)
   throw new Error('Histogram series API not available')
 }
 
@@ -159,10 +159,11 @@ export default function MinuteLwcChart({ points, prevClose, isIndex, swings }: P
       }
     }
 
-    // 量能柱(pane 1)
+    // 量能柱(pane 1): v5 multi-pane, 必须指定 paneIndex=1,
+    // 否则成交量柱画在 pane 0 盖住价格线(2026-08-12 用户反馈"像成交量一样的东西")
     const volSeries = addHistogramSeries(chart, LW, {
       priceFormat: { type: 'volume' },
-    })
+    }, 1)
     volSeries.setData(
       points.map(p => ({
         time: hhmmToTs(p.t),
