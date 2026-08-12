@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta
 import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -269,21 +268,11 @@ class ContextMaintenanceScheduler:
                 coalesce=True,
                 max_instances=1,
             )
-        # Run a bootstrap evaluation shortly after startup to warm up outcome stats.
-        self.scheduler.add_job(
-            self._evaluate_job,
-            "date",
-            run_date=datetime.now(self.scheduler.timezone) + timedelta(seconds=15),
-            id="context_maintenance_bootstrap_evaluate",
-            replace_existing=True,
-            coalesce=True,
-            max_instances=1,
-        )
         self.scheduler.start()
         from src.core.scheduler_registry import register
         register("context", self.scheduler)
         logger.info(
-            "上下文维护调度器已启动（后验评估间隔 %sh，启动补跑 +15s，快照保留 %s 天，后验保留 %s 天，机会自动刷新 01:15/05:30/14:00 UTC）",
+            "上下文维护调度器已启动（后验评估间隔 %sh，快照保留 %s 天，后验保留 %s 天，机会自动刷新 01:15/05:30/14:00 UTC）",
             self.eval_interval_hours,
             self.snapshot_retention_days,
             self.outcome_retention_days,
