@@ -140,6 +140,8 @@ def _main_intent_structured(symbol: str) -> dict | None:
             "phase": dark.get("phase"),
             "signal": dark.get("signal"),
             "tail_net": tail,
+            "data_status": dark.get("data_status", "ok"),
+            "tick_count": dark.get("tick_count", 0),
         }
         # 筹码(新浪真实分布优先)
         try:
