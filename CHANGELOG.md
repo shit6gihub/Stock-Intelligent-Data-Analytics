@@ -1,6 +1,15 @@
 # Changelog
 
-## 2026-08-12 (v0.2.15)
+## 2026-08-12 (v0.2.16)
+
+### fix(shadow) — 影子账户交割单上传
+
+- **修复上传报错 422 `missing file`**: `fetchAPI` 对 FormData 不再强制设置 `Content-Type: application/json`(由浏览器自动带 multipart boundary),FastAPI 才能收到 `file` 字段。
+- **修复交割单解析**: Excel/PDF 统一走"文本行 → 去 nan 占位/相邻重复 → 业务名称关键词定位 → 10 列对齐"解析,兼容券商交割单的合并单元格展开、表头不在首行、中文名称被拆开等情况。
+- **新增 PDF 格式支持**: 允许上传 .pdf 交割单(pypdf 提取文本),与 Excel 版解析结果一致(实测 PDF 更完整,xlsx 导出偶有漏行)。
+- 已实测: xlsx 562 笔 / PDF 586 笔解析成功,端到端上传 → 画像 → 报告全通,回归测试 14 passed。
+
+
 
 ### feat(auth)
 
