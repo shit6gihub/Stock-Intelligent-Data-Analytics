@@ -159,6 +159,37 @@ def compute_chips_sina(symbol_code: str, days: int = 300) -> dict | None:
     }
 
 
+def fetch_tencent_price_dist(symbol_code: str) -> list[dict] | None:
+    """腾讯当日分价表(2026-08-12 降级源): 海外节点新浪超时, 腾讯秒回。
+
+    symbol_code: 'sz002361' / 'sh600519'
+    Returns: [{price, volume}] 按价降序; 失败 None
+    格式: v_psz002361=[日期,时间,笔数,"价~量~额~买~卖^..."]
+    """
+    import re
+    import urllib.request
+
+    url = f"https://stock.gtimg.cn/data/index.php?appn=price&c={symbol_code}"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://stockapp.finance.qq.com/"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            body = resp.read().decode("gbk", "replace")
+    except Exception:
+        return None
+    m = re.search(r'\[[^,]+,[^,]+,[^,]+,"(.*?)"\]', body)
+    if not m:
+        return None
+    out = []
+    for seg in m.group(1).split("^"):
+        parts = seg.split("~")
+        if len(parts) >= 2:
+            try:
+                out.append({"price": float(parts[0]), "volume": int(parts[1])})
+            except (ValueError, IndexError):
+                continue
+    return out or None
+
+
 def compute_near_term_chips(symbol_code: str, days: int = 10) -> dict | None:
     """近期真实筹码分布(新浪历史分价表, 免衰减, 2026-08-11)。
 
@@ -179,7 +210,13 @@ def compute_near_term_chips(symbol_code: str, days: int = 10) -> dict | None:
 
     end_d = datetime.date.today()
     start_d = end_d - datetime.timedelta(days=int(days * 1.4) + 5)
-    rows = fetch_sina_hist_price(symbol_code, start_d.isoformat(), end_d.isoformat())
+    # 2026-08-12 优化: 先腾讯当日分价(海外 0.17s 秒回), 腾讯失败才新浪历史分价
+    # (海外节点新浪慢 8-10s, 10日窗口以当日为主, 腾讯精度足够)。
+    rows = fetch_tencent_price_dist(symbol_code)
+    source = "tencent_price_dist"
+    if not rows or len(rows) < 5:
+        rows = fetch_sina_hist_price(symbol_code, start_d.isoformat(), end_d.isoformat())
+        source = "sina_hist_price"
     if not rows or len(rows) < 5:
         _NEAR_CHIPS_CACHE[symbol_code] = (_now, None)
         return None
@@ -237,7 +274,7 @@ def compute_near_term_chips(symbol_code: str, days: int = 10) -> dict | None:
         "cost_band": {"low": round(band_low, 2), "high": round(band_high, 2),
                       "ratio": round(band_vol / total * 100, 1)},
         "last_close": last_close,
-        "source": "sina_hist_price",
+        "source": source,
         "window_days": days,
     }
     _NEAR_CHIPS_CACHE[symbol_code] = (_now, _result)
