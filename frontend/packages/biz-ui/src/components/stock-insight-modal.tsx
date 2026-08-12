@@ -17,7 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@panwatch/base-ui/components/ui/switch'
 import { SuggestionBadge, type KlineSummary, type SuggestionInfo } from '@panwatch/biz-ui/components/suggestion-badge'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
-import InteractiveKline from '@panwatch/biz-ui/components/InteractiveKline'
+import InteractiveKline, { type MainIntentStructured } from '@panwatch/biz-ui/components/InteractiveKline'
 import { KlineIndicators } from '@panwatch/biz-ui/components/kline-indicators'
 import { buildKlineSuggestion } from '@/lib/kline-scorer'
 import StockPriceAlertPanel from '@panwatch/biz-ui/components/stock-price-alert-panel'
@@ -69,6 +69,8 @@ interface KlineSummaryResponse {
   symbol: string
   market: string
   summary: KlineSummary
+  /** 2026-08-12 预热优化: 主力意图结构化(逐笔口径), 供 K线 tab 的 InteractiveKline 秒显图例卡 */
+  main_intent_structured?: MainIntentStructured | null
 }
 
 interface MiniKlineResponse {
@@ -416,6 +418,8 @@ export default function StockInsightModal(props: {
   const [companyInfo, setCompanyInfo] = useState<CompanyInfo | null>(null)
   const [companyLoading, setCompanyLoading] = useState(false)
   const [klineSummary, setKlineSummary] = useState<KlineSummary | null>(null)
+  /** 2026-08-12 预热优化: 弹窗打开即拉主力意图, 切到 K线 tab 秒显图例卡 */
+  const [mainIntent, setMainIntent] = useState<MainIntentStructured | null>(null)
   const [miniKlines, setMiniKlines] = useState<MiniKlineResponse['klines']>([])
   const [miniKlineLoading, setMiniKlineLoading] = useState(false)
   const [miniHoverIdx, setMiniHoverIdx] = useState<number | null>(null)
@@ -473,6 +477,8 @@ export default function StockInsightModal(props: {
     if (!symbol) return
     const data = await insightApi.klineSummary<KlineSummaryResponse>(symbol, market)
     setKlineSummary(data?.summary || null)
+    // 2026-08-12 预热优化: 顺手存主力意图, 传给 K线 tab 秒显(免组件二次请求)
+    if (data?.main_intent_structured) setMainIntent(data.main_intent_structured)
   }, [symbol, market])
 
   const loadMiniKline = useCallback(async (opts?: { silent?: boolean }) => {
@@ -1739,6 +1745,7 @@ export default function StockInsightModal(props: {
                   symbol={symbol}
                   market={market}
                   initialInterval={klineInterval}
+                  mainIntent={mainIntent}
                 />
               </div>
             )}
