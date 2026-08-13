@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { RefreshCw, AlertTriangle, Sparkles, Activity, ShieldAlert, Newspaper, Share2, Plus, TrendingUp } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Sparkles, Activity, ShieldAlert, Newspaper, Share2, Plus, TrendingUp, Flame } from 'lucide-react'
 import {
   dashboardApi,
   portfolioApi,
@@ -25,6 +25,8 @@ import {
   type AttributionItem,
   type PortfolioAiReview,
   type DashboardBrief,
+  type MarketAnomalyItem,
+  type MarketHotStockItem,
 } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Skeleton } from '@panwatch/base-ui/components/ui/skeleton'
@@ -59,6 +61,21 @@ function fmtMoney(v?: number | null): string {
   if (v == null || !isFinite(v)) return '--'
   const sign = v > 0 ? '+' : v < 0 ? '-' : ''
   return `${sign}¥${Math.abs(v).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}`
+}
+/** 归一化后端列表响应:可能直接是数组,也可能是 {items:[...]} / {data:[...]},取不到返回空数组。 */
+function pickList<T>(v: unknown, key: string): T[] {
+  if (Array.isArray(v)) return v as T[]
+  if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>
+    if (Array.isArray(o[key])) return o[key] as T[]
+    if (Array.isArray(o.data)) return o.data as T[]
+  }
+  return []
+}
+/** 文本截断:超长加省略号(热榜 AI 归因摘要等场景)。 */
+function trunc(s: string, n: number): string {
+  if (!s) return ''
+  return s.length > n ? `${s.slice(0, n)}…` : s
 }
 /** 去掉常见 markdown 标记,供简报摘要行取纯文本用。 */
 function stripMarkdown(s: string): string {
@@ -128,6 +145,11 @@ export default function DashboardPage() {
   const [marketStatus, setMarketStatus] = useState<DashboardMarketStatus[]>([])
   // 大盘资金流(同花顺源,东财 502 替代)
   const [marketFlow, setMarketFlow] = useState<DashboardMarketCapitalFlow | null>(null)
+  // 异动池(东财) / 热榜(同花顺):独立加载,任一失败静默,不影响首页其他内容
+  const [anomalies, setAnomalies] = useState<MarketAnomalyItem[]>([])
+  const [anomaliesLoading, setAnomaliesLoading] = useState(true)
+  const [hotStocks, setHotStocks] = useState<MarketHotStockItem[]>([])
+  const [hotStocksLoading, setHotStocksLoading] = useState(true)
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null)
   // 分享卡开关:成绩单(基准)/ 组合体检 / 每日 digest
   const [shareBench, setShareBench] = useState(false)
@@ -162,6 +184,20 @@ export default function DashboardPage() {
     dashboardApi.indices().then(setIndices).catch(() => {})
     // 大盘资金流(同花顺源):独立加载,失败静默
     dashboardApi.marketCapitalFlow().then(setMarketFlow).catch(() => {})
+    // 异动池(东财):独立加载,失败静默(端点未就绪时优雅降级为空态)
+    setAnomaliesLoading(true)
+    dashboardApi
+      .anomalies({ limit: 10 })
+      .then((r) => setAnomalies(pickList<MarketAnomalyItem>(r, 'items').slice(0, 10)))
+      .catch(() => setAnomalies([]))
+      .finally(() => setAnomaliesLoading(false))
+    // 热榜(同花顺):独立加载,失败静默
+    setHotStocksLoading(true)
+    dashboardApi
+      .hotStocks({ period: 'hour', limit: 10 })
+      .then((r) => setHotStocks(pickList<MarketHotStockItem>(r, 'items').slice(0, 10)))
+      .catch(() => setHotStocks([]))
+      .finally(() => setHotStocksLoading(false))
     // 快车道:DB/轻量查询,先让首屏(要紧事/体检分布/组合速览)尽快出来
     const [sc, ov, dg, ht, td, ps, ms] = await Promise.allSettled([
       dashboardApi.intradayScan(),
@@ -594,6 +630,145 @@ export default function DashboardPage() {
           ) : null}
         </div>
       )}
+
+      {/* 异动池(东财) | 热榜(同花顺):并排双列,移动端堆叠;独立加载,任一失败静默不影响首页 */}
+      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+        {/* 异动池(东财) */}
+        <div className="card-subtle p-3">
+          <div className="mb-2 flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-500" />
+            <h2 className="text-[13px] font-semibold">异动池</h2>
+            <span className="text-[10px] text-muted-foreground">东财异动</span>
+            {anomaliesLoading && anomalies.length === 0 && (
+              <RefreshCw className="ml-auto h-3 w-3 animate-spin text-muted-foreground" />
+            )}
+          </div>
+          {anomaliesLoading && anomalies.length === 0 ? (
+            <div className="space-y-2 py-1">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
+            </div>
+          ) : anomalies.length === 0 ? (
+            <div className="py-6 text-center text-[12px] text-muted-foreground">暂无异动数据</div>
+          ) : (
+            <div className="divide-y divide-border/40">
+              {anomalies.map((a, i) => {
+                const sym = a.symbol || a.code || ''
+                const dev = a.deviation ?? a.deviation_pct ?? null
+                const days = a.deviation_days ?? a.days
+                const rule = a.rule || a.reason || ''
+                return (
+                  <button
+                    key={`${sym}-${i}`}
+                    type="button"
+                    onClick={() => sym && openStock(sym, a.market || 'CN', a.name || '')}
+                    onContextMenu={(e) => {
+                      if (!sym) return
+                      openStockContextMenu(e, { symbol: sym, name: a.name || sym, market: a.market || 'CN', hasPosition: false })
+                    }}
+                    className="flex w-full items-center gap-2.5 py-1.5 text-left transition-colors hover:bg-accent/30"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-[13px] font-medium">{a.name || sym || '--'}</span>
+                        <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{sym}</span>
+                        {a.is_today && (
+                          <span className="shrink-0 rounded bg-amber-500/15 px-1 text-[9px] text-amber-600">当日</span>
+                        )}
+                      </div>
+                      {rule && <div className="truncate text-[11px] text-muted-foreground">{rule}</div>}
+                    </div>
+                    {dev != null && (
+                      <span className="shrink-0 text-[10px] text-muted-foreground">
+                        偏离 {pct(dev)}
+                        {days ? ` · ${days}天` : ''}
+                      </span>
+                    )}
+                    <span className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[11px] ${pctChipCls(a.change_pct)}`}>
+                      {a.change_pct != null ? pct(a.change_pct) : '--'}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* 热榜(同花顺) */}
+        <div className="card-subtle p-3">
+          <div className="mb-2 flex items-center gap-2">
+            <Flame className="h-4 w-4 text-orange-500" />
+            <h2 className="text-[13px] font-semibold">热榜</h2>
+            <span className="text-[10px] text-muted-foreground">同花顺热榜</span>
+            {hotStocksLoading && hotStocks.length === 0 && (
+              <RefreshCw className="ml-auto h-3 w-3 animate-spin text-muted-foreground" />
+            )}
+          </div>
+          {hotStocksLoading && hotStocks.length === 0 ? (
+            <div className="space-y-2 py-1">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
+            </div>
+          ) : hotStocks.length === 0 ? (
+            <div className="py-6 text-center text-[12px] text-muted-foreground">暂无热榜数据</div>
+          ) : (
+            <div className="divide-y divide-border/40">
+              {hotStocks.map((h, i) => {
+                const sym = h.symbol || h.code || ''
+                const concepts = h.concepts?.length ? h.concepts : h.tags || []
+                const reason = h.reason || h.summary || ''
+                return (
+                  <button
+                    key={`${sym}-${i}`}
+                    type="button"
+                    onClick={() => sym && openStock(sym, h.market || 'CN', h.name || '')}
+                    onContextMenu={(e) => {
+                      if (!sym) return
+                      openStockContextMenu(e, { symbol: sym, name: h.name || sym, market: h.market || 'CN', hasPosition: false })
+                    }}
+                    className="flex w-full items-center gap-2.5 py-1.5 text-left transition-colors hover:bg-accent/30"
+                  >
+                    <span
+                      className={`w-5 shrink-0 text-center font-mono text-[13px] font-bold ${
+                        i < 3 ? 'text-rose-500' : 'text-muted-foreground'
+                      }`}
+                    >
+                      {h.rank ?? i + 1}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-[13px] font-medium">{h.name || sym || '--'}</span>
+                        <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{sym}</span>
+                      </div>
+                      {(concepts.length > 0 || reason) && (
+                        <div className="mt-0.5 flex min-w-0 items-center gap-1">
+                          {concepts.slice(0, 3).map((c) => (
+                            <span key={c} className="shrink-0 rounded bg-primary/10 px-1 py-px text-[9px] text-primary">
+                              {c}
+                            </span>
+                          ))}
+                          {concepts.length > 3 && (
+                            <span className="shrink-0 text-[9px] text-muted-foreground">+{concepts.length - 3}</span>
+                          )}
+                          {reason && <span className="truncate text-[11px] text-muted-foreground">{trunc(reason, 30)}</span>}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 flex-col items-end gap-0.5">
+                      {h.heat != null && <span className="text-[10px] text-orange-500/90">{h.heat}</span>}
+                      <span className={`rounded px-1.5 py-0.5 font-mono text-[11px] ${pctChipCls(h.change_pct)}`}>
+                        {h.change_pct != null ? pct(h.change_pct) : '--'}
+                      </span>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* 主体:PC 工作台 3 列(要紧事3 | 体检6 | 机会3);次级 2 列(简报6 | 机会发现6)。1280px 以下回退 7/5-5/7 两行布局 */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">

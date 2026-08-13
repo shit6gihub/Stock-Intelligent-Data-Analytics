@@ -10,6 +10,8 @@
 - GET /api/market-data/dragon-tiger/{date}  龙虎榜(ftshare vendor)
 - GET /api/market-data/capital-flow/{symbol}  资金流(经 MarketData Engine, 走 UI 配置 vendor)
 - GET /api/market-data/fundamentals-detail/{symbol}  个股基本面明细合并端点(龙虎榜/两融/股东户数/分红/事件日历)
+- GET /api/market-data/anomalies  东财异动池(交易所「严重异常波动」口径, 供首页 Dashboard)
+- GET /api/market-data/hot-stocks  同花顺热榜(小时榜/日榜, 含 AI 归因, 供首页 Dashboard)
 """
 from __future__ import annotations
 
@@ -339,4 +341,83 @@ async def fundamentals_detail_proxy(
         return fetch_fundamentals_detail(symbol, market=market, dt_days=dt_days)
     except Exception as e:
         logger.warning(f"基本面明细代理失败 [{symbol}]: {e}")
+        raise HTTPException(502, f"数据源调用失败: {e}")
+
+
+# ──────────────── 首页 Dashboard: 东财异动池 + 同花顺热榜 ────────────────
+
+
+@router.get("/anomalies")
+async def anomalies_proxy(
+    limit: int = Query(20, ge=1, le=50, description="返回条数(默认20, 最大50)"),
+):
+    """东财异动池(交易所「严重异常波动」口径), 供首页 Dashboard 直接调用。
+
+    复用 marketdata 的 EmAnomalyVendor(与对话工具 get_market_anomalies 同源),
+    但返回结构化 JSON 数组而非文本。同步 vendor 放线程池执行, 不阻塞事件循环;
+    无数据返回空数组, vendor 失败返回 502。
+    """
+    try:
+        import asyncio
+        from marketdata.vendors.em_anomaly import EmAnomalyVendor
+
+        vendor = EmAnomalyVendor()
+        items = await asyncio.to_thread(vendor.fetch, [], {"page_size": limit})
+        return [
+            {
+                "symbol": getattr(it, "symbol", ""),
+                "name": getattr(it, "name", ""),
+                "market": getattr(it, "market", ""),
+                "change_pct": getattr(it, "change_pct", None),
+                "deviation": getattr(it, "deviation", None),
+                "days": getattr(it, "days", None),
+                "rule_code": getattr(it, "rule_code", 0),
+                "rule": getattr(it, "rule", "") or "",
+                "is_today": bool(getattr(it, "is_today", False)),
+                "trade_date": getattr(it, "trade_date", ""),
+            }
+            for it in (items or [])
+        ]
+    except Exception as e:
+        logger.warning(f"东财异动池代理失败: {e}")
+        raise HTTPException(502, f"数据源调用失败: {e}")
+
+
+@router.get("/hot-stocks")
+async def hot_stocks_proxy(
+    period: str = Query("hour", description="热榜周期: hour(小时榜,默认)/day(日榜)"),
+    limit: int = Query(20, ge=1, le=50, description="返回条数(默认20, 最大50)"),
+):
+    """同花顺热榜(小时榜/日榜), 供首页 Dashboard 直接调用。
+
+    复用 marketdata 的 ThsHotListVendor(与对话工具 get_hot_stocks 同源),
+    返回结构化 JSON 数组(排名/代码/名称/涨跌幅/热度/概念标签/AI归因 analyse)。
+    同步 vendor 放线程池执行, 不阻塞事件循环; 无数据返回空数组, vendor 失败返回 502。
+    """
+    period = (period or "hour").strip().lower()
+    if period not in ("hour", "day"):
+        period = "hour"
+    try:
+        import asyncio
+        from marketdata.vendors.ths_hot import ThsHotListVendor
+
+        vendor = ThsHotListVendor()
+        items = await asyncio.to_thread(
+            vendor.fetch, [], {"period": period, "limit": limit}
+        )
+        return [
+            {
+                "rank": getattr(it, "rank", 0) or 0,
+                "symbol": getattr(it, "symbol", ""),
+                "name": getattr(it, "name", ""),
+                "market": getattr(it, "market", ""),
+                "change_pct": getattr(it, "change_pct", None),
+                "heat": getattr(it, "heat", None),
+                "concepts": list(getattr(it, "concepts", ()) or ()),
+                "reason": (getattr(it, "reason", "") or "").strip(),  # AI 归因(analyse)
+            }
+            for it in (items or [])
+        ]
+    except Exception as e:
+        logger.warning(f"同花顺热榜代理失败 [{period}]: {e}")
         raise HTTPException(502, f"数据源调用失败: {e}")

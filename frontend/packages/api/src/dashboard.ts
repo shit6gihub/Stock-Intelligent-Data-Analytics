@@ -45,6 +45,63 @@ export interface DashboardMarketCapitalFlow {
   outflow_boards?: { name: string; net_inflow: number; change_pct?: number | null }[]
 }
 
+/** 异动池条目(东财异动池, 首页区块)。字段尽量宽松, 兼容后端不同命名。 */
+export interface MarketAnomalyItem {
+  symbol?: string
+  code?: string                    // 兼容: 部分数据源用 code
+  name?: string
+  market?: string                  // CN / HK / US
+  change_pct?: number | null       // 当日涨跌幅(%)
+  /** 累计偏离(%); 后端可能给 deviation / deviation_pct / bias */
+  deviation?: number | null
+  deviation_pct?: number | null
+  /** 累计偏离持续天数(后端字段为 days; 兼容 deviation_days) */
+  deviation_days?: number
+  days?: number
+  /** 触发规则文字(可能同时给 rule / reason) */
+  rule?: string
+  reason?: string
+  /** 是否当日新异动 */
+  is_today?: boolean
+  /** 触发规则代码(东财 rule_code, 展示可不依赖) */
+  rule_code?: number
+  trade_date?: string
+  source?: string
+}
+
+/** 异动池响应: {count, items} 或 {data:[...]} 或裸数组(组件侧归一化) */
+export interface MarketAnomaliesResponse {
+  count?: number
+  items?: MarketAnomalyItem[]
+  data?: MarketAnomalyItem[]
+}
+
+/** 热榜条目(同花顺热榜, 首页区块)。 */
+export interface MarketHotStockItem {
+  rank?: number
+  symbol?: string
+  code?: string
+  name?: string
+  market?: string
+  change_pct?: number | null
+  /** 热度(数字或带单位字符串, 原样展示) */
+  heat?: number | string | null
+  /** 概念标签 */
+  concepts?: string[]
+  tags?: string[]                  // 兼容字段名
+  /** AI 归因摘要(展示时截断) */
+  reason?: string
+  summary?: string                 // 兼容字段名
+}
+
+/** 热榜响应: {period, count, items} 或 {data:[...]} 或裸数组(组件侧归一化) */
+export interface MarketHotStocksResponse {
+  period?: string
+  count?: number
+  items?: MarketHotStockItem[]
+  data?: MarketHotStockItem[]
+}
+
 export interface DashboardMarketStatus {
   code: string
   name: string
@@ -252,6 +309,17 @@ export const dashboardApi = {
   indices: () => fetchAPI<DashboardMarketIndex[]>('/market/indices'),
 
   marketCapitalFlow: () => fetchAPI<DashboardMarketCapitalFlow>('/market-data/market-capital-flow'),
+
+  /** 异动池(东财):首页区块数据, 独立加载, 失败静默 */
+  anomalies: (params?: { limit?: number }) =>
+    fetchAPI<MarketAnomaliesResponse>(withQuery('/market-data/anomalies', { limit: params?.limit })),
+
+  /** 热榜(同花顺):首页区块数据, 独立加载, 失败静默 */
+  hotStocks: (params?: { period?: string; limit?: number }) =>
+    fetchAPI<MarketHotStocksResponse>(withQuery('/market-data/hot-stocks', {
+      period: params?.period,
+      limit: params?.limit,
+    })),
 
   marketStatus: () => fetchAPI<DashboardMarketStatus[]>('/stocks/markets/status'),
 
