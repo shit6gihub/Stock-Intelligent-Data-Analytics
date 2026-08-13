@@ -125,17 +125,17 @@ export default function IndexDetailPage() {
           <div className="card p-4">
             <div className="flex items-end gap-4 flex-wrap">
               <div>
-                <div className="text-3xl font-mono font-bold">{q?.current_price?.toFixed(2) ?? '--'}</div>
-                <div className={`text-sm font-mono ${up ? 'text-red-500' : 'text-green-500'}`}>
+                <div className="text-3xl font-num font-bold tabular-nums">{q?.current_price?.toFixed(2) ?? '--'}</div>
+                <div className={`text-sm font-num tabular-nums ${up ? 'text-red-500' : 'text-green-500'}`}>
                   {q?.change_amount != null && q.change_amount > 0 ? '+' : ''}{q?.change_amount?.toFixed(2)} ({q?.change_pct?.toFixed(2)}%)
                 </div>
               </div>
               <div className="flex gap-6 text-sm text-muted-foreground">
-                <div><span className="block text-[10px]">昨收</span><span className="font-mono text-foreground">{q?.prev_close?.toFixed(2) ?? '--'}</span></div>
-                <div><span className="block text-[10px]">今开</span><span className="font-mono text-foreground">{q?.open?.toFixed(2) ?? '--'}</span></div>
-                <div><span className="block text-[10px]">最高</span><span className="font-mono text-foreground">{q?.high?.toFixed(2) ?? '--'}</span></div>
-                <div><span className="block text-[10px]">最低</span><span className="font-mono text-foreground">{q?.low?.toFixed(2) ?? '--'}</span></div>
-                <div><span className="block text-[10px]">成交量</span><span className="font-mono text-foreground">{q?.volume != null ? (q.volume / 1e8).toFixed(2) + '亿' : '--'}</span></div>
+                <div><span className="block text-[10px]">昨收</span><span className="font-mono text-foreground tabular-nums">{q?.prev_close?.toFixed(2) ?? '--'}</span></div>
+                <div><span className="block text-[10px]">今开</span><span className="font-mono text-foreground tabular-nums">{q?.open?.toFixed(2) ?? '--'}</span></div>
+                <div><span className="block text-[10px]">最高</span><span className="font-mono text-foreground tabular-nums">{q?.high?.toFixed(2) ?? '--'}</span></div>
+                <div><span className="block text-[10px]">最低</span><span className="font-mono text-foreground tabular-nums">{q?.low?.toFixed(2) ?? '--'}</span></div>
+                <div><span className="block text-[10px]">成交量</span><span className="font-mono text-foreground tabular-nums">{q?.volume != null ? (q.volume / 1e8).toFixed(2) + '亿' : '--'}</span></div>
               </div>
             </div>
           </div>

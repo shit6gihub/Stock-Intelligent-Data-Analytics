@@ -1840,7 +1840,7 @@ export default function StocksPage() {
               <TrendingUp className="w-4 h-4" />
               <span className="text-[12px]">总市值</span>
             </div>
-            <div className="text-[20px] font-bold text-foreground font-mono">
+            <div className="text-[20px] font-bold text-foreground font-num tabular-nums">
               {formatMoney(portfolio.total.total_market_value)}
             </div>
           </div>
@@ -1853,7 +1853,7 @@ export default function StocksPage() {
               )}
               <span className="text-[12px]">总盈亏</span>
             </div>
-            <div className={`text-[20px] font-bold font-mono ${portfolio.total.total_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+            <div className={`text-[20px] font-bold font-num tabular-nums ${portfolio.total.total_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
               {portfolio.total.total_pnl >= 0 ? '+' : ''}{formatMoney(portfolio.total.total_pnl)}
               <span className="text-[13px] ml-1.5">
                 ({portfolio.total.total_pnl_pct >= 0 ? '+' : ''}{portfolio.total.total_pnl_pct.toFixed(2)}%)
@@ -2219,15 +2219,15 @@ export default function StocksPage() {
                                       ) : null
                                     })()}
                                   </td>
-                                  <td className={`px-4 py-2.5 text-right font-mono text-[12px] ${changeColor}`}>
+                                  <td className={`px-4 py-2.5 text-right font-mono tabular-nums text-[12px] ${changeColor}`}>
                                     {pos.current_price != null ? <span>{pos.current_price.toFixed(2)}{isForeign ? (pos.market === 'HK' ? ' HKD' : ' USD') : ''}</span> : '—'}
                                   </td>
-                                  <td className={`px-4 py-2.5 text-right font-mono text-[12px] ${changeColor}`}>
+                                  <td className={`px-4 py-2.5 text-right font-mono tabular-nums text-[12px] ${changeColor}`}>
                                     {pos.change_pct != null ? `${pos.change_pct >= 0 ? '+' : ''}${pos.change_pct.toFixed(2)}%` : '—'}
                                   </td>
-                                  <td className="px-4 py-2.5 text-right font-mono text-[12px] text-muted-foreground">{formatPrice(pos.cost_price)}</td>
-                                  <td className="px-4 py-2.5 text-right font-mono text-[12px] text-muted-foreground">{pos.quantity}</td>
-                                  <td className="px-4 py-2.5 text-right font-mono text-[12px] text-muted-foreground">
+                                  <td className="px-4 py-2.5 text-right font-mono tabular-nums text-[12px] text-muted-foreground">{formatPrice(pos.cost_price)}</td>
+                                  <td className="px-4 py-2.5 text-right font-mono tabular-nums text-[12px] text-muted-foreground">{pos.quantity}</td>
+                                  <td className="px-4 py-2.5 text-right font-mono tabular-nums text-[12px] text-muted-foreground">
                                     {pos.market_value != null ? (
                                       <div className="flex flex-col items-end">
                                         {isForeign ? (
@@ -2239,7 +2239,7 @@ export default function StocksPage() {
                                       </div>
                                     ) : '—'}
                                   </td>
-                                  <td className={`px-4 py-2.5 text-right font-mono text-[12px] ${pnlColor}`}>
+                                  <td className={`px-4 py-2.5 text-right font-mono tabular-nums text-[12px] ${pnlColor}`}>
                                     {pos.pnl != null ? (
                                       <div className="flex flex-col items-end">
                                         <span>{pos.pnl >= 0 ? '+' : ''}{formatMoney(pos.pnl)}</span>
@@ -2248,7 +2248,7 @@ export default function StocksPage() {
                                     ) : '—'}
                                   </td>
                                   <td
-                                    className={`px-4 py-2.5 text-right font-mono text-[12px] ${pos.daily_pnl != null ? (pos.daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500') : ''}`}
+                                    className={`px-4 py-2.5 text-right font-mono tabular-nums text-[12px] ${pos.daily_pnl != null ? (pos.daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500') : ''}`}
                                     title={pos.quote_time ? `行情时间：${pos.quote_time}` : undefined}
                                   >
                                     {pos.daily_pnl != null ? (

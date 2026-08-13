@@ -528,11 +528,11 @@ export default function DashboardPage() {
             <div className="flex items-start justify-between gap-1">
               <div className="min-w-0">
                 <div className="truncate text-[11px] text-muted-foreground">{ix.name}</div>
-                <div className="font-mono text-[15px] text-foreground">
+                <div className="font-num text-[15px] text-foreground tabular-nums">
                   {ix.current_price != null ? ix.current_price.toFixed(2) : '--'}
                 </div>
               </div>
-              <span className={`shrink-0 rounded px-1 py-0.5 font-mono text-[10px] ${pctChipCls(ix.change_pct)}`}>
+              <span className={`shrink-0 rounded px-1 py-0.5 font-num tabular-nums text-[10px] ${pctChipCls(ix.change_pct)}`}>
                 {ix.change_pct != null ? pct(ix.change_pct) : '--'}
               </span>
             </div>

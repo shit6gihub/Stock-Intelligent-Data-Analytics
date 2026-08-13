@@ -690,9 +690,9 @@ export default function ForecastPage() {
                   </span>
                 </div>
                 <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted-foreground">
-                  <span>目标价：<span className="font-mono font-bold text-foreground">{result.recommendation.target_price}</span></span>
-                  <span>止损参考：<span className="font-mono font-bold text-foreground">{result.recommendation.stop_loss}</span></span>
-                  <span>预期：<span className={`font-mono font-bold ${result.expected_pct >= 0 ? 'text-red-500' : 'text-green-500'}`}>{result.expected_pct > 0 ? '+' : ''}{result.expected_pct}%</span></span>
+                  <span>目标价：<span className="font-num font-bold text-foreground tabular-nums">{result.recommendation.target_price}</span></span>
+                  <span>止损参考：<span className="font-num font-bold text-foreground tabular-nums">{result.recommendation.stop_loss}</span></span>
+                  <span>预期：<span className={`font-num font-bold tabular-nums ${result.expected_pct >= 0 ? 'text-red-500' : 'text-green-500'}`}>{result.expected_pct > 0 ? '+' : ''}{result.expected_pct}%</span></span>
                   {result.recommendation.risk_note && <span className="text-amber-500">{result.recommendation.risk_note}</span>}
                 </div>
               </div>
@@ -705,7 +705,7 @@ export default function ForecastPage() {
                 {result.prediction.map((p, i) => (
                   <div key={i} className="bg-muted rounded-lg px-3 py-2 text-center">
                     <div className="text-xs text-muted-foreground">T+{i + 1}</div>
-                    <div className={`font-mono font-bold ${p > result.last_close ? 'text-red-500' : 'text-green-500'}`}>
+                    <div className={`font-num font-bold tabular-nums ${p > result.last_close ? 'text-red-500' : 'text-green-500'}`}>
                       {p.toFixed(2)}
                     </div>
                     <div className="text-xs text-muted-foreground">

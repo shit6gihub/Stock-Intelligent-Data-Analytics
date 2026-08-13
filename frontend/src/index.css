@@ -4,28 +4,33 @@
 
 @layer base {
   :root {
-    --background: 220 20% 97%;
-    --foreground: 220 20% 10%;
-    --card: 0 0% 100%;
-    --card-foreground: 220 20% 10%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 220 20% 10%;
-    --primary: 234 85% 55%;
+    /* 反AI模板 P1: 中性色色相 220→215 统一向锚点色收敛(消除 AI 灰);卡片不再纯白 */
+    --background: 215 20% 97%;
+    --foreground: 215 20% 10%;
+    --card: 215 25% 99%; /* 纸面白(极低色度),替代纯白卡 */
+    --card-foreground: 215 20% 10%;
+    --popover: 215 25% 99%; /* 纸面白(极低色度),替代纯白 */
+    --popover-foreground: 215 20% 10%;
+    /* 锚点色: A股数据感深青钢蓝,替代 shadcn 默认 234 蓝(AI模板特征) */
+    --primary: 215 70% 45%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 220 15% 94%;
-    --secondary-foreground: 220 15% 40%;
-    --muted: 220 15% 94%;
-    --muted-foreground: 220 10% 50%;
-    --accent: 220 15% 92%;
-    --accent-foreground: 220 20% 10%;
+    --secondary: 215 15% 94%;
+    --secondary-foreground: 215 15% 40%;
+    --muted: 215 15% 94%;
+    --muted-foreground: 215 10% 50%;
+    --accent: 215 15% 92%;
+    --accent-foreground: 215 20% 10%;
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
     --success: 152 60% 42%;
     --success-foreground: 0 0% 100%;
-    --border: 220 15% 90%;
-    --input: 220 15% 90%;
-    --ring: 234 85% 55%;
+    --border: 215 15% 90%;
+    --input: 215 15% 90%;
+    --ring: 215 70% 45%; /* 跟随锚点色 */
     --radius: 0.75rem;
+
+    /* 数字专用字体栈(金融数据感): 指数点位/涨跌幅/预测值等数字大字处使用 */
+    --font-num: "SF Mono", "Cascadia Code", ui-monospace, "DIN Alternate", "Roboto Mono", monospace;
 
     /* 界面密度体系:normal(默认)= 4px 基准。
        compact=3px / comfortable=6px 由 <html data-density> 属性覆盖(见下方)。
@@ -40,27 +45,28 @@
   }
 
   .dark {
-    --background: 224 20% 6%;
-    --foreground: 220 15% 90%;
-    --card: 224 20% 10%;
-    --card-foreground: 220 15% 90%;
-    --popover: 224 20% 10%;
-    --popover-foreground: 220 15% 90%;
-    --primary: 234 85% 62%;
+    /* 反AI模板 P1: 暗色同样统一色相 215,锚点色提亮为 215 70% 60% */
+    --background: 215 20% 6%;
+    --foreground: 215 15% 90%;
+    --card: 215 20% 10%;
+    --card-foreground: 215 15% 90%;
+    --popover: 215 20% 10%;
+    --popover-foreground: 215 15% 90%;
+    --primary: 215 70% 60%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 224 15% 15%;
-    --secondary-foreground: 220 15% 70%;
-    --muted: 224 15% 15%;
-    --muted-foreground: 220 10% 50%;
-    --accent: 224 15% 18%;
-    --accent-foreground: 220 15% 90%;
+    --secondary: 215 15% 15%;
+    --secondary-foreground: 215 15% 70%;
+    --muted: 215 15% 15%;
+    --muted-foreground: 215 10% 50%;
+    --accent: 215 15% 18%;
+    --accent-foreground: 215 15% 90%;
     --destructive: 0 60% 45%;
     --destructive-foreground: 0 0% 100%;
     --success: 152 50% 38%;
     --success-foreground: 0 0% 100%;
-    --border: 224 15% 16%;
-    --input: 224 15% 18%;
-    --ring: 234 85% 62%;
+    --border: 215 15% 16%;
+    --input: 215 15% 18%;
+    --ring: 215 70% 60%; /* 跟随锚点色 */
   }
 
   /* 密度档位覆盖(normal 为默认,不加选择器即保持原样):
@@ -85,6 +91,10 @@
   }
   code, .font-mono {
     font-family: "SF Mono", "Cascadia Code", "Source Code Pro", ui-monospace, monospace;
+  }
+  /* 数字专用字体(金融数据感): 指数点位/涨跌幅/预测值等数字大字处使用 */
+  .font-num {
+    font-family: var(--font-num);
   }
 }
 
