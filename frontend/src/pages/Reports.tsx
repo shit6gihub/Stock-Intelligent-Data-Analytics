@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { RefreshCw, Search, FileText, Calendar, Hash, ArrowDownToLine, CheckCircle2, AlertCircle, Loader2, ExternalLink } from 'lucide-react'
 import { reportsApi, type ReportItem, type VaultStatus, type SyncResult } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
@@ -28,17 +28,21 @@ export default function ReportsPage() {
   const [vault, setVault] = useState<VaultStatus | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null)
+  const [refreshedAt, setRefreshedAt] = useState<Date | null>(null) // 最后成功刷新时间(自动刷新"最后更新 HH:MM:SS"小字)
 
-  const load = async () => {
-    setLoading(true)
+  // silent=true 为自动刷新路径: 不置 loading, 列表不闪骨架/spinner(静默更新, 新报告出现即可);
+  // 手动按钮仍走完整 loading 状态
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
       const res = await reportsApi.list({ limit: 500 })
       setItems(res.items)
       setJobs(res.jobs)
+      setRefreshedAt(new Date())
     } catch (e) {
       console.error(e)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
@@ -51,6 +55,29 @@ export default function ReportsPage() {
   }
 
   useEffect(() => { load(); loadVault() }, [])
+
+  // 30s 自动刷新: 页面可见才轮询(visibilitychange 隐藏时暂停, 回到页面立即补一次);
+  // autoRefreshBusy 防请求叠加; 自动刷新走静默路径(load(true) 不闪 loading),
+  // 手动刷新按钮保留完整 loading
+  const autoRefreshBusy = useRef(false)
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState !== 'visible' || autoRefreshBusy.current) return
+      autoRefreshBusy.current = true
+      load(true).finally(() => {
+        autoRefreshBusy.current = false
+      })
+    }
+    const timer = setInterval(tick, 30_000)
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') tick()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [])
 
   const filtered = useMemo(() => {
     let r = items
@@ -117,6 +144,11 @@ export default function ReportsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {refreshedAt && (
+            <span className="text-xs text-muted-foreground tabular-nums" title="最近一次成功刷新时间">
+              最后更新 {refreshedAt.toLocaleTimeString('zh-CN', { hour12: false })}
+            </span>
+          )}
           <Button variant="ghost" size="sm" onClick={() => { load(); loadVault() }} disabled={loading}>
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </Button>
