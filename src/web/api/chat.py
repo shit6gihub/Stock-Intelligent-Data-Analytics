@@ -3,11 +3,14 @@
 import asyncio
 import json
 import logging
+import os
+import sqlite3
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from src.config import Settings
@@ -21,10 +24,13 @@ from src.web.models import (
     AnalysisHistory,
     ChatConversation,
     ChatMessage,
+    EntryCandidate,
+    Notification,
     PaperTradingPosition,
     Position,
     Stock,
     StockSuggestion,
+    StrategySignalRun,
     User,
 )
 
@@ -62,6 +68,10 @@ _TOOL_STAGE_LABELS = {
     "get_market_news": "正在获取市场资讯...",
     "get_kline_patterns": "正在识别K线形态...",
     "get_auction_data": "正在获取集合竞价数据...",
+    "get_forecast": "正在读取系统预测...",
+    "get_opportunities": "正在读取今日机会候选...",
+    "get_strategy_signals": "正在读取策略信号...",
+    "get_notifications": "正在读取系统通知...",
 }
 
 # 画像注入节流: profile_text 截断 + rules 只取前 N 条, 避免每次对话占过多 token
@@ -273,6 +283,64 @@ CHAT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_forecast",
+            "description": "读取系统 AI 预测引擎的最近预测结果（预测方向/预期涨跌幅/目标价/到期时间，数据来自预测引擎独立库）。用于回答「系统预测了什么」「预测引擎今天给了什么预测」「XX股票的预测结果怎么样」「预测目标价是多少」等问题。可选按股票代码过滤。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "股票代码，如 002361；不填则返回全部最近预测", "default": ""},
+                    "limit": {"type": "integer", "description": "返回条数，默认 5", "default": 5},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_opportunities",
+            "description": "读取系统今日机会候选（入场候选榜：信号/得分/操作建议/目标价，按得分排序）。用于回答「今天发现什么机会」「今日机会候选有哪些」「系统今天推荐了什么股票」「XX股票入选机会榜了吗」等问题。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "返回条数，默认 10", "default": 10},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_strategy_signals",
+            "description": "读取系统最新策略信号（哪个策略对哪只股票给出了买/关注类信号、动作、得分与信号描述，取最新交易日）。用于回答「哪个策略给了信号」「今天策略信号有哪些」「XX策略有信号吗」「系统策略看好什么」等问题。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "返回条数，默认 10", "default": 10},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_notifications",
+            "description": "读取系统最近通知/提醒（Agent 运行、报告生成、策略刷新等完成或失败消息）。用于回答「有什么通知」「系统有什么提醒」「有没有未读通知」等问题。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "返回条数，默认 10", "default": 10},
+                    "unread_only": {"type": "boolean", "description": "是否只返回未读通知，默认 False", "default": False},
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 
@@ -283,6 +351,189 @@ def _build_watchlist_context(db: Session) -> str:
         return "用户暂无自选股。"
     lines = [f"- {s.name}({s.market}:{s.symbol})" for s in stocks]
     return "自选股列表：\n" + "\n".join(lines)
+
+
+# ──────────────── 系统数据工具(2026-08-13): 预测/机会/策略信号/通知 ────────────────
+
+_FORECAST_DB_PATH = os.path.join(os.path.expanduser("~"), ".panwatch_forecast.db")
+
+# 预测方向英文 → 中文
+_FORECAST_DIRECTION_CN = {"up": "看涨", "down": "看跌", "sideways": "横盘", "neutral": "中性"}
+
+# forecasts 表(展示层) 与 prediction_runs 表(运行层, final_* 前缀) 的列映射,
+# 两表均可能因部署形态存在, 读取时按实际表结构自适应
+_FORECAST_COLUMN_MAP = {
+    "forecasts": {
+        "symbol": "symbol", "stock_name": "stock_name", "last_close": "last_close",
+        "direction": "direction", "expected_pct": "expected_pct",
+        "confidence": "confidence", "target_price": "target_price",
+        "target_date": "target_date", "created_at": "created_at",
+    },
+    "prediction_runs": {
+        "symbol": "symbol", "stock_name": "stock_name", "last_close": "last_close",
+        "direction": "final_direction", "expected_pct": "final_expected_pct",
+        "confidence": None, "target_price": "final_target_price",
+        "target_date": "target_date", "created_at": "created_at",
+    },
+}
+
+
+def _resolve_forecast_db_path() -> str:
+    """解析预测引擎 SQLite 路径(与 forecast_lib.forecast_paths 同源: 环境变量优先, 默认 ~/.panwatch_forecast.db)。"""
+    configured = os.getenv("FORECAST_DB_PATH", "")
+    return os.path.abspath(os.path.expanduser(configured or _FORECAST_DB_PATH))
+
+
+def _read_forecast(symbol: str = "", limit: int = 5) -> str:
+    """读取系统最近预测(预测引擎独立库, 只读; 有 outcome 对照时优先展示, 无则返回预测本身)。"""
+    db_path = _resolve_forecast_db_path()
+    if not os.path.exists(db_path):
+        return "暂无系统预测（未找到预测引擎数据库，预测引擎可能尚未运行）。"
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+        try:
+            cur = conn.cursor()
+            tables = {r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            table = "forecasts" if "forecasts" in tables else ("prediction_runs" if "prediction_runs" in tables else None)
+            if not table:
+                return "暂无系统预测（预测引擎数据库中无预测表）。"
+            cmap = _FORECAST_COLUMN_MAP[table]
+            base_cols = ("symbol", "stock_name", "last_close", "direction", "expected_pct", "target_price", "target_date", "created_at")
+            cols = [cmap[c] for c in base_cols if cmap.get(c)]
+            if cmap.get("confidence"):
+                cols.append(cmap["confidence"])
+            sql = f"SELECT {', '.join(cols)} FROM {table}"
+            where, params = "", []
+            if symbol:
+                where, params = " WHERE symbol = ?", [symbol]
+            sql += where + " ORDER BY created_at DESC LIMIT ?"
+            params.append(str(max(1, min(int(limit), 50))))
+            rows = cur.execute(sql, params).fetchall()
+            if not rows:
+                return f"暂无系统预测" + (f"（{symbol}）" if symbol else "") + "。"
+            today = datetime.now().date().isoformat()
+            lines = [f"【系统预测】最近{len(rows)}条" + (f"（{symbol}）" if symbol else "") + f"，来自预测引擎 {table} 表:"]
+            for r in rows:
+                # 列名统一回写为规范名(final_direction → direction 等), 便于下方格式化
+                key_map = {actual: canon for canon, actual in cmap.items() if actual}
+                d = {key_map.get(k, k): v for k, v in zip(cols, r)}
+                direction = (d.get("direction") or "").strip()
+                dir_cn = _FORECAST_DIRECTION_CN.get(direction.lower(), direction or "未知")
+                pct = d.get("expected_pct")
+                pct_str = f"{pct:+.2f}%" if isinstance(pct, (int, float)) else (str(pct) if pct else "")
+                target = d.get("target_price")
+                target_str = f"{target:.2f}" if isinstance(target, (int, float)) else (str(target) if target else "—")
+                close = d.get("last_close")
+                close_str = f"{close:.2f}" if isinstance(close, (int, float)) else (str(close) if close else "—")
+                tdate = (d.get("target_date") or "")[:10]
+                expired = f"已到期" if (tdate and tdate < today) else ("未到期" if tdate else "—")
+                created = (d.get("created_at") or "")[:16]
+                conf = d.get("confidence") if cmap.get("confidence") else None
+                conf_str = f" 置信度:{conf}" if conf else ""
+                line = (f"- {d.get('symbol')} {d.get('stock_name') or ''} {dir_cn} "
+                        f"预期{pct_str} 目标价{target_str} 现价{close_str}"
+                        f"{conf_str} 到期:{tdate or '—'}({expired}) 创建:{created}")
+                lines.append(line)
+            return "\n".join(lines)
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"get_forecast 读取预测库失败: {e}")
+        return f"系统预测读取失败: {e}"
+
+
+def _read_opportunities(db: Session, limit: int = 10) -> str:
+    """读取今日机会候选(主库 entry_candidates, active 且有信号, 取最新日期, 按得分降序)。"""
+    latest = (
+        db.query(func.max(EntryCandidate.snapshot_date))
+        .filter(EntryCandidate.status == "active")
+        .scalar()
+    )
+    if not latest:
+        return "暂无机会候选（今日没有 active 候选）。"
+    total = (
+        db.query(func.count(EntryCandidate.id))
+        .filter(EntryCandidate.status == "active", EntryCandidate.snapshot_date == latest)
+        .scalar()
+    )
+    rows = (
+        db.query(EntryCandidate)
+        .filter(
+            EntryCandidate.status == "active",
+            EntryCandidate.snapshot_date == latest,
+            EntryCandidate.signal.isnot(None),
+            EntryCandidate.signal != "",
+        )
+        .order_by(EntryCandidate.score.desc())
+        .limit(max(1, min(int(limit), 50)))
+        .all()
+    )
+    if not rows:
+        return f"今日({latest})暂无带信号的机会候选（共{total}条 active，均无 signal）。"
+    lines = [f"【今日机会候选】{latest} 共{total}条active，按得分Top{len(rows)}:"]
+    for c in rows:
+        target = c.target_price
+        target_str = f"{target:.2f}" if isinstance(target, (int, float)) else "—"
+        lines.append(
+            f"- {c.stock_symbol} {c.stock_name} 得分{c.score:g} 操作:{c.action_label} "
+            f"信号:{c.signal} 目标价:{target_str}"
+        )
+    return "\n".join(lines)
+
+
+def _read_strategy_signals(db: Session, limit: int = 10) -> str:
+    """读取最新策略信号(主库 strategy_signal_runs, active 且动作属买/关注类, 取最新日期, 按得分降序)。"""
+    action_whitelist = ("buy", "watch", "hold", "alert")  # 买/关注/持有/告警类信号
+    latest = (
+        db.query(func.max(StrategySignalRun.snapshot_date))
+        .filter(
+            StrategySignalRun.status == "active",
+            StrategySignalRun.action.in_(action_whitelist),
+        )
+        .scalar()
+    )
+    if not latest:
+        return "暂无策略信号（今日没有 active 的买/关注类信号）。"
+    rows = (
+        db.query(StrategySignalRun)
+        .filter(
+            StrategySignalRun.status == "active",
+            StrategySignalRun.snapshot_date == latest,
+            StrategySignalRun.action.in_(action_whitelist),
+        )
+        .order_by(StrategySignalRun.score.desc())
+        .limit(max(1, min(int(limit), 50)))
+        .all()
+    )
+    if not rows:
+        return f"最新交易日({latest})暂无买/关注类策略信号。"
+    lines = [f"【策略信号】{latest} 最新active买/关注类信号 Top{len(rows)}:"]
+    for s in rows:
+        score = f"{s.score:g}" if isinstance(s.score, (int, float)) else str(s.score or "—")
+        lines.append(
+            f"- {s.stock_symbol} {s.stock_name} 策略:{s.strategy_name or s.strategy_code} "
+            f"动作:{s.action_label}({s.action}) 得分:{score} 信号:{s.signal or '—'}"
+        )
+    return "\n".join(lines)
+
+
+def _read_notifications(db: Session, limit: int = 10, unread_only: bool = False) -> str:
+    """读取最近通知(主库 notifications, 按时间倒序; unread_only 时只取未读)。"""
+    q = db.query(Notification)
+    if unread_only:
+        q = q.filter(Notification.read_at.is_(None))
+    total = q.count()
+    if total == 0:
+        return "暂无通知" + ("（无未读通知）" if unread_only else "") + "。"
+    rows = q.order_by(Notification.created_at.desc()).limit(max(1, min(int(limit), 50))).all()
+    lines = [f"【系统通知】最近{len(rows)}条" + ("（未读）" if unread_only else "") + f"（共{total}条）:"]
+    for n in rows:
+        ts = n.created_at.strftime("%Y-%m-%d %H:%M") if n.created_at is not None else ""
+        unread = "未读" if n.read_at is None else "已读"
+        body = (n.body or "").strip().replace("\n", " ")
+        body = body[:50] + ("…" if len(body) > 50 else "")
+        lines.append(f"- [{ts}] {n.title} 类型:{n.category}/{n.level} {unread} {body}")
+    return "\n".join(lines)
 
 
 async def _execute_tool(db: Session, name: str, args: dict) -> str:
@@ -453,6 +704,20 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
             scene = args.get("scene", "overview")
             limit = int(args.get("limit", 10) or 10)
             return await _fetch_auction_context(scene, limit)
+        elif name == "get_forecast":
+            symbol = (args.get("symbol") or "").strip()
+            limit = int(args.get("limit", 5) or 5)
+            return _read_forecast(symbol, limit)
+        elif name == "get_opportunities":
+            limit = int(args.get("limit", 10) or 10)
+            return _read_opportunities(db, limit)
+        elif name == "get_strategy_signals":
+            limit = int(args.get("limit", 10) or 10)
+            return _read_strategy_signals(db, limit)
+        elif name == "get_notifications":
+            limit = int(args.get("limit", 10) or 10)
+            unread_only = bool(args.get("unread_only") or False)
+            return _read_notifications(db, limit, unread_only)
         else:
             return f"未知工具: {name}"
     except Exception as e:
