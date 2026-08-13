@@ -75,6 +75,9 @@ _TOOL_STAGE_LABELS = {
     "get_strategy_signals": "正在读取策略信号...",
     "get_notifications": "正在读取系统通知...",
     "get_fundamentals_detail": "正在查询基本面明细(龙虎榜/股东/分红/两融/事件)...",
+    "get_irm_qa": "正在查询互动易问答(巨潮官方回应)...",
+    "get_market_anomalies": "正在获取异动股池(东财)...",
+    "get_hot_stocks": "正在获取同花顺热榜...",
 }
 
 # 画像注入节流: profile_text 截断 + rules 只取前 N 条, 避免每次对话占过多 token
@@ -356,6 +359,50 @@ CHAT_TOOLS = [
                     "market": {"type": "string", "description": "市场代码：CN/HK/US", "default": "CN"},
                 },
                 "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_irm_qa",
+            "description": "获取个股互动易问答（巨潮 cninfo）：投资者提问与公司官方回应列表（问题+回复+时间）。互动易是公司对投资者提问的官方回复，是验证传闻/利好的权威信源。用于回答「XX公司最近有什么互动易回复」「公司对XX事的官方回应」「管理层怎么回应XX传闻」等问题。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "股票代码，如 002361"},
+                    "market": {"type": "string", "description": "市场代码：CN/HK/US", "default": "CN"},
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_market_anomalies",
+            "description": "获取A股异动股池（东财，交易所「严重异常波动」口径）：触发严重异常波动规则的个股列表，含代码/名称/当日涨跌幅/累计偏离/统计窗口/规则说明/是否当日。用于回答「今天有什么异动股」「哪些股票严重异常波动」「被交易所点名波动的股票」等问题。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "返回条数，默认 20", "default": 20},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_hot_stocks",
+            "description": "获取同花顺热榜：按人气排名的热门A股（小时榜/日榜），含排名/代码/名称/涨跌幅/热度/概念标签/AI归因。用于回答「今天什么股票最热」「热榜前几」「XX为什么涨/为什么这么火」等问题。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "period": {"type": "string", "description": "热榜周期：hour(小时榜，默认)/day(日榜)", "default": "hour"},
+                    "limit": {"type": "integer", "description": "返回条数，默认 20", "default": 20},
+                },
+                "required": [],
             },
         },
     },
@@ -844,6 +891,119 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
             except Exception as e:
                 logger.warning(f"get_fundamentals_detail 工具失败 [{symbol}]: {e}")
                 return f"基本面明细查询失败: {e}"
+        elif name == "get_irm_qa":
+            # 互动易问答(巨潮 cninfo): 公司对投资者提问的官方回应, 验证传闻/利好的权威信源
+            symbol = (args.get("symbol") or "").strip()
+            market = args.get("market", "CN")
+            if not symbol:
+                return "请提供股票代码(symbol)。"
+            if market != "CN":
+                return "互动易问答仅支持 A 股(CN)。"
+            try:
+                # 局部 import asyncio: 本函数 get_market_news 分支已有局部 `import asyncio`,
+                # 使 asyncio 成为整个函数作用域的局部名, 顶层 import 不可见, 必须在此分支内重新 import
+                import asyncio
+                from marketdata.symbol import Symbol
+                from marketdata.vendors.cninfo_irm import CninfoIrmVendor
+
+                vendor = CninfoIrmVendor()
+                # 同步 vendor 放线程池执行, 避免阻塞事件循环
+                items = await asyncio.to_thread(
+                    vendor.fetch, [Symbol.parse(symbol)], {"page_size": 10}
+                )
+                if not items:
+                    return f"{symbol} 暂无互动易问答记录(可能近期无提问或接口暂未收录)。"
+                lines = [f"【互动易问答】{symbol}(数据源: 巨潮 cninfo, 最近{len(items)}条):"]
+                for i, it in enumerate(items[:10], 1):
+                    q = (getattr(it, "title", "") or "").strip()
+                    answer = (getattr(it, "url", "") or "").strip()  # 公司回复临时存 url 字段
+                    ts = getattr(it, "publish_time", None)
+                    tstr = ts.strftime("%Y-%m-%d") if ts else ""
+                    lines.append(f"{i}. [{tstr}] {q}")
+                    if answer:
+                        lines.append(f"   回复: {answer[:200]}")
+                    else:
+                        lines.append("   回复: (公司尚未回复)")
+                return "\n".join(lines)
+            except Exception as e:
+                logger.warning(f"get_irm_qa 工具失败 [{symbol}]: {e}")
+                return f"互动易问答查询失败: {e}"
+        elif name == "get_market_anomalies":
+            # 东财异动池: 交易所「严重异常波动」口径, 市场级(无视个股参数)
+            limit = min(int(args.get("limit", 20) or 20), 50)
+            try:
+                import asyncio
+                from marketdata.vendors.em_anomaly import EmAnomalyVendor
+
+                vendor = EmAnomalyVendor()
+                items = await asyncio.to_thread(
+                    vendor.fetch, [], {"page_size": limit}
+                )
+                if not items:
+                    return "东财异动池暂无数据(今日可能无触发「严重异常波动」规则的个股, 或非交易时段/数据源未就绪)。"
+                has_today = any(getattr(it, "is_today", False) for it in items)
+                lines = [
+                    f"【东财异动池】交易所「严重异常波动」标的(共{len(items)}条, "
+                    f"{'含当日' if has_today else '最近交易日'}):"
+                ]
+                for i, it in enumerate(items[:limit], 1):
+                    chg = getattr(it, "change_pct", None)
+                    dev = getattr(it, "deviation", None)
+                    days = getattr(it, "days", None)
+                    rule = getattr(it, "rule", "") or ""
+                    chg_s = f" 涨跌幅{chg:+.2f}%" if isinstance(chg, (int, float)) else ""
+                    dev_s = f" 累计偏离{dev:+.2f}%" if isinstance(dev, (int, float)) else ""
+                    days_s = f"({days}日)" if days else ""
+                    flag = "当日" if getattr(it, "is_today", False) else "非当日"
+                    lines.append(
+                        f"{i}. {it.symbol} {getattr(it, 'name', '') or ''} "
+                        f"{chg_s}{dev_s}{days_s} [{flag}]"
+                    )
+                    if rule:
+                        lines.append(f"   规则: {rule}")
+                return "\n".join(lines)
+            except Exception as e:
+                logger.warning(f"get_market_anomalies 工具失败: {e}")
+                return f"异动股池查询失败: {e}"
+        elif name == "get_hot_stocks":
+            # 同花顺热榜(小时榜/日榜): 排名/热度/概念标签/AI归因(analyse)
+            period = (args.get("period") or "hour").strip().lower()
+            if period not in ("hour", "day"):
+                period = "hour"
+            limit = min(int(args.get("limit", 20) or 20), 50)
+            try:
+                import asyncio
+                from marketdata.vendors.ths_hot import ThsHotListVendor
+
+                vendor = ThsHotListVendor()
+                items = await asyncio.to_thread(
+                    vendor.fetch, [], {"period": period, "limit": limit}
+                )
+                if not items:
+                    return "同花顺热榜暂无数据(可能非交易时段或数据源未就绪)。"
+                period_cn = "小时榜" if period == "hour" else "日榜"
+                lines = [
+                    f"【同花顺热榜·{period_cn}】人气前{len(items)}(数据源: 同花顺, 含AI归因):"
+                ]
+                for i, it in enumerate(items[:limit], 1):
+                    rank = getattr(it, "rank", 0) or 0
+                    chg = getattr(it, "change_pct", None)
+                    heat = getattr(it, "heat", None)
+                    concepts = getattr(it, "concepts", ()) or ()
+                    reason = (getattr(it, "reason", "") or "").strip()
+                    chg_s = f" 涨跌幅{chg:+.2f}%" if isinstance(chg, (int, float)) else ""
+                    heat_s = f" 热度{heat}" if heat not in (None, "") else ""
+                    tag_s = (" 概念: " + "/".join(str(c) for c in concepts)) if concepts else ""
+                    lines.append(
+                        f"{i}. 第{rank}名 {it.symbol} {getattr(it, 'name', '') or ''}"
+                        f"{chg_s}{heat_s}{tag_s}"
+                    )
+                    if reason:
+                        lines.append(f"   AI归因: {reason[:150]}")
+                return "\n".join(lines)
+            except Exception as e:
+                logger.warning(f"get_hot_stocks 工具失败: {e}")
+                return f"同花顺热榜查询失败: {e}"
         else:
             return f"未知工具: {name}"
     except Exception as e:
