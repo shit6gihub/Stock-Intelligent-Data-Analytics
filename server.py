@@ -1739,12 +1739,20 @@ if os.path.exists(static_dir):
     from fastapi.staticfiles import StaticFiles
     from fastapi.responses import FileResponse
 
-    # SPA 路由：所有非 API 请求返回 index.html
+    # SPA 路由：非 API 请求返回 index.html；但静态资源(.js/.css/图片等)
+    # 不存在时必须返回 404,不能回退 index.html —— 否则浏览器把 HTML 当 JS 执行,
+    # 直接白屏(旧 index.html 引用旧 hash 资源时必现)。
+    _SPA_ASSET_EXT = (".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".woff", ".woff2", ".ttf", ".map", ".json")
+
     @app.get("/{path:path}")
     async def serve_spa(path: str):
         file_path = os.path.join(static_dir, path)
         if os.path.isfile(file_path):
             return FileResponse(file_path)
+        # 资源类路径不存在 → 404(绝不回退 index.html)
+        if path.startswith("assets/") or path.lower().endswith(_SPA_ASSET_EXT):
+            from fastapi.responses import Response
+            return Response(status_code=404)
         return FileResponse(os.path.join(static_dir, "index.html"))
 
     logger.info(f"静态文件服务已启用: {static_dir}")

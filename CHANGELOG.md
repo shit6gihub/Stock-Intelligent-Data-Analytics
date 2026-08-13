@@ -26,6 +26,74 @@
 - 624 passed(新增 5 个测试文件), pnpm build 通过
 - 真实库副本迁移验证: 48 条不变(跨账户保留), 唯一索引拦截同账户重复
 
+## 2026-08-13 (v0.2.25)
+
+### fix(frontend) — 首页白屏(旧 SW 缓存 + SPA 资源回退 HTML)
+
+**根因**: 两个问题叠加:
+1. SW 缓存名固定(panwatch-v13), 发版后旧缓存不清, 用户浏览器回退旧 index.html
+2. SPA fallback 对所有路径返回 index.html —— 旧 index.html 引用的旧 hash JS 已不存在,
+   服务器返回 HTML → 浏览器把 HTML 当 JS 执行 → 语法错误 → 整页白屏
+
+**修复**:
+- server.py: 静态资源(.js/.css/图片等)不存在时返回 404, 绝不回退 index.html
+- sw.js: CACHE_NAME 注入版本号(构建时 sed), 发版后 SW 字节变化 → 浏览器自动更新清旧缓存
+- sw.js: 不再缓存 '/' (index.html) 且导航请求不回退旧 HTML —— 旧 HTML 残留是白屏根源
+
+### 实测
+- 前端 build 9.2s, dist/sw.js 缓存名 = panwatch-v0.2.25
+- server.py 语法 OK
+
+# Changelog
+
+## 2026-08-13 (v0.2.24)
+
+### fix(ai) — 场景绑定跨服务商 404 "model is not found"
+
+**根因**: 统一 LLM 配置中心场景绑定时只改 `ai_client.model` 字符串, base_url/api_key 未同步切换。
+agent_configs 里 premarket_outlook/daily_report 绑定商汤 deepseek-v4-flash, reports 场景绑定 agnes-2.5-flash,
+绑定后请求仍发往商汤 API + agnes 模型名 → 404 (商汤无此模型)。商汤 API 实测有 deepseek-v4-flash,
+直接调用正常, 故 404 非 key/模型缺失, 而是绑定切换不完整。
+
+**修复**:
+- src/agents/base.py `apply_scene_binding`: 绑定命中时整体重建 AIClient(base_url+api_key+model 一起换), 保留 total_tokens_used
+- src/web/api/insights.py 两处(评估/公告解读): 改走 `_client_from_scene_cfg` 整体重建(原实现 _coerce_bound_model 返回字符串, bound.get() 静默失败)
+
+### 实测
+- 模拟 build_context(商汤 deepseek) → apply_scene_binding(reports) → client 变为 agnes base_url/model, 真实 chat 成功
+- 231 tests passed
+
+# Changelog
+
+## 2026-08-13 (v0.2.23)
+
+### refactor(settings) — 删除多余模型引擎配置(统一 LLM 配置中心)
+
+- 删除设置页「预测引擎 LLM(情绪打分)」配置组(forecast_llm_base_url/model/api_key 三个输入框)
+- 删除设置页「预测引擎模型清单」只读区块(loadForecastModels + /forecast/models 前端调用)
+- 后端: SETTING_DESCRIPTIONS / SECRET_SETTING_KEYS 移除 forecast_llm_* 三键, 删除废弃路由 /forecast-llm-config 与 /forecast-llm-sync-guide
+- 预测引擎 AI 裁判/情绪打分模型统一走「场景分配」(ai_scene_bindings), 旧 forecast_llm_* 仅存 DB fallback(无 UI 入口)
+
+### 实测
+- 前端 build 9.0s, 产物无 forecast_llm 残留
+- 后端 settings 相关测试 17 passed
+
+# Changelog
+
+## 2026-08-13 (v0.2.22)
+
+### fix(shadow) — 影子账户页白屏(React #31)
+
+- 根因: rules 是 ShadowRule 对象数组(含 human_text), 前端却当字符串直接渲染 → React error #31 → 整页空白
+- 修复: ruleLabel() 统一取 human_text(兼容字符串/对象), 两处渲染(我的画像区 + 行为画像区)
+- key 改用 rule_id / index(对象不能作 key)
+
+### 实测
+- 前端 build 8.4s
+
+# Changelog
+>>>>>>> 889209babb728709085378c8c6a1d1cacf9bd22e
+
 ## 2026-08-13 (v0.2.21)
 
 ### feat(shadow) — 影子账户"我的画像"区
@@ -74,6 +142,19 @@
 - 27 tests passed
 
 
+### fix
+
+- 增强主程序 Docker 镜像安装 Debian 系统依赖时的下载重试、读取超时和 HTTP 管线容错，避免字体及 Playwright 运行库因上游 EOF 或临时 500 响应导致构建中断。
+- 增加主镜像版本文件的非空构建校验，避免磁盘写入异常时生成缺少版本标识的可部署镜像。
+- 增加主镜像 Python 依赖下载容错及 SQLAlchemy、行情本地包的构建期导入校验，阻止依赖层不完整的镜像进入部署流程。
+- 将定时价格提醒的完整扫描移入工作线程，避免同步 SQLite 等待占用 Web 事件循环并造成健康接口间歇性超时。
+- 移除服务启动 15 秒后自动执行的完整后验评估补跑，避免历史数据较多时启动阶段长期占用解释器并阻塞 Web 请求；保留每 6 小时维护计划和手动执行入口。
+- 将主镜像系统依赖安装升级为同一构建层内的整体重试：保留已下载的 Debian 包并补拉失败项，解决 APT 连接重试无法覆盖单包 CDN 500 响应的问题。
+
+### update
+
+- 将本地开发 Compose 的主程序与预测引擎镜像标签从 `dev-0.1.1` 升级为 `dev-0.2.0`，并同步主程序内置版本号，避免部署 v0.2.x 代码时仍显示旧开发版本。
+- 增加预测引擎 Docker 构建安装 Python 依赖时的网络超时与重试配置，避免 SciPy、XGBoost 等大型依赖在慢速网络下读取超时导致构建中断。
 
 ### fix(shadow) — 交割单上传无反馈
 

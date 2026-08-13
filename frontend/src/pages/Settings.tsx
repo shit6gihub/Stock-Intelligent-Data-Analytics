@@ -156,17 +156,13 @@ const emptyModelForm: ModelForm = { name: '', service_id: null, model: '' }
 const emptyChannelForm: ChannelForm = { name: '', type: 'telegram', config: {} }
 
 // 敏感设置 key:值不回显(后端已掩码为 ********),输入框用密码态,掩码值不参与编辑
-const SECRET_SETTING_KEYS = new Set(['wudao_mcp_token', 'zhitu_token', 'forecast_llm_api_key', 'tdx_api_key'])
+const SECRET_SETTING_KEYS = new Set(['wudao_mcp_token', 'zhitu_token', 'tdx_api_key'])
 const SECRET_MASK = '********'
-// 预测引擎 LLM 配置 key(接口 Key 区块展示,base_url/model 非敏感可回显)
-const FORECAST_LLM_KEYS = new Set(['forecast_llm_base_url', 'forecast_llm_model', 'forecast_llm_api_key'])
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Setting[]>([])
   const [keyDataSources, setKeyDataSources] = useState<KeyDataSource[]>([])
   const [services, setServices] = useState<AIService[]>([])
-  const [forecastModels, setForecastModels] = useState<any[]>([])
-  const [forecastModelsLoading, setForecastModelsLoading] = useState(false)
   const [channels, setChannels] = useState<NotifyChannel[]>([])
   const [version, setVersion] = useState<string>('')
   const [loading, setLoading] = useState(true)
@@ -309,7 +305,6 @@ export default function SettingsPage() {
       setHealth(healthData)
       setSceneBindings(sceneBindingsData)
       setSceneBindingsLoading(false)
-      loadForecastModels()
       // 同花顺登录态(静默加载,失败不阻塞)
       try {
         const ths = await fetchAPI<any>('/ths/session')
@@ -319,19 +314,6 @@ export default function SettingsPage() {
       console.error(e)
     } finally {
       setLoading(false)
-    }
-  }
-
-  // 加载预测引擎模型清单
-  const loadForecastModels = async () => {
-    setForecastModelsLoading(true)
-    try {
-      const d = await fetchAPI<{ models: any[] }>('/forecast/models')
-      setForecastModels(d?.models || [])
-    } catch {
-      setForecastModels([])
-    } finally {
-      setForecastModelsLoading(false)
     }
   }
 
@@ -1102,40 +1084,6 @@ export default function SettingsPage() {
               </div>
             )}
           </div>
-
-          {/* 预测引擎模型清单(全部模型一览,防止"不知道哪个模块用什么模型") */}
-          <div className="mt-5 pt-4 border-t">
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <h4 className="text-[12px] font-semibold text-foreground">预测引擎模型清单</h4>
-                <p className="text-[11px] text-muted-foreground mt-0.5">系统所有模型使用点一览，改配置在对应位置</p>
-              </div>
-              <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={loadForecastModels}>
-                <RefreshCw className={`w-3 h-3 mr-1 ${forecastModelsLoading ? 'animate-spin' : ''}`} /> 刷新
-              </Button>
-            </div>
-            {forecastModels.length === 0 ? (
-              <p className="text-[11px] text-muted-foreground text-center py-3">
-                {forecastModelsLoading ? '加载中...' : '预测引擎未运行，无法获取模型清单'}
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {forecastModels.map((m, i) => (
-                  <div key={i} className="rounded-lg bg-accent/30 p-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[12px] font-medium">{m.name}</span>
-                      <span className="text-[10px] text-muted-foreground">{m.module}</span>
-                    </div>
-                    <div className="text-[11px] font-mono text-foreground/80 mt-0.5 truncate">{m.model_id}</div>
-                    <div className="text-[10px] text-muted-foreground mt-0.5">
-                      📍 {m.location} · ⚙️ {m.configurable}
-                      {m.api_key_set === false && m.name === 'LLM情绪打分' && ' · ⚠️ 未配置key'}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
         </section>
 
         {/* Notify Channel Section */}
@@ -1330,52 +1278,6 @@ export default function SettingsPage() {
                         ? '通达信问小达 MCP Token（自然语言投研/选股数据源）'
                         : '智兔数据接口 Token（分红/股东数据，200次/天）'}。读取优先级：设置页 &gt; 环境变量 &gt; 内置默认。
                     </p>
-                  </div>
-                )
-              })}
-
-              {/* 预测引擎 LLM 配置组 */}
-              <div className="text-[11px] font-medium text-muted-foreground pt-2">预测引擎 LLM（情绪打分）</div>
-              <p className="text-[10px] text-muted-foreground -mt-1">Docker Compose 模式下保存后自动生效，无需执行主机脚本或重启预测引擎。</p>
-              {settings.filter(s => FORECAST_LLM_KEYS.has(s.key)).map(setting => {
-                const isChanged = setting.key in edited
-                const isSecret = setting.key === 'forecast_llm_api_key'
-                return (
-                  <div key={setting.key} className="rounded-xl bg-accent/30 p-3.5">
-                    <Label className="text-[12px]">{setting.description || setting.key}</Label>
-                    <div className="flex items-center gap-2.5 mt-2">
-                      <div className="flex-1 relative">
-                        <Input
-                          type={isSecret ? 'password' : 'text'}
-                          value={isSecret && !isChanged ? '' : (isChanged ? (edited[setting.key] ?? '') : setting.value)}
-                          onChange={e => setEdited({ ...edited, [setting.key]: e.target.value })}
-                          className={`font-mono ${isChanged ? 'ring-2 ring-primary/20 border-primary/30' : ''}`}
-                          placeholder={isSecret
-                            ? (setting.value === SECRET_MASK ? '已配置（输入新 Key 可替换，留空不变）' : '未配置，输入 API Key')
-                            : (setting.value || setting.key)}
-                        />
-                        {isSecret && !isChanged && setting.value === SECRET_MASK && (
-                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-emerald-500">已配置</span>
-                        )}
-                      </div>
-                      <button
-                        onClick={() => handleSave(setting.key)}
-                        disabled={!isChanged || saving === setting.key}
-                        className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all ${
-                          saved === setting.key
-                            ? 'bg-emerald-500/10 text-emerald-600'
-                            : isChanged
-                              ? 'bg-primary text-white'
-                              : 'text-muted-foreground/30'
-                        }`}
-                      >
-                        {saving === setting.key ? (
-                          <span className="w-4 h-4 border-2 border-current/30 border-t-current rounded-full animate-spin" />
-                        ) : (
-                          <Check className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
                   </div>
                 )
               })}

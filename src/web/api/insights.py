@@ -10,6 +10,7 @@ from src.collectors.kline_collector import KlineCollector
 from src.core.suggestion_pool import get_latest_suggestions
 from src.web.api.chat import (
     _build_stock_context,
+    _client_from_scene_cfg,
     _fetch_realtime_context,
     _fetch_technical_context,
     _get_ai_client,
@@ -251,14 +252,14 @@ async def add_position_eval(req: AddPositionEvalRequest, db: Session = Depends(g
 
     try:
         client = _get_ai_client(db, req.model_id)
-        # 2026-08-13 统一 LLM 配置中心: insights 场景绑定覆盖模型(无绑定回落原模型)
+        # 2026-08-13 统一 LLM 配置中心: insights 场景绑定覆盖(client 整体重建,
+        # 跨服务商绑定必须连 base_url/api_key 一起换, 否则 404 model not found)
         try:
             from src.core.ai_client import get_model_for_scene
-            from src.agents.base import _coerce_bound_model
-            m = get_model_for_scene(db, "insights")
-            if m:
-                bound = _coerce_bound_model(m)
-                client.model = bound.get("model", client.model)
+
+            scene_client = _client_from_scene_cfg(db, get_model_for_scene(db, "insights"))
+            if scene_client is not None:
+                client = scene_client
         except Exception:
             pass
         content = await client.chat(system_prompt, user_content, temperature=0.3)
@@ -349,14 +350,13 @@ async def announcement_eval(req: AnnouncementEvalRequest, db: Session = Depends(
     user_content = f"标的 {name}({market}:{req.symbol}) 近期公告:\n{listing}"
     try:
         client = _get_ai_client(db, req.model_id)
-        # 2026-08-13 统一 LLM 配置中心: insights 场景绑定覆盖模型(无绑定回落原模型)
+        # 2026-08-13 统一 LLM 配置中心: insights 场景绑定覆盖(client 整体重建)
         try:
             from src.core.ai_client import get_model_for_scene
-            from src.agents.base import _coerce_bound_model
-            m = get_model_for_scene(db, "insights")
-            if m:
-                bound = _coerce_bound_model(m)
-                client.model = bound.get("model", client.model)
+
+            scene_client = _client_from_scene_cfg(db, get_model_for_scene(db, "insights"))
+            if scene_client is not None:
+                client = scene_client
         except Exception:
             pass
         content = await client.chat(

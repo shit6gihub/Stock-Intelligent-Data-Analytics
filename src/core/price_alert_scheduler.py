@@ -12,6 +12,11 @@ from src.core.price_alert_engine import ENGINE
 logger = logging.getLogger(__name__)
 
 
+def _scan_once_in_worker() -> dict:
+    """在线程内运行完整扫描，避免同步 SQLite 操作阻塞 Web 事件循环。"""
+    return asyncio.run(ENGINE.scan_once())
+
+
 class PriceAlertScheduler:
     def __init__(self, timezone: str = "UTC", interval_seconds: int = 60):
         self.scheduler = AsyncIOScheduler(timezone=timezone)
@@ -24,7 +29,7 @@ class PriceAlertScheduler:
             return
         self._running = True
         try:
-            result = await ENGINE.scan_once()
+            result = await asyncio.to_thread(_scan_once_in_worker)
             triggered = result.get("triggered", 0)
             # 实际触发了告警才是业务事件,否则只是心跳。
             level = logging.INFO if triggered else logging.DEBUG

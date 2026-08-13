@@ -7,6 +7,9 @@ ARG PYTHON_IMAGE=python:3.11-slim
 # ===== Stage 1: 前端构建 =====
 FROM ${NODE_IMAGE} AS frontend-builder
 
+# 版本号（构建时传入,注入 sw.js 缓存名,发版后浏览器自动清旧缓存防白屏）
+ARG VERSION=dev
+
 WORKDIR /app/frontend
 
 # 安装 pnpm
@@ -22,8 +25,9 @@ COPY frontend/packages/biz-ui/package.json ./packages/biz-ui/package.json
 RUN pnpm install --frozen-lockfile
 
 # 复制源码并构建(直接 vite build, 跳过 tsc 严格类型检查以兼容 fork 源码既有 TS 警告)
+# 先注入 sw.js 缓存版本号 → 发版后 SW 字节变化, 浏览器自动更新并清旧缓存
 COPY frontend/ ./
-RUN npx vite build
+RUN sed -i "s/__SW_VERSION__/${VERSION}/g" public/sw.js && npx vite build
 
 
 # ===== Stage 2: Python 运行环境 =====
@@ -38,7 +42,11 @@ WORKDIR /app
 # - tzdata: 时区数据（zoneinfo 模块需要）
 # - 中文字体（K线截图需要）
 # - Playwright Chromium 依赖的系统库
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN set -eux; \
+    apt-get -o Acquire::Retries=8 -o Acquire::http::Timeout=120 -o Acquire::http::Pipeline-Depth=0 update; \
+    install_succeeded=0; \
+    for install_attempt in 1 2 3 4 5; do \
+      if apt-get -o Acquire::Retries=8 -o Acquire::http::Timeout=120 -o Acquire::http::Pipeline-Depth=0 install -y --no-install-recommends \
     tzdata \
     # git: requirements.txt 中含 git+https 直链(tradingagents)
     git \
@@ -78,9 +86,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxshmfence1 \
     libegl1 \
     libfontconfig1 \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/* \
-    && fc-cache -fv
+        libglib2.0-0; then \
+        install_succeeded=1; \
+        break; \
+      fi; \
+      echo "APT 安装第 ${install_attempt} 次失败，保留已下载包并重试"; \
+      rm -rf /var/cache/apt/archives/partial/*; \
+      apt-get -o Acquire::Retries=8 -o Acquire::http::Timeout=120 -o Acquire::http::Pipeline-Depth=0 update; \
+    done; \
+    test "$install_succeeded" = 1; \
+    rm -rf /var/lib/apt/lists/*; \
+    fc-cache -fv
 
 # 复制依赖文件
 COPY requirements.txt ./
@@ -89,7 +105,8 @@ COPY requirements.txt ./
 COPY packages/ ./packages/
 
 # 安装 Python 依赖
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --timeout 300 --retries 8 -r requirements.txt && \
+    python -c "from sqlalchemy import create_engine; from marketdata.vendors.tencent_panel import fetch_price_distribution; assert create_engine and fetch_price_distribution"
 
 # 注意: Playwright 浏览器将在首次启动时自动安装到 data 目录
 # 这样可以减小镜像体积，并支持跨版本持久化
@@ -100,8 +117,8 @@ COPY server.py ./
 COPY prompts/ ./prompts/
 COPY strategies/ ./strategies/
 
-# 写入版本号
-RUN echo "${VERSION}" > VERSION
+# 写入版本号，并确保构建异常时不会产出空版本文件
+RUN test -n "${VERSION}" && printf '%s\n' "${VERSION}" > VERSION && test -s VERSION
 
 # 从前端构建阶段复制静态文件
 COPY --from=frontend-builder /app/frontend/dist ./static/
