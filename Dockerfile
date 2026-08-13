@@ -7,6 +7,9 @@ ARG PYTHON_IMAGE=python:3.11-slim
 # ===== Stage 1: 前端构建 =====
 FROM ${NODE_IMAGE} AS frontend-builder
 
+# 版本号（构建时传入,注入 sw.js 缓存名,发版后浏览器自动清旧缓存防白屏）
+ARG VERSION=dev
+
 WORKDIR /app/frontend
 
 # 安装 pnpm
@@ -22,8 +25,9 @@ COPY frontend/packages/biz-ui/package.json ./packages/biz-ui/package.json
 RUN pnpm install --frozen-lockfile
 
 # 复制源码并构建(直接 vite build, 跳过 tsc 严格类型检查以兼容 fork 源码既有 TS 警告)
+# 先注入 sw.js 缓存版本号 → 发版后 SW 字节变化, 浏览器自动更新并清旧缓存
 COPY frontend/ ./
-RUN npx vite build
+RUN sed -i "s/__SW_VERSION__/${VERSION}/g" public/sw.js && npx vite build
 
 
 # ===== Stage 2: Python 运行环境 =====

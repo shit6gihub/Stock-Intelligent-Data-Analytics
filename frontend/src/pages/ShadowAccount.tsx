@@ -24,6 +24,12 @@ function fmt(v: any, suffix = ''): string {
   return String(v) + suffix
 }
 
+// rules 元素可能是 ShadowRule 对象(含 human_text)或历史字符串, 统一取人话文本。
+function ruleLabel(r: any): string {
+  if (typeof r === 'string') return r
+  return r?.human_text || r?.rule_id || '--'
+}
+
 function StatCard({ icon: Icon, label, value, sub, color }: { icon: any; label: string; value: string; sub?: string; color: string }) {
   return (
     <div className="rounded-xl bg-accent/30 p-3.5">
@@ -198,8 +204,8 @@ export default function ShadowAccountPage() {
             </div>
             {myProfile.rules && myProfile.rules.length > 0 && (
               <div className="flex flex-wrap gap-2">
-                {myProfile.rules.map((r: string) => (
-                  <span key={r} className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-1 text-[11px] text-primary">{r}</span>
+                {myProfile.rules.map((r: any, i: number) => (
+                  <span key={typeof r === 'string' ? r : (r?.rule_id || i)} className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-1 text-[11px] text-primary">{ruleLabel(r)}</span>
                 ))}
               </div>
             )}
@@ -265,8 +271,8 @@ export default function ShadowAccountPage() {
               </div>
               {result.profile.rules && result.profile.rules.length > 0 && (
                 <div className="flex flex-wrap gap-2">
-                  {result.profile.rules.map((r: string) => (
-                    <span key={r} className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-1 text-[11px] text-primary">{r}</span>
+                  {result.profile.rules.map((r: any, i: number) => (
+                    <span key={typeof r === 'string' ? r : (r?.rule_id || i)} className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-1 text-[11px] text-primary">{ruleLabel(r)}</span>
                   ))}
                 </div>
               )}

@@ -62,15 +62,36 @@ def apply_scene_binding(context, scene: str, system_prompt: str) -> str:
             from src.core.ai_client import build_system_prompt, get_model_for_scene
         except (ImportError, AttributeError):
             return system_prompt
-        # 1) 场景模型绑定: 有绑定 → 覆盖 ai_client.model
+        # 1) 场景模型绑定: 有绑定 → 整体重建 ai_client(base_url+api_key+model 一起换,
+        #    只改 model 字符串会导致跨服务商绑定后仍发往原服务商 → 404 model not found)
         try:
-            bound = _coerce_bound_model(get_model_for_scene(db, scene))
-            if bound:
-                logger.info(
-                    f"Agent scene={scene} 模型绑定: "
-                    f"{getattr(context.ai_client, 'model', '')} -> {bound}"
+            bound_model = get_model_for_scene(db, scene)
+            if bound_model is not None and getattr(context, "ai_client", None) is not None:
+                from src.web.models import AIService
+
+                service = (
+                    db.query(AIService)
+                    .filter(AIService.id == bound_model.service_id)
+                    .first()
                 )
-                context.ai_client.model = bound
+                if service is not None:
+                    old = context.ai_client
+                    old_label = f"{getattr(old, 'base_url', '')}/{getattr(old, 'model', '')}"
+                    from src.core.ai_client import AIClient
+
+                    new_client = AIClient(
+                        base_url=service.base_url,
+                        api_key=service.api_key,
+                        model=bound_model.model,
+                    )
+                    new_client.total_tokens_used = getattr(
+                        old, "total_tokens_used", 0
+                    )
+                    context.ai_client = new_client
+                    logger.info(
+                        f"Agent scene={scene} 模型绑定: {old_label} "
+                        f"-> {service.base_url}/{bound_model.model}"
+                    )
         except Exception as e:
             logger.debug(f"场景模型绑定失败 scene={scene}: {e}")
         # 2) 系统提示词组装(画像注入; user 可空)
