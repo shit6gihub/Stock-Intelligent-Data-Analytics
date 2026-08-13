@@ -91,9 +91,6 @@ agent_configs 里 premarket_outlook/daily_report 绑定商汤 deepseek-v4-flash,
 ### 实测
 - 前端 build 8.4s
 
-# Changelog
->>>>>>> 889209babb728709085378c8c6a1d1cacf9bd22e
-
 ## 2026-08-13 (v0.2.21)
 
 ### feat(shadow) — 影子账户"我的画像"区
