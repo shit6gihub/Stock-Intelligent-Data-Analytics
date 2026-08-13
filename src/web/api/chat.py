@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sqlite3
 from datetime import datetime, timezone
 
@@ -49,7 +50,8 @@ SYSTEM_PROMPT = """你是 PanWatch 的 AI 投资助手。
 - 用中文回答
 - 保持简洁，避免冗余
 - 用户问「新闻 / 资讯 / 热点 / 今天有什么消息」类问题时，必须调用 get_market_news 工具获取实时资讯热榜与每日简报，再基于返回内容回答；严禁在不调用工具的情况下凭记忆编造新闻、题材或资金流向。若工具返回为空，如实说明「暂无实时资讯数据」并建议盘后重试。
-- 工具选择指引(2026-08-11): 用户问「主力意图/主力在吸筹还是派发/主力想干什么」时, 必须调用 get_main_intent(逐笔口径,含筹码/参与度);「资金流向/主力净流入多少/超大单大单」时调用 get_capital_flow(东财四档口径)。两工具口径不同, 主力意图判断一律以 get_main_intent 为准, get_capital_flow 仅作资金面参考; 若两者方向冲突, 说明口径差异(逐笔vs东财)并优先采信 get_main_intent。严禁用 get_capital_flow 的数据直接下「主力派发/吸筹」结论。"""
+- 工具选择指引(2026-08-11): 用户问「主力意图/主力在吸筹还是派发/主力想干什么」时, 必须调用 get_main_intent(逐笔口径,含筹码/参与度);「资金流向/主力净流入多少/超大单大单」时调用 get_capital_flow(东财四档口径)。两工具口径不同, 主力意图判断一律以 get_main_intent 为准, get_capital_flow 仅作资金面参考; 若两者方向冲突, 说明口径差异(逐笔vs东财)并优先采信 get_main_intent。严禁用 get_capital_flow 的数据直接下「主力派发/吸筹」结论。
+- 口径标注规则(2026-08-13): 工具返回文本开头自带数据源口径标注(get_main_intent 为「腾讯逐笔·主力意图口径」, get_capital_flow 为「东财四档·资金流向口径」)。回答涉及「主力净流入/净流出」等具体数字时, 必须说明所用口径(逐笔 or 东财四档), 不得省略; 若两个口径数字不同, 要指出差异原因(统计方式不同: 逐笔主动买卖盘 vs 按大中小单四档归类), 再给结论。"""
 
 MAX_HISTORY_MESSAGES = 20
 MAX_TOOL_ROUNDS = 5
@@ -560,7 +562,8 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
             try:
                 from src.agents.intraday_monitor import _main_intent_summary
                 result = _main_intent_summary(symbol)
-                return result or f"未能获取 {symbol} 的主力意图数据。"
+                # 数据源口径标注(腾讯逐笔·主力意图), 用户可见, 避免与东财四档混淆
+                return f"[数据源: 腾讯逐笔·主力意图口径]\n{result}" if result else f"未能获取 {symbol} 的主力意图数据。"
             except Exception as e:
                 return f"主力意图获取失败: {str(e)[:100]}"
         elif name == "get_rally_analysis":
@@ -587,7 +590,8 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
             symbol = args.get("symbol", "")
             market = args.get("market", "CN")
             result = await _fetch_capital_flow_context(symbol, market)
-            return result or f"未能获取 {market}:{symbol} 的资金流向数据。"
+            # 数据源口径标注(东财四档·资金流向), 与 get_main_intent(逐笔) 区分
+            return f"[数据源: 东财四档·资金流向口径]\n{result}" if result else f"未能获取 {market}:{symbol} 的资金流向数据。"
         elif name == "tdx_wenda":
             question = (args.get("question") or "").strip()
             if not question:
@@ -725,6 +729,38 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
         return f"工具执行出错: {e}"
 
 
+def _summarize_old_messages(msgs: list) -> str:
+    """把旧消息压缩成摘要(规则式, 不调 LLM 省成本)。
+
+    策略: 只取 assistant 消息中含结论性关键词(结论/建议/综合/总体/因此/所以)
+    的句子, 无结论句则取该消息最后一句; user 消息与空内容直接丢弃。
+    返回「【早期对话摘要】...」文本; 无可用内容时返回空串。
+    """
+    keywords = ("结论", "建议", "综合", "总体", "因此", "所以")
+    lines: list[str] = []
+    for m in msgs:
+        if m.role != "assistant" or not m.content:
+            continue
+        content = m.content.strip()
+        # 按句号/感叹号/问号/换行切句
+        sentences = [s.strip() for s in re.split(r"[。！？!?；;\n]", content) if s.strip()]
+        if not sentences:
+            continue
+        picked = None
+        for s in sentences:
+            if any(kw in s for kw in keywords):
+                picked = s
+                break
+        if picked is None:
+            picked = sentences[-1]  # 无结论句 → 取最后一句兜底
+        if len(picked) > 60:
+            picked = picked[:60] + "…"
+        lines.append(f"- {picked}")
+    if not lines:
+        return ""
+    return "【早期对话摘要】(以下为较早对话的结论要点, 已压缩保留):\n" + "\n".join(lines)
+
+
 async def _build_ai_messages(db: Session, conv: ChatConversation, user: User) -> list[dict]:
     """构建发送给 AI 的消息列表(system + 历史 + 数据上下文)。
 
@@ -754,7 +790,15 @@ async def _build_ai_messages(db: Session, conv: ChatConversation, user: User) ->
         .order_by(ChatMessage.created_at.asc())
         .all()
     )
-    recent = history[-MAX_HISTORY_MESSAGES:] if len(history) > MAX_HISTORY_MESSAGES else history
+    # 上下文摘要滚动(2026-08-13): 超过 MAX_HISTORY_MESSAGES 时, 把最旧的消息压缩成摘要,
+    # 保留最近 MAX_HISTORY_MESSAGES 条完整, 避免早期结论被挤出模型视野
+    summary_block = ""
+    if len(history) > MAX_HISTORY_MESSAGES:
+        old_msgs = history[:-MAX_HISTORY_MESSAGES]
+        summary_block = _summarize_old_messages(old_msgs)
+        recent = history[-MAX_HISTORY_MESSAGES:]
+    else:
+        recent = history
     for m in recent:
         if m.role in ("user", "assistant"):
             messages_for_ai.append({"role": m.role, "content": m.content})
@@ -782,6 +826,10 @@ async def _build_ai_messages(db: Session, conv: ChatConversation, user: User) ->
     if context_parts:
         # 把上下文追加到 system message
         messages_for_ai[0]["content"] += "\n\n--- 当前数据 ---\n" + "\n\n".join(context_parts)
+
+    # 早期对话摘要注入 system prompt 末尾(如有压缩)
+    if summary_block:
+        messages_for_ai[0]["content"] += "\n\n" + summary_block
 
     return messages_for_ai
 
@@ -1205,16 +1253,95 @@ async def _fetch_auction_context(scene: str, limit: int = 10) -> str:
         return f"集合竞价数据获取失败: {e}"
 
 
+def _latest_unexpired_forecast_symbol(symbol: str = "") -> str:
+    """读取预测库中最新一条未到期预测(target_date >= 今天)的股票代码。
+
+    优先匹配传入的 symbol; 无匹配则取全局最新一条未到期预测。读取失败/无数据返回空串。
+    """
+    db_path = _resolve_forecast_db_path()
+    if not os.path.exists(db_path):
+        return ""
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+        try:
+            cur = conn.cursor()
+            tables = {r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            table = "forecasts" if "forecasts" in tables else ("prediction_runs" if "prediction_runs" in tables else None)
+            if not table:
+                return ""
+            today = datetime.now().date().isoformat()
+            if symbol:
+                row = cur.execute(
+                    f"SELECT symbol FROM {table} WHERE symbol = ? AND target_date >= ? ORDER BY created_at DESC LIMIT 1",
+                    [symbol, today],
+                ).fetchone()
+                if row:
+                    return row[0]
+            row = cur.execute(
+                f"SELECT symbol FROM {table} WHERE target_date >= ? ORDER BY created_at DESC LIMIT 1",
+                [today],
+            ).fetchone()
+            return row[0] if row else ""
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning(f"suggested_questions 读预测库失败: {e}")
+        return ""
+
+
 @router.get("/suggested-questions")
 def suggested_questions(
     symbol: str = Query(..., description="股票代码"),
     market: str = Query("CN", description="市场"),
     db: Session = Depends(get_db),
 ):
-    """根据股票当前状态生成推荐问题（纯模板，不调 AI）。"""
+    """根据股票当前状态动态生成推荐问题（最多5条, 按优先级: 今日机会/系统预测/未读通知/持仓浮亏 → 通用模板兜底, 不调 AI）。"""
     questions: list[str] = []
 
-    # 查最近建议
+    # ① 今日 active 机会候选(entry_candidates, 最新交易日且有信号) → 问机会
+    latest = (
+        db.query(func.max(EntryCandidate.snapshot_date))
+        .filter(EntryCandidate.status == "active")
+        .scalar()
+    )
+    if latest:
+        has_signal = (
+            db.query(EntryCandidate.id)
+            .filter(
+                EntryCandidate.status == "active",
+                EntryCandidate.snapshot_date == latest,
+                EntryCandidate.signal.isnot(None),
+                EntryCandidate.signal != "",
+            )
+            .first()
+        ) is not None
+        if has_signal:
+            questions.append("今天系统发现了什么机会？")
+
+    # ② 未到期系统预测(预测库 target_date >= 今天) → 问预测
+    forecast_symbol = _latest_unexpired_forecast_symbol(symbol)
+    if forecast_symbol:
+        questions.append(f"系统预测 {forecast_symbol} 多少？和我的判断比呢？")
+
+    # ③ 未读通知 → 问通知
+    unread = db.query(Notification.id).filter(Notification.read_at.is_(None)).first()
+    if unread:
+        questions.append("今天的通知里有什么需要我关注的？")
+
+    # ④ 持仓浮亏(简单判断: 模拟盘 open 且 unrealized_pnl < 0, 取浮亏最大的一只) → 问调仓
+    losing = (
+        db.query(PaperTradingPosition)
+        .filter(
+            PaperTradingPosition.status == "open",
+            PaperTradingPosition.unrealized_pnl < 0,
+        )
+        .order_by(PaperTradingPosition.unrealized_pnl.asc())
+        .first()
+    )
+    if losing:
+        questions.append(f"我的 {losing.stock_symbol} 持仓要调仓吗？")
+
+    # ⑤ 兜底: 查最近建议(保持原有逻辑)
     latest_suggestion = (
         db.query(StockSuggestion)
         .filter(
@@ -1234,7 +1361,7 @@ def suggested_questions(
         elif action == "alert":
             questions.append("最近的异动提醒是什么情况？需要关注吗？")
 
-    # 查持仓（Position 通过 stock_id 关联 Stock 表）
+    # 兜底: 查持仓（Position 通过 stock_id 关联 Stock 表）
     has_position = (
         db.query(Position)
         .join(Stock, Position.stock_id == Stock.id)
@@ -1246,11 +1373,18 @@ def suggested_questions(
     else:
         questions.append("现在适合建仓吗？")
 
-    # 通用问题
+    # 通用问题(保持原有逻辑)
     questions.append("分析近期走势和关键支撑压力位")
     questions.append("有什么值得关注的消息或事件？")
 
-    return {"questions": questions[:5]}
+    # 去重(优先保留靠前的动态问题) + 截断 5 条
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for q in questions:
+        if q not in seen:
+            seen.add(q)
+            deduped.append(q)
+    return {"questions": deduped[:5]}
 
 
 @router.post("/conversations")

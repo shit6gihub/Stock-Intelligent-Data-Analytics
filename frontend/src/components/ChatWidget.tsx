@@ -1,14 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { MessageCircle, X, Plus, Trash2, Send, ChevronLeft, XCircle, Settings2, Check, GripHorizontal } from 'lucide-react'
+import { MessageCircle, X, Plus, Trash2, Send, ChevronLeft, XCircle, Settings2, Check, GripHorizontal, Newspaper } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { chatApi, type ChatConversation, type ChatMessage } from '@panwatch/api'
+import { chatApi, fetchAPI, type ChatConversation, type ChatMessage } from '@panwatch/api'
 
 interface StockContext {
   symbol: string
   market: string
   stockName: string
   pageContext?: string
+}
+
+/** 今日要闻数据源: /api/notifications 返回的单条通知(取 title + body 展示) */
+interface ChatNewsItem {
+  id: number
+  title: string
+  body?: string
+  category?: string
+  level?: string
+  link?: string
+  created_at?: string
 }
 
 type DesktopChatSize = 'compact' | 'standard' | 'large' | 'wide'
@@ -99,6 +110,18 @@ function clampCoordinate(value: number, minimum: number, maximum: number) {
   return Math.min(Math.max(value, minimum), maximum)
 }
 
+/**
+ * 判断通知是否发生在 24 小时内(后端 created_at 为无时区 UTC, 补 Z 解析)。
+ * 用于"今日要闻"过滤, 避免把历史遗留未读通知当成今日要闻展示。
+ */
+function isFreshNotification(createdAt?: string): boolean {
+  if (!createdAt) return false
+  const raw = /[zZ]$|[+-]\d{2}:\d{2}$/.test(createdAt) ? createdAt : `${createdAt}Z`
+  const time = new Date(raw).getTime()
+  if (!Number.isFinite(time)) return false
+  return Date.now() - time < 24 * 60 * 60 * 1000
+}
+
 export default function ChatWidget() {
   const [open, setOpen] = useState(false)
   const [conversations, setConversations] = useState<ChatConversation[]>([])
@@ -115,6 +138,10 @@ export default function ChatWidget() {
   const [desktopDragPosition, setDesktopDragPosition] = useState<DesktopChatCoordinates | null>(readDesktopChatFreePosition)
   const [dragging, setDragging] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // 今日要闻横条状态: newsItems=数据 / newsLoaded=是否已加载(避免闪烁) / newsDismissed=是否已收起
+  const [newsItems, setNewsItems] = useState<ChatNewsItem[]>([])
+  const [newsLoaded, setNewsLoaded] = useState(false)
+  const [newsDismissed, setNewsDismissed] = useState(false)
   const endRef = useRef<HTMLDivElement>(null)
   const settingsRef = useRef<HTMLDivElement>(null)
   const chatWindowRef = useRef<HTMLDivElement>(null)
@@ -155,6 +182,7 @@ export default function ChatWidget() {
       setOpen(true)
       setStockContext(detail)
       setSuggestedQuestions([])
+      setNewsDismissed(false)
 
       // Create a new conversation bound to this stock, with page context
       chatApi.createConversation({
@@ -181,6 +209,30 @@ export default function ChatWidget() {
       loadConversations()
     }
   }, [open, loadConversations])
+
+  // 今日要闻: 对话打开且尚无消息时, 拉取系统最近未读通知(24 小时内, 最多 3 条); 无数据/失败则隐藏
+  useEffect(() => {
+    if (!open || view !== 'chat' || messages.length > 0 || newsDismissed) return
+    let cancelled = false
+    setNewsLoaded(false)
+    fetchAPI<{ items: ChatNewsItem[] }>('/notifications?limit=10&only_unread=true', { cacheMode: 'reload' })
+      .then((res) => {
+        if (cancelled) return
+        const fresh = (res?.items || [])
+          .filter((item) => item?.title && isFreshNotification(item.created_at))
+          .slice(0, 3)
+        setNewsItems(fresh)
+        setNewsLoaded(true)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setNewsItems([])
+        setNewsLoaded(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, view, messages.length, newsDismissed])
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -329,6 +381,7 @@ export default function ChatWidget() {
       setView('chat')
       setStockContext(null)
       setSuggestedQuestions([])
+      setNewsDismissed(false)
       setConversations((prev) => [conv, ...prev])
     } catch {
       // ignore
@@ -433,6 +486,17 @@ export default function ChatWidget() {
       setStreamStage(null)
     }
   }, [input, sending, activeConvId, stockContext])
+
+  // 点击今日要闻: 把该条内容作为用户消息自动提问, 并收起横条; 顺手标记已读避免下次重复出现
+  const handleNewsClick = useCallback((item: ChatNewsItem) => {
+    setNewsDismissed(true)
+    setNewsItems((prev) => prev.filter((n) => n.id !== item.id))
+    fetchAPI(`/notifications/${item.id}/read`, { method: 'POST' }).catch(() => {
+      // 标记已读失败不影响提问
+    })
+    const question = `系统通知「${item.title}」${item.body ? `：${item.body}` : ''}。这条提醒具体什么情况？需要关注吗？`
+    handleSend(question)
+  }, [handleSend])
 
   const desktopWindowPositionClasses = desktopDragPosition
     ? DESKTOP_FREE_POSITION_CLASSES
@@ -570,6 +634,40 @@ export default function ChatWidget() {
           </button>
         </div>
       </div>
+
+      {/* 今日要闻横条: 对话打开且无消息时, 顶部展示系统最近通知/异动(最多3条); 无数据隐藏; 点击即发送提问 */}
+      {view === 'chat' && newsLoaded && !newsDismissed && messages.length === 0 && !sending && newsItems.length > 0 && (
+        <div className="shrink-0 px-3 pt-2 pb-2 border-b border-border/30 bg-accent/10">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground">
+              <Newspaper className="h-3.5 w-3.5 text-primary" />
+              今日要闻
+            </span>
+            <button
+              onClick={() => setNewsDismissed(true)}
+              className="text-[10px] text-muted-foreground/70 transition-colors hover:text-muted-foreground"
+              title="收起今日要闻"
+            >
+              收起
+            </button>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            {newsItems.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => handleNewsClick(item)}
+                disabled={sending}
+                className="rounded-lg border border-border/50 bg-background/70 px-2.5 py-1.5 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
+              >
+                <div className="truncate text-[12px] text-foreground">{item.title}</div>
+                {item.body && (
+                  <div className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">{item.body}</div>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* List view */}
       {view === 'list' && (
