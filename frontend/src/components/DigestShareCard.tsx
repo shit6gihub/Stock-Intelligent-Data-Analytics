@@ -57,6 +57,8 @@ export default function DigestShareCard({ open, onClose, date, items }: DigestSh
       </div>
       <div style={{ marginTop: 6, fontSize: 13, color: '#64748b' }}>
         持仓异动 / 机会 / 风险提醒 · AI 为你梳理的今日要点
+        {/* 反AI模板⑤: 数字标注真实来源(AI 仅策展文本,不产出价格),防既成事实歧义 */}
+        <span style={{ marginLeft: 8, fontSize: 11, color: '#94a3b8' }}>涨跌幅为当日实际行情</span>
       </div>
 
       {/* 要点列表 */}

@@ -103,7 +103,19 @@
     @apply bg-card rounded-xl border border-border/60 shadow-[0_1px_0_hsl(var(--border)/0.35)];
   }
   .card-hover {
-    @apply bg-card rounded-xl border border-border/60 hover:border-primary/30 hover:shadow-[0_10px_30px_-26px_hsl(var(--primary)/0.55)] transition-[border-color,box-shadow];
+    @apply bg-card rounded-xl border border-border/60 transition-[background-color,border-color,box-shadow];
+  }
+  /* 反AI模板④: hover 层级 = 表面亮度抬升 + 中性边框变化,去掉 primary 彩色光晕。
+     亮色: 纸面微提白 + 轻中性阴影(无彩色);暗色: 背景提亮一档 + 边框中性提亮,不用阴影。 */
+  .card-hover:hover {
+    background-color: hsl(215 25% 100%); /* 亮色: 比 --card(99%) 提亮一档的纸面白 */
+    border-color: hsl(var(--border));
+    box-shadow: 0 1px 0 hsl(var(--border) / 0.4), 0 4px 14px -6px hsl(215 15% 40% / 0.16); /* 轻中性阴影,无 primary 色 */
+  }
+  .dark .card-hover:hover {
+    background-color: hsl(215 20% 13.5%); /* 暗色: 表面亮度抬升(比 --card 的 10% 亮一档) */
+    border-color: hsl(215 15% 24%);       /* 1px 边框中性提亮 */
+    box-shadow: none;                     /* 暗色层级靠亮度,不用阴影 */
   }
   .card-subtle {
     @apply rounded-xl border border-border/40 bg-accent/20;
@@ -117,11 +129,6 @@
   .input-field {
     @apply w-full h-10 px-3 rounded-lg border border-border bg-background text-[13px] placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors;
   }
-}
-
-/* Dark mode adjustments */
-.dark .card-hover:hover {
-  border-color: hsl(var(--primary) / 0.4);
 }
 
 /* Scrollbar (opt-in via className="scrollbar") */

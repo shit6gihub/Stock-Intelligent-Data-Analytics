@@ -644,6 +644,8 @@ export default function ForecastPage() {
             <div className="flex items-center justify-between">
               <span>预测结果：{result.symbol}{result.stock_name ? ` ${result.stock_name}` : ''}</span>
               <span className={`text-lg font-bold ${dirColor(result.direction)}`}>
+                {/* 反AI模板⑤: 预测方向/幅度必须带"模型预测"限定,防既成事实表述(用户幻觉敏感) */}
+                <span className="mr-1.5 align-middle text-xs font-medium text-muted-foreground">模型预测</span>
                 {result.direction === 'up' ? '↑ 看多' : result.direction === 'down' ? '↓ 看空' : '→ 横盘'}
                 {' '}({result.expected_pct > 0 ? '+' : ''}{result.expected_pct}%)
               </span>
@@ -690,9 +692,10 @@ export default function ForecastPage() {
                   </span>
                 </div>
                 <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted-foreground">
-                  <span>目标价：<span className="font-num font-bold text-foreground tabular-nums">{result.recommendation.target_price}</span></span>
+                  {/* 反AI模板⑤: 目标价/预期均为模型输出,标签带"模型"限定 */}
+                  <span>模型目标价：<span className="font-num font-bold text-foreground tabular-nums">{result.recommendation.target_price}</span></span>
                   <span>止损参考：<span className="font-num font-bold text-foreground tabular-nums">{result.recommendation.stop_loss}</span></span>
-                  <span>预期：<span className={`font-num font-bold tabular-nums ${result.expected_pct >= 0 ? 'text-red-500' : 'text-green-500'}`}>{result.expected_pct > 0 ? '+' : ''}{result.expected_pct}%</span></span>
+                  <span>模型预期：<span className={`font-num font-bold tabular-nums ${result.expected_pct >= 0 ? 'text-red-500' : 'text-green-500'}`}>{result.expected_pct > 0 ? '+' : ''}{result.expected_pct}%</span></span>
                   {result.recommendation.risk_note && <span className="text-amber-500">{result.recommendation.risk_note}</span>}
                 </div>
               </div>
@@ -721,7 +724,8 @@ export default function ForecastPage() {
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-sm font-medium">四模型对比</span>
                 <span className={`text-xs font-medium ${dirColor(result.direction)}`}>
-                  加权方向 {result.direction === 'up' ? '↑ 看多' : result.direction === 'down' ? '↓ 看空' : '→ 横盘'} ({result.expected_pct > 0 ? '+' : ''}{result.expected_pct}%)
+                  {/* 反AI模板⑤: 加权方向括号内标"模型预测" */}
+                  模型加权方向 {result.direction === 'up' ? '↑ 看多' : result.direction === 'down' ? '↓ 看空' : '→ 横盘'} (模型预测 {result.expected_pct > 0 ? '+' : ''}{result.expected_pct}%)
                 </span>
               </div>
               {/* 模型权重透明度: 4 模型投票权重。
@@ -937,8 +941,9 @@ export default function ForecastPage() {
                   <th className="text-left">基准日</th>
                   <th className="text-left">目标日</th>
                   <th className="text-right">方向</th>
-                  <th className="text-right">预期</th>
-                  <th className="text-right">目标价</th>
+                  {/* 反AI模板⑤: 表格列头也带"模型"限定,明确历史记录均为模型预测值 */}
+                  <th className="text-right">模型预期</th>
+                  <th className="text-right">模型目标价</th>
                   <th className="text-right">止损</th>
                   <th className="text-left">操作建议</th>
                   <th className="text-left">置信</th>
@@ -989,6 +994,8 @@ export default function ForecastPage() {
             <div className="space-y-3 text-sm">
               <div className={`rounded-lg border px-3 py-2 ${detail.direction === 'up' ? 'border-red-500/30 bg-red-500/5' : detail.direction === 'down' ? 'border-green-500/30 bg-green-500/5' : ''}`}>
                 <div className="font-bold">
+                  {/* 反AI模板⑤: 历史详情弹窗的方向/幅度同样标"模型预测" */}
+                  <span className="mr-1 text-xs font-medium text-muted-foreground">模型预测</span>
                   {detail.direction === 'up' ? '↑ 看多' : detail.direction === 'down' ? '↓ 看空' : '→ 横盘'}
                   {' '}{detail.expected_pct > 0 ? '+' : ''}{detail.expected_pct}%
                 </div>
@@ -1011,7 +1018,7 @@ export default function ForecastPage() {
                   <div className="font-mono font-bold">{detail.last_close}</div>
                 </div>
                 <div className="bg-muted/40 rounded px-2 py-1.5">
-                  <div className="text-muted-foreground">目标价</div>
+                  <div className="text-muted-foreground">模型目标价</div>
                   <div className="font-mono font-bold">{detail.target_price ?? '-'}</div>
                 </div>
                 <div className="bg-muted/40 rounded px-2 py-1.5">
