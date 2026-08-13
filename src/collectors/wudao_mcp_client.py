@@ -89,14 +89,14 @@ class WudaoMCPClient:
                 "clientInfo": {"name": "panwatch-wudao", "version": "1.0"},
             },
         }
-        r = requests.post(self.url, headers=self._headers, json=payload, timeout=30)
+        r = requests.post(self.url, headers=self._headers, json=payload, timeout=(5, 30))
         r.raise_for_status()
         # notifications/initialized
         requests.post(
             self.url,
             headers=self._headers,
             json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-            timeout=10,
+            timeout=(5, 10),
         )
         self._initialized = True
 
@@ -109,7 +109,7 @@ class WudaoMCPClient:
             "method": "tools/call",
             "params": {"name": name, "arguments": arguments or {}},
         }
-        r = requests.post(self.url, headers=self._headers, json=payload, timeout=60)
+        r = requests.post(self.url, headers=self._headers, json=payload, timeout=(5, 25))
         r.raise_for_status()
         result = r.json()
         content = (result.get("result") or {}).get("content") or []
