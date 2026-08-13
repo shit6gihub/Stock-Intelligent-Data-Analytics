@@ -59,18 +59,30 @@ class ContextMaintenanceScheduler:
                     evaluate_entry_candidate_outcomes,
                     horizons=(1, 3, 5, 10),
                     snapshot_days=45,
-                    limit=500,
+                    limit=5000,
                 )
-            level = logging.INFO if cand_stats.get("evaluated", 0) else logging.DEBUG
+            missing_after = int(cand_stats.get("missing_due_pairs_after", 0))
+            level = (
+                logging.WARNING
+                if missing_after > 0
+                else (logging.INFO if cand_stats.get("evaluated", 0) else logging.DEBUG)
+            )
             logger.log(
                 level,
-                "[上下文维护] 候选后验评估完成: total=%s eligible=%s evaluated=%s skipped_not_due=%s skipped_no_price=%s",
+                "[上下文维护] 候选后验评估完成: total=%s eligible=%s evaluated=%s skipped_not_due=%s skipped_no_price=%s kline_failures=%s 到期未验证缺口=%s",
                 cand_stats.get("total_candidates", 0),
                 cand_stats.get("eligible", 0),
                 cand_stats.get("evaluated", 0),
                 cand_stats.get("skipped_not_due", 0),
                 cand_stats.get("skipped_no_price", 0),
+                cand_stats.get("kline_failures", 0),
+                missing_after,
             )
+            if missing_after > 0:
+                logger.warning(
+                    "[上下文维护] 仍有 %s 个 (active候选,horizon) 到期未验证 —— 下轮自动补验; 持续不降请查 K线数据源",
+                    missing_after,
+                )
             with kline_source("outcome_eval"):
                 strategy_stats = await asyncio.to_thread(
                     evaluate_strategy_outcomes,
@@ -152,7 +164,7 @@ class ContextMaintenanceScheduler:
             evaluate_entry_candidate_outcomes,
             horizons=(1, 3, 5, 10),
             snapshot_days=45,
-            limit=500,
+            limit=5000,
         )
         strategy_eval_task = asyncio.to_thread(
             evaluate_strategy_outcomes,

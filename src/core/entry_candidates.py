@@ -116,6 +116,21 @@ MARKET_SCAN_SEED_SYMBOLS: dict[str, list[str]] = {
     ],
 }
 
+# 自动市场扫描/候选池只跑目标市场: 生产为 A 股(CN)盯盘系统, 用户不做港美股,
+# 港美股不再生成快照与候选(避免白烧 CPU / LLM token)。
+# 注意: discovery 页面 CN/HK/US 三市场手动查询是产品功能, 走 discovery_collector
+# 独立入口, 不受本常量影响。
+MARKET_SCAN_TARGET_MARKETS: tuple[str, ...] = ("CN",)
+
+# 无明确信号的占位文案: 入库时直接过滤, 不占候选池位。
+NO_SIGNAL_MARKERS: frozenset[str] = frozenset({"", "暂无明确信号", "无明确信号"})
+
+
+def _has_real_signal(signal: str | None) -> bool:
+    """判断是否携带明确信号(排除空串与"暂无明确信号"占位)。"""
+    s = (signal or "").strip()
+    return bool(s) and s not in NO_SIGNAL_MARKERS
+
 
 def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
@@ -982,7 +997,7 @@ def _load_market_scan_inputs(limit_per_market: int = 60) -> dict[str, dict]:
     safe_limit = max(20, int(limit_per_market))
     min_required = min(max(12, int(safe_limit * 0.55)), safe_limit)
 
-    for market in ("CN", "HK", "US"):
+    for market in MARKET_SCAN_TARGET_MARKETS:
         try:
             turnover = _run_async(
                 collector.fetch_hot_stocks(
@@ -1103,7 +1118,7 @@ def _load_market_scan_inputs(limit_per_market: int = 60) -> dict[str, dict]:
                 )
 
     # Final per-market cap and stable ordering.
-    for market in ("CN", "HK", "US"):
+    for market in MARKET_SCAN_TARGET_MARKETS:
         keys = [k for k in result.keys() if k.startswith(f"{market}:")]
         if len(keys) <= safe_limit:
             continue
@@ -1306,8 +1321,16 @@ def refresh_entry_candidates(
             )
         input_map[key] = seed
 
+    # 只保留目标市场(CN)的输入: 港美股不再生成候选(discovery 手动查询不受影响)。
+    # 用户自选 100% CN, watchlist 建议里即使出现 HK/US 也不进候选池。
+    input_map = {
+        k: v
+        for k, v in input_map.items()
+        if k.split(":", 1)[0].strip().upper() in MARKET_SCAN_TARGET_MARKETS
+    }
+
     if not input_map:
-        return {"snapshot_date": snapshot, "count": 0, "items": []}
+        return {"snapshot_date": snapshot, "count": 0, "items": [], "filtered": 0}
 
     key_set = set(input_map.keys())
     by_market: dict[MarketCode, list[str]] = {}
@@ -1374,6 +1397,7 @@ def refresh_entry_candidates(
 
     db = SessionLocal()
     items: list[dict] = []
+    filtered_count = 0
     try:
         db.query(EntryCandidate).filter(
             EntryCandidate.snapshot_date == snapshot
@@ -1479,6 +1503,13 @@ def refresh_entry_candidates(
             if action in ("buy", "add") and quality >= 90 and score >= threshold:
                 status = "active"
 
+            # 精选池: 只落库 active 且有明确信号的记录。无明确信号(空/"暂无明确信号")
+            # 或未达 active 门槛的观望占位一律不落库, 避免稀释真信号。
+            # (entry_candidate_outcomes 只评估 active 候选, 关联不受影响)
+            if status != "active" or not _has_real_signal(signal):
+                filtered_count += 1
+                continue
+
             row = EntryCandidate(
                 stock_symbol=symbol,
                 stock_market=market,
@@ -1547,7 +1578,12 @@ def refresh_entry_candidates(
             x.get("stock_symbol") or "",
         )
     )
-    return {"snapshot_date": snapshot, "count": len(items), "items": items}
+    return {
+        "snapshot_date": snapshot,
+        "count": len(items),
+        "items": items,
+        "filtered": filtered_count,
+    }
 
 
 def list_entry_candidates(
@@ -1691,12 +1727,78 @@ def save_entry_candidate_feedback(
         db.close()
 
 
+def list_entry_candidate_feedback(
+    *,
+    snapshot_date: str = "",
+    market: str = "",
+    limit: int = 200,
+) -> dict:
+    """查询候选反馈（每个快照+标的最多返回最新一条，供前端回显已反馈状态）。"""
+    limit = max(1, min(int(limit or 200), 1000))
+    db = SessionLocal()
+    try:
+        q = db.query(EntryCandidateFeedback)
+        snap = (snapshot_date or "").strip()
+        if snap:
+            q = q.filter(EntryCandidateFeedback.snapshot_date == snap)
+        mkt = (market or "").strip().upper()
+        if mkt:
+            q = q.filter(EntryCandidateFeedback.stock_market == mkt)
+        rows = (
+            q.order_by(
+                EntryCandidateFeedback.created_at.desc(),
+                EntryCandidateFeedback.id.desc(),
+            )
+            .limit(min(limit * 8, 2000))
+            .all()
+        )
+        seen: set[tuple] = set()
+        items = []
+        for r in rows:
+            key = (r.snapshot_date or "", r.stock_market or "", r.stock_symbol or "")
+            if key in seen:
+                continue
+            seen.add(key)
+            created_at = r.created_at
+            items.append(
+                {
+                    "snapshot_date": r.snapshot_date or "",
+                    "stock_symbol": r.stock_symbol,
+                    "stock_market": r.stock_market or "CN",
+                    "candidate_source": r.candidate_source or "",
+                    "strategy_tags": r.strategy_tags or [],
+                    "useful": bool(r.useful),
+                    "reason": r.reason or "",
+                    "created_at": created_at.isoformat() if created_at is not None else "",
+                }
+            )
+            if len(items) >= limit:
+                break
+        return {"count": len(items), "items": items}
+    finally:
+        db.close()
+
+
 def evaluate_entry_candidate_outcomes(
     *,
     horizons: tuple[int, ...] = (1, 3, 5, 10),
     snapshot_days: int = 45,
     limit: int = 400,
 ) -> dict:
+    """评估 active 入场候选的到期后验。
+
+    修复(2026-08): 原实现按 snapshot_date 降序(最新优先) + limit 截断扫描集,
+    而候选只有"变老"才到期 —— 候选池按日增长且无清理, 池子超过 limit 后,
+    最老的(最该验证的)候选被永久挤出扫描窗口, 其 5/10 日 horizon 永远不会被验证
+    (实测 2026-08-13: 552 个 active 中 52 个最老候选已被挤出, 3 天后将累积
+    699 个到期未验证缺口)。本实现改为:
+      1. 扫描集不截断(候选池全部 active, 最老优先), limit 语义改为
+         "单轮最多处理的候选数"——本轮没处理完的候选仍是到期未验证, 下轮继续,
+         到期后必然被验证;
+      2. 只处理"至少有一个到期且未验证 horizon"的候选(今日新增不可能到期, 不拉K线);
+      3. 已有 no_base_price outcome 的 (候选,horizon) 原地更新重试, 不再永久跳过;
+      4. K线拉取失败计数并告警, 不再静默吞掉(失败留待下轮重试)。
+    """
     stats = {
         "total_candidates": 0,
         "eligible": 0,
@@ -1704,6 +1806,8 @@ def evaluate_entry_candidate_outcomes(
         "skipped_not_due": 0,
         "skipped_no_price": 0,
         "skipped_no_base_price": 0,
+        "kline_failures": 0,
+        "missing_due_pairs_after": 0,
     }
     safe_horizons = sorted({max(1, int(h)) for h in horizons if int(h) > 0})
     if not safe_horizons:
@@ -1711,15 +1815,15 @@ def evaluate_entry_candidate_outcomes(
 
     db = SessionLocal()
     try:
-        cutoff = date.today() - timedelta(days=max(7, int(snapshot_days)))
+        today = date.today()
+        cutoff = today - timedelta(days=max(7, int(snapshot_days)))
         candidates = (
             db.query(EntryCandidate)
             .filter(
                 EntryCandidate.status == "active",
                 EntryCandidate.snapshot_date >= cutoff.strftime("%Y-%m-%d"),
             )
-            .order_by(EntryCandidate.snapshot_date.desc(), EntryCandidate.score.desc())
-            .limit(max(1, int(limit)))
+            .order_by(EntryCandidate.snapshot_date.asc(), EntryCandidate.score.desc())
             .all()
         )
         stats["total_candidates"] = len(candidates)
@@ -1727,20 +1831,60 @@ def evaluate_entry_candidate_outcomes(
             return stats
 
         existing_rows = (
-            db.query(EntryCandidateOutcome.candidate_id, EntryCandidateOutcome.horizon_days)
+            db.query(
+                EntryCandidateOutcome.candidate_id,
+                EntryCandidateOutcome.horizon_days,
+                EntryCandidateOutcome.outcome_status,
+            )
             .filter(EntryCandidateOutcome.candidate_id.in_([c.id for c in candidates]))
             .all()
         )
-        existing = {(int(cid), int(h)) for cid, h in existing_rows}
+        existing = set()
+        has_failed = False
+        for cid, h, st in existing_rows:
+            if st != "no_base_price":
+                existing.add((int(cid), int(h)))
+            else:
+                has_failed = True
+        # no_base_price 是"尝试过但失败", 允许下轮原地重试 → 需完整 ORM 对象做更新
+        failed_rows: dict[tuple[int, int], EntryCandidateOutcome] = {}
+        if has_failed:
+            failed_objs = (
+                db.query(EntryCandidateOutcome)
+                .filter(
+                    EntryCandidateOutcome.candidate_id.in_([c.id for c in candidates]),
+                    EntryCandidateOutcome.outcome_status == "no_base_price",
+                )
+                .all()
+            )
+            failed_rows = {(int(o.candidate_id), int(o.horizon_days)): o for o in failed_objs}
 
-        today = date.today()
         kline_cache: dict[tuple[str, str], list] = {}
         pending = 0  # 分批提交计数,缩短写事务窗口
+        processed = 0  # 本轮已处理候选数(limit = 处理上限, 非扫描上限)
+        process_cap = max(1, int(limit))
 
         for c in candidates:
             snap_day = _parse_day(c.snapshot_date)
             if snap_day is None:
                 continue
+
+            # 先算"到期且未验证"的 horizon; 全部已验证/未到期的候选不拉 K 线
+            missing_due: list[int] = []
+            not_due: list[int] = []
+            for h in safe_horizons:
+                if (c.id, h) in existing:
+                    continue
+                if snap_day + timedelta(days=h) <= today:
+                    missing_due.append(h)
+                else:
+                    not_due.append(h)
+            stats["skipped_not_due"] += len(not_due)
+            if not missing_due:
+                continue
+            if processed >= process_cap:
+                break  # 超单轮处理上限: 剩余候选仍是到期未验证, 下轮继续
+            processed += 1
 
             key = ((c.stock_symbol or "").strip(), (c.stock_market or "CN").strip().upper())
             if key not in kline_cache:
@@ -1749,19 +1893,20 @@ def evaluate_entry_candidate_outcomes(
                     kline_cache[key] = KlineCollector(_to_market(key[1])).get_klines(
                         key[0], days=min(lookback, 600)
                     )
-                except Exception:
+                except Exception as e:
                     kline_cache[key] = []
+                    stats["kline_failures"] += 1
+                    logger.warning(
+                        "[候选后验] K线拉取失败: %s %s (error=%s), 到期验证留待下轮重试",
+                        key[1],
+                        key[0],
+                        e,
+                    )
             klines = kline_cache[key]
 
-            for horizon in safe_horizons:
-                if (c.id, horizon) in existing:
-                    continue
-                target_day = snap_day + timedelta(days=horizon)
-                if target_day > today:
-                    stats["skipped_not_due"] += 1
-                    continue
-
+            for horizon in missing_due:
                 stats["eligible"] += 1
+                target_day = snap_day + timedelta(days=horizon)
                 outcome_price = _pick_close_on_or_before(klines, target_day)
                 if outcome_price is None:
                     stats["skipped_no_price"] += 1
@@ -1804,7 +1949,7 @@ def evaluate_entry_candidate_outcomes(
                     else None
                 )
 
-                row = EntryCandidateOutcome(
+                fields = dict(
                     candidate_id=c.id,
                     snapshot_date=c.snapshot_date,
                     stock_symbol=c.stock_symbol,
@@ -1828,7 +1973,13 @@ def evaluate_entry_candidate_outcomes(
                     ),
                     evaluated_at=utc_now(),
                 )
-                db.add(row)
+                failed = failed_rows.get((c.id, horizon))
+                if failed is not None:
+                    # 原地更新重试: (candidate_id, horizon) 有唯一约束, 不能重复插入
+                    for k, v in fields.items():
+                        setattr(failed, k, v)
+                else:
+                    db.add(EntryCandidateOutcome(**fields))
                 stats["evaluated"] += 1
                 existing.add((c.id, horizon))
                 pending += 1
@@ -1839,11 +1990,150 @@ def evaluate_entry_candidate_outcomes(
                 pending = 0
 
         db.commit()
+        # 本轮结束后仍缺的到期验证 → 供调度器告警(缺口可观测, 0 = 全部到期候选已后验)
+        stats["missing_due_pairs_after"] = sum(
+            _due_unverified_pairs(
+                db, safe_horizons=safe_horizons, cutoff_date=cutoff, today=today
+            ).values()
+        )
         return stats
     except Exception as e:
         db.rollback()
         logger.warning(f"候选后验评估失败: {e}")
         return stats
+    finally:
+        db.close()
+
+
+def _due_unverified_pairs(
+    db, *, safe_horizons: list[int], cutoff_date: date, today: date
+) -> dict[int, int]:
+    """只读统计: 窗口内 active 候选"已到期但尚无成功 outcome"的 (候选,horizon) 缺口。"""
+    cutoff_str = cutoff_date.strftime("%Y-%m-%d")
+    cand_rows = (
+        db.query(EntryCandidate.id, EntryCandidate.snapshot_date)
+        .filter(
+            EntryCandidate.status == "active",
+            EntryCandidate.snapshot_date >= cutoff_str,
+        )
+        .all()
+    )
+    missing = {h: 0 for h in safe_horizons}
+    if not cand_rows:
+        return missing
+    ids = [r.id for r in cand_rows]
+    out_rows = (
+        db.query(
+            EntryCandidateOutcome.candidate_id,
+            EntryCandidateOutcome.horizon_days,
+            EntryCandidateOutcome.outcome_status,
+        )
+        .filter(EntryCandidateOutcome.candidate_id.in_(ids))
+        .all()
+    )
+    verified = {
+        (int(cid), int(h)) for cid, h, st in out_rows if st != "no_base_price"
+    }
+    for r in cand_rows:
+        snap = _parse_day(r.snapshot_date)
+        if snap is None:
+            continue
+        for h in safe_horizons:
+            if snap + timedelta(days=h) <= today and (int(r.id), h) not in verified:
+                missing[h] += 1
+    return missing
+
+
+def count_missing_candidate_outcomes(
+    *,
+    horizons: tuple[int, ...] = (1, 3, 5, 10),
+    snapshot_days: int = 45,
+    sample_limit: int = 20,
+) -> dict:
+    """只读报告: active 候选里"已到期但尚未验证"的缺口, 供调度器告警 / API 查询。
+
+    这是验证覆盖率的反向指标: missing_pairs == 0 意味着所有到期 active 候选
+    都已有后验结果, 剩余覆盖率缺口只剩"未到期"(纯时间因素)。
+    """
+    safe_horizons = sorted({max(1, int(h)) for h in horizons if int(h) > 0})
+    if not safe_horizons:
+        safe_horizons = [1, 3, 5]
+    today = date.today()
+    cutoff = today - timedelta(days=max(7, int(snapshot_days)))
+    db = SessionLocal()
+    try:
+        missing = _due_unverified_pairs(
+            db, safe_horizons=safe_horizons, cutoff_date=cutoff, today=today
+        )
+        total_active = (
+            db.query(func.count(EntryCandidate.id))
+            .filter(
+                EntryCandidate.status == "active",
+                EntryCandidate.snapshot_date >= cutoff.strftime("%Y-%m-%d"),
+            )
+            .scalar()
+        ) or 0
+        samples: list[dict] = []
+        if sum(missing.values()) > 0:
+            rows = (
+                db.query(
+                    EntryCandidate.id,
+                    EntryCandidate.stock_symbol,
+                    EntryCandidate.stock_name,
+                    EntryCandidate.snapshot_date,
+                    EntryCandidate.action_label,
+                    EntryCandidate.score,
+                )
+                .filter(
+                    EntryCandidate.status == "active",
+                    EntryCandidate.snapshot_date >= cutoff.strftime("%Y-%m-%d"),
+                )
+                .order_by(EntryCandidate.snapshot_date.asc(), EntryCandidate.score.desc())
+                .limit(max(1, int(sample_limit)))
+                .all()
+            )
+            out_rows = (
+                db.query(
+                    EntryCandidateOutcome.candidate_id,
+                    EntryCandidateOutcome.horizon_days,
+                    EntryCandidateOutcome.outcome_status,
+                )
+                .filter(EntryCandidateOutcome.candidate_id.in_([r.id for r in rows]))
+                .all()
+            )
+            verified = {
+                (int(cid), int(h)) for cid, h, st in out_rows if st != "no_base_price"
+            }
+            for r in rows:
+                snap = _parse_day(r.snapshot_date)
+                if snap is None:
+                    continue
+                miss = [
+                    h
+                    for h in safe_horizons
+                    if snap + timedelta(days=h) <= today
+                    and (int(r.id), h) not in verified
+                ]
+                if miss:
+                    samples.append(
+                        {
+                            "candidate_id": int(r.id),
+                            "stock_symbol": r.stock_symbol,
+                            "stock_name": r.stock_name,
+                            "snapshot_date": r.snapshot_date,
+                            "action_label": r.action_label,
+                            "score": round(float(r.score or 0), 2),
+                            "missing_horizons": miss,
+                        }
+                    )
+        return {
+            "as_of": today.strftime("%Y-%m-%d"),
+            "window_days": max(7, int(snapshot_days)),
+            "total_active_in_window": total_active,
+            "per_horizon": {str(h): n for h, n in missing.items()},
+            "missing_pairs": sum(missing.values()),
+            "samples": samples[: max(1, int(sample_limit))],
+        }
     finally:
         db.close()
 

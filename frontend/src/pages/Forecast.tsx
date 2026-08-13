@@ -99,6 +99,89 @@ interface BacktestReport {
   detail_md: string
 }
 
+/**
+ * 四模型分歧度区间条图(纯 CSS/div):每模型一行,条 = median 起点→终点,
+ * 宽度按全局价格区间(含基准价,上下 2% 边距)归一;Kronos 额外画 P5-P95 全区间阴影带。
+ */
+function ModelDivergenceChart({ result }: { result: PredictResult }) {
+  const { models, last_close } = result
+  interface ModelRow { label: string; sub?: string; start: number; end: number; band?: { lo: number; hi: number } }
+  const rows: ModelRow[] = []
+  const kronos = models.kronos
+  rows.push({
+    label: 'Kronos',
+    sub: `MC${kronos.n_samples}采样`,
+    start: kronos.median[0],
+    end: kronos.median[kronos.median.length - 1],
+    // 全预测区间 P5 下沿 ~ P95 上沿 = 采样路径总离散度
+    band: { lo: Math.min(...kronos.p5), hi: Math.max(...kronos.p95) },
+  })
+  if (models.chronos) {
+    const m = models.chronos.median
+    rows.push({ label: 'Chronos-Bolt', sub: '时序基础模型', start: m[0], end: m[m.length - 1] })
+  }
+  if (models.xgboost) rows.push({ label: 'XGBoost', start: models.xgboost[0], end: models.xgboost[models.xgboost.length - 1] })
+  if (models.linreg) rows.push({ label: '线性回归', start: models.linreg[0], end: models.linreg[models.linreg.length - 1] })
+
+  // 归一基准:全部端点 + 基准价,上下各留 2% 边距,避免贴边
+  const allPts = rows.flatMap(r => [r.start, r.end, ...(r.band ? [r.band.lo, r.band.hi] : [])])
+  const lo = Math.min(last_close, ...allPts)
+  const hi = Math.max(last_close, ...allPts)
+  const span = hi - lo || 1
+  const min = lo - span * 0.02
+  const max = hi + span * 0.02
+  const pct = (v: number) => ((v - min) / (max - min)) * 100
+  const anchorPct = pct(last_close)
+
+  return (
+    <div className="space-y-1.5 text-sm">
+      {/* 基准价锚点刻度 */}
+      <div className="relative h-4 text-[10px] text-muted-foreground">
+        <div className="absolute inset-y-0 border-l border-dashed border-muted-foreground/40" style={{ left: `${anchorPct}%` }}>
+          <span className="ml-1.5">基准 {last_close}</span>
+        </div>
+      </div>
+      {rows.map(r => {
+        const up = r.end >= r.start
+        const leftPct = pct(r.start)
+        const widthPct = Math.max(pct(r.end) - leftPct, 0)
+        return (
+          <div key={r.label} className="flex items-center gap-2">
+            <span className="w-24 shrink-0 truncate text-[11px] text-muted-foreground">
+              {r.label}
+              {r.sub && <span className="ml-0.5 text-[10px] opacity-70">({r.sub})</span>}
+            </span>
+            <div className="relative h-5 min-w-0 flex-1 rounded bg-accent/30">
+              {/* Kronos P5-P95 不确定性阴影带 */}
+              {r.band && (
+                <div
+                  className="absolute inset-y-0.5 rounded bg-primary/15"
+                  style={{ left: `${pct(r.band.lo)}%`, width: `${Math.max(pct(r.band.hi) - pct(r.band.lo), 0)}%` }}
+                />
+              )}
+              {/* median 起点→终点条(红涨绿跌) */}
+              <div
+                className={`absolute inset-y-1 rounded ${up ? 'bg-rose-500' : 'bg-emerald-500'}`}
+                style={{ left: `${leftPct}%`, width: `${widthPct}%`, minWidth: 2 }}
+              />
+              {/* 基准价锚点竖线 */}
+              <div className="absolute inset-y-0 w-px bg-border/80" style={{ left: `${anchorPct}%` }} />
+            </div>
+            <span className="w-28 shrink-0 truncate text-right font-mono text-[11px]">
+              {r.start.toFixed(2)} → {r.end.toFixed(2)}
+              {r.band && (
+                <span className="block text-[9.5px] text-muted-foreground/80">
+                  P5 {r.band.lo.toFixed(2)} ~ P95 {r.band.hi.toFixed(2)}
+                </span>
+              )}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function ForecastPage() {
   const [symbol, setSymbol] = useState('002361')
   const [days] = useState(5)
@@ -633,38 +716,15 @@ export default function ForecastPage() {
               </div>
             </div>
 
-            {/* 四模型对比 */}
+            {/* 四模型对比 + 分歧度区间条图 */}
             <div>
-              <div className="text-sm font-medium mb-2">四模型对比</div>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between bg-muted/50 rounded px-3 py-2">
-                  <span>Kronos（MC{result.models.kronos.n_samples}采样）</span>
-                  <span className="font-mono">
-                    {result.models.kronos.median[0].toFixed(2)} → {result.models.kronos.median[result.models.kronos.median.length - 1].toFixed(2)}
-                    <span className="text-muted-foreground ml-2">
-                      P5 {result.models.kronos.p5[0].toFixed(2)} ~ P95 {result.models.kronos.p95[0].toFixed(2)}
-                    </span>
-                  </span>
-                </div>
-                <div className="flex justify-between bg-muted/50 rounded px-3 py-2">
-                  <span>Chronos-Bolt<span className="text-muted-foreground text-xs ml-1">(时序基础模型)</span></span>
-                  <span className="font-mono">
-                    {result.models.chronos ? `${result.models.chronos.median[0].toFixed(2)} → ${result.models.chronos.median[result.models.chronos.median.length - 1].toFixed(2)}` : '不可用'}
-                  </span>
-                </div>
-                <div className="flex justify-between bg-muted/50 rounded px-3 py-2">
-                  <span>XGBoost</span>
-                  <span className="font-mono">
-                    {result.models.xgboost ? `${result.models.xgboost[0].toFixed(2)} → ${result.models.xgboost[result.models.xgboost.length - 1].toFixed(2)}` : '不可用'}
-                  </span>
-                </div>
-                <div className="flex justify-between bg-muted/50 rounded px-3 py-2">
-                  <span>线性回归</span>
-                  <span className="font-mono">
-                    {result.models.linreg ? `${result.models.linreg[0].toFixed(2)} → ${result.models.linreg[result.models.linreg.length - 1].toFixed(2)}` : '不可用'}
-                  </span>
-                </div>
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-sm font-medium">四模型对比</span>
+                <span className={`text-xs font-medium ${dirColor(result.direction)}`}>
+                  加权方向 {result.direction === 'up' ? '↑ 看多' : result.direction === 'down' ? '↓ 看空' : '→ 横盘'} ({result.expected_pct > 0 ? '+' : ''}{result.expected_pct}%)
+                </span>
               </div>
+              <ModelDivergenceChart result={result} />
             </div>
 
             {/* 消息情绪面 */}

@@ -8,8 +8,10 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from src.core.entry_candidates import (
+    count_missing_candidate_outcomes,
     evaluate_entry_candidate_outcomes,
     get_entry_candidate_stats,
+    list_entry_candidate_feedback,
     list_entry_candidates,
     refresh_entry_candidates,
     save_entry_candidate_feedback,
@@ -214,6 +216,20 @@ def refresh_candidates(
     return cand
 
 
+@router.get("/entry-candidates/feedback")
+def get_candidate_feedback(
+    snapshot_date: str = Query("", description="快照日期 YYYY-MM-DD，默认全部"),
+    market: str = Query("", description="市场过滤: CN/HK/US"),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    """查询候选反馈（每标的返回最新一条，前端回显已反馈状态用）。"""
+    return list_entry_candidate_feedback(
+        snapshot_date=snapshot_date,
+        market=market,
+        limit=limit,
+    )
+
+
 @router.post("/entry-candidates/feedback")
 def submit_candidate_feedback(payload: CandidateFeedbackIn):
     ok = save_entry_candidate_feedback(
@@ -242,6 +258,22 @@ def evaluate_candidate_outcomes(
         horizons=(1, 3, 5, 10),
         snapshot_days=snapshot_days,
         limit=limit,
+    )
+
+
+@router.get("/entry-candidates/outcomes/missing")
+def missing_candidate_outcomes(
+    snapshot_days: int = Query(45, ge=7, le=365),
+    sample_limit: int = Query(20, ge=1, le=100),
+):
+    """只读: active 候选"到期未验证"缺口报告(0 = 所有到期候选均已后验)。
+
+    验证覆盖率的反向指标; 缺口 > 0 时 samples 给出最老的缺失候选清单。
+    """
+    return count_missing_candidate_outcomes(
+        horizons=(1, 3, 5, 10),
+        snapshot_days=snapshot_days,
+        sample_limit=sample_limit,
     )
 
 

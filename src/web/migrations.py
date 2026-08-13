@@ -1625,6 +1625,151 @@ def _m118_paper_trading_market_allocations(conn: Connection) -> None:
         )
 
 
+def _m121_dedupe_stocks_unique(conn: Connection) -> None:
+    """自选股 (symbol, market, user_id) 去重 + 唯一约束。
+
+    背景: stocks 表历史无唯一约束, 重复添加自选股(如 688008 三连)产生噪音。
+    做法: 按 (symbol, market, COALESCE(user_id,'')) 分组保留最早一条(id 最小),
+    其余删除; positions/stock_agents/price_alert_rules/price_alert_hits 的
+    引用先重指到保留行(避免 ON DELETE CASCADE 误删持仓), 再按各自唯一键去重;
+    最后加唯一索引。SQLite 唯一索引中 NULL 彼此不相等, 因此对 user_id IS NULL
+    的行补一条部分唯一索引, 兼容 legacy/单用户数据。
+    """
+    if not _has_table(conn, "stocks"):
+        return
+    has_user = _has_column(conn, "stocks", "user_id")
+
+    conn.execute(text("DROP TABLE IF EXISTS _m121_stock_keep"))
+    conn.execute(text("DROP TABLE IF EXISTS _m121_stock_dup"))
+
+    if has_user:
+        conn.execute(
+            text(
+                """
+CREATE TEMP TABLE _m121_stock_keep AS
+SELECT MIN(id) AS keep_id, symbol, market, COALESCE(user_id, '') AS user_key
+FROM stocks
+GROUP BY symbol, market, user_key
+"""
+            )
+        )
+        conn.execute(
+            text(
+                """
+CREATE TEMP TABLE _m121_stock_dup AS
+SELECT s.id AS dup_id, k.keep_id
+FROM stocks s
+JOIN _m121_stock_keep k
+  ON s.symbol = k.symbol AND s.market = k.market
+ AND COALESCE(s.user_id, '') = k.user_key
+WHERE s.id <> k.keep_id
+"""
+            )
+        )
+    else:
+        conn.execute(
+            text(
+                """
+CREATE TEMP TABLE _m121_stock_keep AS
+SELECT MIN(id) AS keep_id, symbol, market
+FROM stocks
+GROUP BY symbol, market
+"""
+            )
+        )
+        conn.execute(
+            text(
+                """
+CREATE TEMP TABLE _m121_stock_dup AS
+SELECT s.id AS dup_id, k.keep_id
+FROM stocks s
+JOIN _m121_stock_keep k
+  ON s.symbol = k.symbol AND s.market = k.market
+WHERE s.id <> k.keep_id
+"""
+            )
+        )
+
+    # 关联表: 先把 stock_id 映射为保留行 id, 在映射键上按自身唯一键去重,
+    # 再统一重指到保留行(避免 UPDATE 中途触发目标表唯一冲突)。
+    fk_tables: tuple[tuple[str, str, tuple[str, ...] | None], ...] = (
+        ("positions", "stock_id", ("account_id", "stock_id")),
+        ("stock_agents", "stock_id", ("stock_id", "agent_name")),
+        ("price_alert_rules", "stock_id", None),
+        ("price_alert_hits", "stock_id", None),
+    )
+    for table, col, uniq_cols in fk_tables:
+        if not _has_table(conn, table) or not _has_column(conn, table, col):
+            continue
+        if uniq_cols:
+            # 映射键: 把 uniq_cols 里的 stock_id 换成映射后的保留行 id
+            # (COALESCE(d.keep_id, p.stock_id): 有 dup 则指向保留行, 无 dup 保持原值)
+            mapped_cols = tuple(
+                f"COALESCE(d.keep_id, p.{col}) AS mstock" if c == col else c
+                for c in uniq_cols
+            )
+            select_cols = ", ".join(mapped_cols)
+            # GROUP BY 引用临时表的列名(临时表里 stock_id 已被命名为 mstock, 不能用表达式)
+            group_cols = ", ".join("mstock" if c == col else c for c in uniq_cols)
+            temp = f"_m121_{table}_mapped"
+            conn.execute(text(f"DROP TABLE IF EXISTS {temp}"))
+            conn.execute(
+                text(
+                    f"""
+CREATE TEMP TABLE {temp} AS
+SELECT p.id, {select_cols}
+FROM {table} p
+LEFT JOIN _m121_stock_dup d ON p.{col} = d.dup_id
+"""
+                )
+            )
+            # 映射键组内保留 id 最小的一行, 其余删除(含同一 keep 下的多只 dup 引用)
+            conn.execute(
+                text(
+                    f"""
+DELETE FROM {table}
+WHERE id NOT IN (
+    SELECT MIN(id) FROM {temp} GROUP BY {group_cols}
+)
+"""
+                )
+            )
+            conn.execute(text(f"DROP TABLE IF EXISTS {temp}"))
+        # 统一重指到保留行
+        conn.execute(
+            text(
+                f"""
+UPDATE {table}
+SET {col} = (SELECT keep_id FROM _m121_stock_dup WHERE dup_id = {table}.{col})
+WHERE {col} IN (SELECT dup_id FROM _m121_stock_dup)
+"""
+            )
+        )
+
+    conn.execute(text("DELETE FROM stocks WHERE id IN (SELECT dup_id FROM _m121_stock_dup)"))
+    conn.execute(text("DROP TABLE IF EXISTS _m121_stock_keep"))
+    conn.execute(text("DROP TABLE IF EXISTS _m121_stock_dup"))
+
+    # 唯一约束: 非空 user_id 组合唯一 + NULL user_id 部分唯一(防再重复)
+    _create_index_if_missing(
+        conn,
+        "uq_stocks_symbol_market_user",
+        """
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stocks_symbol_market_user
+ON stocks (symbol, market, user_id)
+""",
+    )
+    if has_user:
+        _create_index_if_missing(
+            conn,
+            "uq_stocks_symbol_market_nulluser",
+            """
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stocks_symbol_market_nulluser
+ON stocks (symbol, market) WHERE user_id IS NULL
+""",
+        )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(101, "agent_config_kind_and_visibility", _m101_agent_config_kind),
     Migration(102, "backfill_agent_kind_data", _m102_backfill_agent_kind),
@@ -1646,6 +1791,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(118, "paper_trading_market_allocations", _m118_paper_trading_market_allocations),
     Migration(119, "notifications_table", _m119_notifications_table),
     Migration(120, "notification_push_channels", _m120_notification_push_channels),
+    Migration(121, "dedupe_stocks_unique", _m121_dedupe_stocks_unique),
 )
 
 

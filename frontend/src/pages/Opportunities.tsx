@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, RefreshCw, Share2, Sparkles, ScanSearch } from 'lucide-react'
+import { AlertTriangle, RefreshCw, Share2, Sparkles, ScanSearch, ThumbsDown, ThumbsUp } from 'lucide-react'
 import {
   recommendationsApi,
   stocksApi,
@@ -16,6 +16,7 @@ import {
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Input } from '@panwatch/base-ui/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@panwatch/base-ui/components/ui/select'
+import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import { useLocalStorage } from '@/lib/utils'
 import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
 import FactorWeightsPanel from '@/components/FactorWeightsPanel'
@@ -257,6 +258,60 @@ export default function OpportunitiesPage() {
   // 个股 AI 评分分享卡:当前分享的信号
   const [shareSignal, setShareSignal] = useState<StrategySignalItem | null>(null)
 
+  // ── 候选反馈(有用/没用) ──
+  // key: `${stock_market}:${stock_symbol}` → 最新一次反馈的 useful 值
+  const { toast } = useToast()
+  const [feedbackMap, setFeedbackMap] = useState<Record<string, boolean>>({})
+  const [feedbackPending, setFeedbackPending] = useState<Set<string>>(new Set())
+
+  const loadFeedback = useCallback(async (snapDate: string, rows: StrategySignalItem[]) => {
+    if (!snapDate || rows.length === 0) return
+    try {
+      const res = await recommendationsApi.listEntryCandidateFeedback({ snapshot_date: snapDate, limit: 500 })
+      const map: Record<string, boolean> = {}
+      for (const fb of res.items || []) {
+        const key = `${fb.stock_market || 'CN'}:${fb.stock_symbol}`
+        map[key] = !!fb.useful
+      }
+      setFeedbackMap(map)
+    } catch {
+      // 反馈状态加载失败不阻塞页面
+    }
+  }, [])
+
+  const handleCandidateFeedback = useCallback(async (item: StrategySignalItem, useful: boolean) => {
+    const key = `${item.stock_market || 'CN'}:${item.stock_symbol}`
+    if (feedbackMap[key] === useful) return // 已反馈相同值, 忽略重复提交
+    if (feedbackPending.has(key)) return
+    const nextPending = new Set(feedbackPending)
+    nextPending.add(key)
+    setFeedbackPending(nextPending)
+    try {
+      const res = await recommendationsApi.feedbackEntryCandidate({
+        snapshot_date: item.snapshot_date || '',
+        stock_symbol: item.stock_symbol,
+        stock_market: item.stock_market || 'CN',
+        useful,
+        candidate_source: item.source_pool || 'watchlist',
+        strategy_tags: item.strategy_code ? [item.strategy_code] : [],
+      })
+      if (res.ok) {
+        setFeedbackMap((prev) => ({ ...prev, [key]: useful }))
+        toast(useful ? '已标记为有用' : '已标记为没用', 'success')
+      } else {
+        toast('反馈提交失败，请稍后重试', 'error')
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '反馈提交失败，请稍后重试', 'error')
+    } finally {
+      setFeedbackPending((prev) => {
+        const next = new Set(prev)
+        next.delete(key)
+        return next
+      })
+    }
+  }, [feedbackMap, feedbackPending, toast])
+
   // ── 策略选股(策略库批量扫描) ──
   const [scanStrategies, setScanStrategies] = useState<StrategyItem[]>([])
   const [scanStrategyId, setScanStrategyId] = useState('')
@@ -436,6 +491,7 @@ export default function OpportunitiesPage() {
       }
       setItems(data.items || [])
       setSnapshotDate(data.snapshot_date || '')
+      void loadFeedback(data.snapshot_date || '', data.items || [])
       if (!data.snapshot_date) {
         setError('暂无机会快照，请点击“刷新”生成一次')
       }
@@ -445,7 +501,7 @@ export default function OpportunitiesPage() {
     } finally {
       setLoading(false)
     }
-  }, [holding, market, minScore, risk, sector, source, strategy])
+  }, [holding, loadFeedback, market, minScore, risk, sector, source, strategy])
 
   useEffect(() => {
     load()
@@ -1174,6 +1230,36 @@ export default function OpportunitiesPage() {
                   来源: {sourceFlags.join(' + ')}
                 </div>
                 <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-0.5 text-[10px]">
+                    <button
+                      type="button"
+                      disabled={feedbackPending.has(group.key)}
+                      onClick={() => handleCandidateFeedback(item, true)}
+                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors disabled:opacity-40 ${
+                        feedbackMap[group.key] === true
+                          ? 'bg-green-500/15 text-green-400'
+                          : 'text-muted-foreground hover:text-green-400'
+                      }`}
+                      title="这个候选建议有用"
+                    >
+                      <ThumbsUp className="h-3 w-3" />
+                      有用
+                    </button>
+                    <button
+                      type="button"
+                      disabled={feedbackPending.has(group.key)}
+                      onClick={() => handleCandidateFeedback(item, false)}
+                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors disabled:opacity-40 ${
+                        feedbackMap[group.key] === false
+                          ? 'bg-red-500/15 text-red-400'
+                          : 'text-muted-foreground hover:text-red-400'
+                      }`}
+                      title="这个候选建议没用"
+                    >
+                      <ThumbsDown className="h-3 w-3" />
+                      没用
+                    </button>
+                  </div>
                   <button
                     type="button"
                     onClick={() => setShareSignal(item)}

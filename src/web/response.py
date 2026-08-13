@@ -18,6 +18,12 @@ class ResponseWrapperMiddleware:
             await self.app(scope, receive, send)
             return
 
+        # SSE 流式端点(chat 流式回复)必须直通: 本中间件会缓冲完整响应体再一次性发送,
+        # 会破坏 text/event-stream 的逐条推送(事件只能等流结束后才到达)。
+        if scope.get("path", "").endswith("/messages/stream"):
+            await self.app(scope, receive, send)
+            return
+
         status_code = 200
         response_headers: list[tuple[bytes, bytes]] = []
         body_parts: list[bytes] = []

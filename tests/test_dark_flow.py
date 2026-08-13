@@ -9,6 +9,40 @@ sys.path.insert(0, str(ROOT / "packages/marketdata/src"))
 import pytest
 from marketdata import Symbol
 from src.core.dark_flow import compute_dark_flow, _judge_signal, _fetch_all_ticks, _tencent_code
+from src.core import dark_flow as df_module
+
+
+class TestTickCacheCrossDay:
+    """2026-08-13 跨日缓存回归: 腾讯逐笔页码按天重置, 昨天残留缓存必须触发全量重拉,
+    否则增量续拉从旧 last_page 往后拉 → 拉不到今天 0 页起的数据(曾实测返回 2 条残留)。"""
+
+    def test_old_4tuple_cache_is_stale(self):
+        """旧格式 4 元组缓存(无 day) → stale, 必须重拉。"""
+        assert df_module._cache_stale("x", (1.0, [], 68, 4760)) is True
+
+    def test_yesterday_cache_is_stale(self):
+        """昨天日期的 5 元组缓存 → stale, 必须重拉。"""
+        import datetime
+        yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+        assert df_module._cache_stale("x", (1.0, [], 68, 4760, yesterday)) is True
+
+    def test_today_cache_is_fresh(self):
+        """今天日期的缓存 → 不 stale, 可走增量续拉。"""
+        assert df_module._cache_stale("x", (1.0, [], 68, 4760, df_module._cache_day())) is False
+
+    def test_fetch_after_stale_cache_returns_full_data(self):
+        """真实链路: 塞入昨天残留缓存后调用, 应返回全天数据(>1000 条)而非残留。"""
+        import time
+        code = _tencent_code(Symbol.parse("002361", "CN"))
+        assert code is not None
+        yesterday = (__import__("datetime").date.today() - __import__("datetime").timedelta(days=1)).isoformat()
+        df_module._TICKS_CACHE[code] = (
+            time.time() - 100, [{"d": "B", "amt": 100, "t": "15:18:00"}], 68, 4760, yesterday,
+        )
+        ticks = _fetch_all_ticks(code)
+        assert len(ticks) > 1000  # 全天数据, 而非 1 条残留
+        # 缓存应已更新为今天
+        assert df_module._TICKS_CACHE[code][4] == df_module._cache_day()
 
 
 class TestDarkFlowV5:

@@ -50,11 +50,32 @@ def _tencent_code(symbol: Symbol) -> str | None:
     return None
 
 
-# 逐笔缓存: {code -> (ts, ticks, last_page, last_seq)}。盘中 TTL 30s, 避免每轮监控重复翻页。
+# 逐笔缓存: {code -> (ts, ticks, last_page, last_seq, day)}。盘中 TTL 30s, 避免每轮监控重复翻页。
+# day = 交易日(YYYY-MM-DD), 2026-08-13 修复: 腾讯逐笔页码按天重置, 缓存跨日残留时
+# 增量续拉会从昨天的 last_page 往后拉 → 拉不到今天 0 页起的数据, 返回昨天残留(实测: 2 条)。
+# 跨日(day != 今天)强制全量重拉; 旧 4 元组缓存(无 day)视为无效同样重拉。
 # 2026-08-12 增量续拉: 缓存记录"拉到的页码+末条序号", 过期后只从上次页码往后拉新增页
-# (9:35 拉 19 页 → 9:50 只拉 19 页之后), 序号断裂(新交易日/数据重置)才全量重拉。
-_TICKS_CACHE: dict[str, tuple[float, list[dict], int, int]] = {}
+# (9:35 拉 19 页 → 9:50 只拉 19 页之后), 序号断裂(盘中数据重置)才全量重拉。
+_TICKS_CACHE: dict[str, tuple[float, list[dict], int, int, str]] = {}
 _TICKS_TTL = 30.0
+
+
+def _cache_day() -> str:
+    """当前交易日字符串(本地日期; 腾讯逐笔页码按自然日重置, 与本地日对齐足够)。"""
+    import datetime
+    return datetime.date.today().isoformat()
+
+
+def _cache_put(code: str, now: float, ticks: list[dict], last_page: int, last_seq: int) -> None:
+    """统一写缓存(带交易日)。"""
+    _TICKS_CACHE[code] = (now, ticks, last_page, last_seq, _cache_day())
+
+
+def _cache_stale(code: str, cached: tuple) -> bool:
+    """缓存是否跨日/旧格式(4 元组无 day) → 需要全量重拉。"""
+    if len(cached) < 5:
+        return True
+    return cached[4] != _cache_day()
 
 # 2026-08-12 磁盘持久化: 逐笔快照落盘(/app/data/cache), 重启后同交易日
 # 直接从 last_page 增量续拉, 免全量翻页(冷启动 3.7s → ~0.5s)。
@@ -102,12 +123,18 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
     if cached and now - cached[0] < _TICKS_TTL:
         return cached[1]
 
+    # 2026-08-13 跨日修复: 缓存属于昨天(或旧 4 元格式) → 丢弃走全量重拉,
+    # 否则增量续拉从昨天 last_page 往后拉, 拉不到今天 0 页起的数据(实测返回 2 条残留)。
+    if cached and _cache_stale(code, cached):
+        _TICKS_CACHE.pop(code, None)
+        cached = None
+
     # L2 数据源分发(预留): 接入后返回 {d, amt, vol, price, t} 同构列表即可无缝替换
     if DARK_SOURCE != "tencent_ticks":
         try:
             from src.core.dark_l2 import fetch_l2_ticks  # 预留模块, 接入L2时实现
             ticks = fetch_l2_ticks(code, DARK_SOURCE)
-            _TICKS_CACHE[code] = (now, ticks, 0, 0)
+            _cache_put(code, now, ticks, 0, 0)
             _ticks_persist()  # 2026-08-12: 快照落盘
             return ticks
         except Exception:
@@ -183,12 +210,12 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
 
     # ---- 增量续拉: 缓存存在且过期(>30s) ----
     if cached:
-        _, old_ticks, old_last_page, old_last_seq = cached
+        _, old_ticks, old_last_page, old_last_seq = cached[0], cached[1], cached[2], cached[3]
         # 从上次页码开始拉(最后一页盘中可能未满, 重新拉完整版) + 后续新页
         start = old_last_page
         if start >= max_pages:
             # 已拉满上限, 刷新缓存时间即可
-            _TICKS_CACHE[code] = (now, old_ticks, old_last_page, old_last_seq)
+            _cache_put(code, now, old_ticks, old_last_page, old_last_seq)
             _ticks_persist()  # 2026-08-12: 快照落盘
             return old_ticks
         new_ticks: list[dict] = []
@@ -205,14 +232,14 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
                 merged = sorted(dedup.values(), key=lambda t: t.get("_seq", 0))
                 for t in merged:
                     t.pop("_seq", None)
-                _TICKS_CACHE[code] = (now, merged, last_page, last_seq)
+                _cache_put(code, now, merged, last_page, last_seq)
                 _ticks_persist()  # 2026-08-12: 快照落盘
                 return merged
             # 序号断裂(新交易日/数据重置) → 全量重拉
             _TICKS_CACHE.pop(code, None)
         else:
             # 无新增(可能盘前/刚开盘): 刷新缓存时间, 保留旧数据
-            _TICKS_CACHE[code] = (now, old_ticks, old_last_page, old_last_seq)
+            _cache_put(code, now, old_ticks, old_last_page, old_last_seq)
             _ticks_persist()  # 2026-08-12: 快照落盘
             return old_ticks
 
@@ -231,7 +258,7 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
         else:
             consecutive_empty += 1
             if consecutive_empty >= 2:
-                _TICKS_CACHE[code] = (now, ticks, last_full, max((t.get("_seq", -1) for t in ticks), default=-1))
+                _cache_put(code, now, ticks, last_full, max((t.get("_seq", -1) for t in ticks), default=-1))
                 _ticks_persist()  # 2026-08-12: 快照落盘
                 return ticks
 
@@ -241,13 +268,13 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
         ticks.sort(key=lambda t: t.get("_seq", 0))
         for t in ticks:
             t.pop("_seq", None)
-        _TICKS_CACHE[code] = (now, ticks, last_page, last_seq)
+        _cache_put(code, now, ticks, last_page, last_seq)
         _ticks_persist()  # 2026-08-12: 快照落盘
         return ticks
 
     for t in ticks:
         t.pop("_seq", None)
-    _TICKS_CACHE[code] = (now, ticks, last_full, max((t.get("_seq", -1) for t in ticks), default=-1))
+    _cache_put(code, now, ticks, last_full, max((t.get("_seq", -1) for t in ticks), default=-1))
     _ticks_persist()  # 2026-08-12: 快照落盘
     return ticks
 

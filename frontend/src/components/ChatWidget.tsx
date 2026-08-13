@@ -106,6 +106,7 @@ export default function ChatWidget() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  const [streamStage, setStreamStage] = useState<string | null>(null)
   const [view, setView] = useState<'list' | 'chat'>('list')
   const [stockContext, setStockContext] = useState<StockContext | null>(null)
   const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([])
@@ -373,6 +374,7 @@ export default function ChatWidget() {
     setInput('')
     setSending(true)
     setSuggestedQuestions([]) // hide after first send
+    setStreamStage(null)
 
     const tempUserMsg: ChatMessage = {
       id: Date.now(),
@@ -382,22 +384,53 @@ export default function ChatWidget() {
     }
     setMessages((prev) => [...prev, tempUserMsg])
 
+    // 流式: 先放一个空的 assistant 气泡, 由 SSE 事件逐步填充(阶段提示 + 打字机正文)
+    const tempAssistantId = Date.now() + 1
+    const placeholderAssistantMsg: ChatMessage = {
+      id: tempAssistantId,
+      role: 'assistant',
+      content: '',
+      created_at: new Date().toISOString(),
+    }
+    setMessages((prev) => [...prev, placeholderAssistantMsg])
+
+    let streamedContent = ''
     try {
-      const reply = await chatApi.sendMessage(convId, content)
-      setMessages((prev) => [...prev, reply])
+      await chatApi.sendMessageStream(
+        convId,
+        content,
+        {
+          onStage: (msg) => setStreamStage(msg),
+          onDelta: (chunk) => {
+            streamedContent += chunk
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tempAssistantId ? { ...m, content: streamedContent } : m
+              )
+            )
+          },
+          onDone: (msg) => {
+            setMessages((prev) => prev.map((m) => (m.id === tempAssistantId ? msg : m)))
+          },
+          onError: (errMsg) => {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === tempAssistantId ? { ...m, content: errMsg } : m))
+            )
+          },
+        }
+      )
       setConversations((prev) =>
         prev.map((c) => c.id === convId ? { ...c, title: c.title || content.slice(0, 20) } : c)
       )
     } catch (e) {
-      const errMsg: ChatMessage = {
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: `请求失败：${e instanceof Error ? e.message : '未知错误'}`,
-        created_at: new Date().toISOString(),
-      }
-      setMessages((prev) => [...prev, errMsg])
+      // 流中断/网络错误: 气泡里已有内容则保留, 否则显示错误
+      const errMsg = `请求失败：${e instanceof Error ? e.message : '未知错误'}`
+      setMessages((prev) =>
+        prev.map((m) => (m.id === tempAssistantId ? { ...m, content: m.content || errMsg } : m))
+      )
     } finally {
       setSending(false)
+      setStreamStage(null)
     }
   }, [input, sending, activeConvId, stockContext])
 
@@ -608,7 +641,8 @@ export default function ChatWidget() {
                 <p>输入问题开始对话</p>
               </div>
             )}
-            {messages.map((msg) => (
+            {/* 流式占位气泡内容为空时隐藏, 由下方阶段提示条承载等待反馈 */}
+            {messages.filter((msg) => !(msg.role === 'assistant' && !msg.content)).map((msg) => (
               <div
                 key={msg.id}
                 className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
@@ -660,7 +694,7 @@ export default function ChatWidget() {
               <div className="flex justify-start">
                 <div className="bg-accent/60 rounded-xl px-3 py-2 text-[13px] text-muted-foreground flex items-center gap-2">
                   <span className="w-3 h-3 border-2 border-current/30 border-t-current rounded-full animate-spin" />
-                  思考中...
+                  {streamStage || '思考中...'}
                 </div>
               </div>
             )}

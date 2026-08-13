@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -27,9 +27,11 @@ import {
   type DashboardBrief,
 } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
+import { Skeleton } from '@panwatch/base-ui/components/ui/skeleton'
 import { Onboarding } from '@panwatch/biz-ui/components/onboarding'
 import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
 import DiscoveryPanel from '@/components/DiscoveryPanel'
+import SkeletonRows from '@/components/SkeletonRows'
 import Sparkline from '@/components/Sparkline'
 import BenchChart from '@/components/BenchChart'
 import BenchmarkShareCard from '@/components/BenchmarkShareCard'
@@ -154,7 +156,7 @@ export default function DashboardPage() {
     })
   }, [])
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { skipBench?: boolean }) => {
     setLoading(true)
     // 指数 pills:独立加载不阻塞首屏(spark 冷启动可能 ~1s,数据到了自然浮现)
     dashboardApi.indices().then(setIndices).catch(() => {})
@@ -188,8 +190,9 @@ export default function DashboardPage() {
         .catch(() => {})
     }
 
-    // 慢车道:基准/归因需拉全持仓 K 线(分钟级),独立加载,就绪后回填超额/归因
-    loadBench()
+    // 慢车道:基准/归因需拉全持仓 K 线(分钟级),独立加载,就绪后回填超额/归因。
+    // 30s 自动刷新跳过(避免每分钟级重请求 + 图表反复"计算中"),仅首载/手动刷新触发
+    if (!opts?.skipBench) loadBench()
 
     // 盘前/盘后简报:独立加载,取较新一条
     Promise.allSettled([dashboardApi.brief('premarket'), dashboardApi.brief('eod')]).then((res) => {
@@ -221,6 +224,28 @@ export default function DashboardPage() {
   useEffect(() => {
     load()
     if (!localStorage.getItem('panwatch_onboarding_completed')) setShowOnboarding(true)
+  }, [load])
+
+  // 30s 自动刷新:页面可见才轮询(visibilitychange 隐藏时暂停,回到页面立即补一次);
+  // busyRef 防请求叠加;慢车道(基准/归因)跳过,避免每分钟级重请求
+  const autoRefreshBusy = useRef(false)
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState !== 'visible' || autoRefreshBusy.current) return
+      autoRefreshBusy.current = true
+      load({ skipBench: true }).finally(() => {
+        autoRefreshBusy.current = false
+      })
+    }
+    const timer = setInterval(tick, 30_000)
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') tick()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
   }, [load])
 
   const handleOnboardingComplete = () => {
@@ -390,7 +415,7 @@ export default function DashboardPage() {
       <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-2">
           <h1 className="text-[20px] font-bold tracking-tight text-foreground md:text-[22px]">今日该看什么</h1>
-          <Button onClick={load} disabled={loading} size="sm" variant="ghost" className="h-7 px-2">
+          <Button onClick={() => load()} disabled={loading} size="sm" variant="ghost" className="h-7 px-2">
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
           </Button>
         </div>
@@ -407,7 +432,33 @@ export default function DashboardPage() {
 
       {/* 组合速览条:最近行情日盈亏 hero + 累计浮盈 + 60日超额 + 仓位% + mini 净值走势 */}
       <div className="card mb-3 p-4">
-        {!hasHoldings ? (
+        {loading && !diag ? (
+          /* 首次加载骨架(数据到位后不再闪) */
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            <div className="space-y-1.5">
+              <Skeleton className="h-2.5 w-14" />
+              <Skeleton className="h-6 w-28" />
+              <Skeleton className="h-3 w-16" />
+            </div>
+            <div className="hidden h-9 w-px bg-border/60 sm:block" />
+            <div className="space-y-2">
+              <Skeleton className="h-2.5 w-16" />
+              <Skeleton className="h-4 w-24" />
+            </div>
+            <div className="space-y-2">
+              <Skeleton className="h-2.5 w-16" />
+              <Skeleton className="h-4 w-16" />
+            </div>
+            <div className="space-y-2">
+              <Skeleton className="h-2.5 w-10" />
+              <Skeleton className="h-4 w-12" />
+            </div>
+            <div className="ml-auto flex items-center gap-3">
+              <Skeleton className="h-8 w-24" />
+              <Skeleton className="h-3 w-14" />
+            </div>
+          </div>
+        ) : !hasHoldings ? (
           <div className="py-4 text-center text-[12px] text-muted-foreground">
             {loading ? '加载中…' : '暂无持仓,添加持仓后这里展示持仓盈亏与组合走势'}
           </div>
@@ -453,7 +504,15 @@ export default function DashboardPage() {
 
       {/* 指数走势 pills */}
       <div className="mb-3 grid grid-cols-2 gap-2.5 md:grid-cols-3 lg:grid-cols-5">
-        {indices.slice(0, 5).map((ix) => (
+        {loading && indices.length === 0
+          ? Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="card-subtle p-2.5">
+                <Skeleton className="h-2.5 w-16" />
+                <Skeleton className="mt-1.5 h-4 w-14" />
+                <Skeleton className="mt-2 h-6 w-full" />
+              </div>
+            ))
+          : indices.slice(0, 5).map((ix) => (
           <button
             key={`${ix.market}:${ix.symbol}`}
             onClick={() => navigate(`/index/${ix.symbol}`)}
@@ -557,7 +616,8 @@ export default function DashboardPage() {
             )}
           </div>
           {loading && candidates.length === 0 ? (
-            <div className="py-6 text-center text-[12px] text-muted-foreground">扫描中…</div>
+            /* 首次加载骨架(扫描完成后替换为真实列表) */
+            <SkeletonRows rows={6} />
           ) : candidates.length === 0 ? (
             todos.length > 0 ? (
               <div className="space-y-1.5 py-1">
@@ -644,7 +704,10 @@ export default function DashboardPage() {
               </button>
             )}
           </div>
-          {!hasHoldings ? (
+          {loading && !diag ? (
+            /* 首次加载骨架 */
+            <SkeletonRows rows={4} />
+          ) : !hasHoldings ? (
             <div className="py-6 text-center text-[12px] text-muted-foreground">
               {loading ? '加载中…' : '暂无持仓,添加持仓后这里给风险与相对大盘表现'}
             </div>

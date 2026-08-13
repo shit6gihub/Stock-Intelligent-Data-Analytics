@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   AlertCircle,
@@ -18,6 +18,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
+import SkeletonRows from '@/components/SkeletonRows'
 
 interface NotificationItem {
   id: number
@@ -192,6 +193,28 @@ export default function NotificationsPage() {
   }, [searchParams])
 
   useEffect(() => { void load() }, [load])
+
+  // 30s 自动刷新:页面可见才轮询(隐藏时暂停,回到页面立即补一次),增量拉新通知;
+  // busyRef 防请求叠加;已读状态/选中项由本地逻辑保持,列表已有数据时不闪 spinner
+  const autoRefreshBusy = useRef(false)
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState !== 'visible' || autoRefreshBusy.current) return
+      autoRefreshBusy.current = true
+      load().finally(() => {
+        autoRefreshBusy.current = false
+      })
+    }
+    const timer = setInterval(tick, 30_000)
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') tick()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [load])
 
   useEffect(() => {
     if (!selectedId) {
@@ -389,10 +412,9 @@ export default function NotificationsPage() {
             <span className="text-[11px] text-muted-foreground">{filtered.length} 条</span>
           </div>
           <div className="max-h-[420px] overflow-y-auto lg:max-h-[620px]">
-            {loading ? (
-              <div className="flex min-h-[280px] items-center justify-center text-[12px] text-muted-foreground">
-                <RefreshCw className="mr-2 h-4 w-4 animate-spin" />加载中…
-              </div>
+            {loading && items.length === 0 ? (
+              /* 首次加载骨架(列表已有数据时静默刷新,不闪 spinner) */
+              <SkeletonRows rows={7} />
             ) : filtered.length === 0 ? (
               <EmptyState filtered={items.length > 0} />
             ) : filtered.map(item => {

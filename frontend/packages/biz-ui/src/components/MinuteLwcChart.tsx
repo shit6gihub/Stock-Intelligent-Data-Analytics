@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { MinuteSwings, SwingSegment } from './InteractiveKline'
+import type { MinuteSwings } from './InteractiveKline'
 
 export interface MinutePoint {
   t: string
@@ -422,7 +422,6 @@ export default function MinuteLwcChart({ points, prevClose, isIndex, swings }: P
 
 /** 段标记完整分析 tooltip 内容 */
 function SwingTooltip({ mark }: { mark: SwingMark }) {
-  const isRally = mark.kind === 'rally'
   const dir = mark.kind === 'rally' ? '拉升' : mark.kind === 'dip' ? '下探' : '横盘'
   const mainRatio = mark.main_buy + mark.main_sell > 0
     ? Math.round((mark.main_buy / (mark.main_buy + mark.main_sell)) * 100)

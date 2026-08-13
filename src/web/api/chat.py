@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -46,6 +47,22 @@ SYSTEM_PROMPT = """你是 PanWatch 的 AI 投资助手。
 
 MAX_HISTORY_MESSAGES = 20
 MAX_TOOL_ROUNDS = 5
+
+# 工具名 → 流式阶段提示文案(tool 执行前推送给前端, 消除长等待白屏)
+_TOOL_STAGE_LABELS = {
+    "get_portfolio": "正在读取您的持仓...",
+    "get_stock_quote": "正在查询实时行情...",
+    "get_technical_analysis": "正在获取技术面分析...",
+    "get_main_intent": "正在分析主力意图(逐笔口径)...",
+    "get_rally_analysis": "正在分析盘中拉升段...",
+    "get_stock_suggestions": "正在读取历史建议...",
+    "get_watchlist": "正在读取自选股...",
+    "get_capital_flow": "正在查询主力资金流向...",
+    "tdx_wenda": "正在查询市场数据...",
+    "get_market_news": "正在获取市场资讯...",
+    "get_kline_patterns": "正在识别K线形态...",
+    "get_auction_data": "正在获取集合竞价数据...",
+}
 
 # 画像注入节流: profile_text 截断 + rules 只取前 N 条, 避免每次对话占过多 token
 _SHADOW_PROFILE_TEXT_MAX = 300
@@ -441,6 +458,136 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
     except Exception as e:
         logger.error(f"工具执行失败 {name}: {e}")
         return f"工具执行出错: {e}"
+
+
+async def _build_ai_messages(db: Session, conv: ChatConversation, user: User) -> list[dict]:
+    """构建发送给 AI 的消息列表(system + 历史 + 数据上下文)。
+
+    send_message(非流式)与 send_message_stream(流式)共用, 保证两条链路逻辑一致。
+    """
+    system_content = SYSTEM_PROMPT
+
+    # 绑定股票提示
+    if conv.stock_symbol and conv.stock_market:
+        system_content += f"\n\n当前对话关联股票：{conv.stock_market}:{conv.stock_symbol}"
+
+    # 用户交易风格画像(影子账户落库, 精简注入; 无画像则完全向后兼容)
+    shadow_profile_block = _build_shadow_profile_block(getattr(user, "shadow_profile_json", None))
+    if shadow_profile_block:
+        system_content += "\n\n--- 用户交易风格画像 ---\n" + shadow_profile_block
+
+    # 前端页面快照（对话创建时传入）
+    if conv.initial_context:
+        system_content += "\n\n--- 用户页面快照（对话创建时） ---\n" + conv.initial_context
+
+    messages_for_ai: list[dict] = [{"role": "system", "content": system_content}]
+
+    # 历史消息
+    history = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.conversation_id == conv.id)
+        .order_by(ChatMessage.created_at.asc())
+        .all()
+    )
+    recent = history[-MAX_HISTORY_MESSAGES:] if len(history) > MAX_HISTORY_MESSAGES else history
+    for m in recent:
+        if m.role in ("user", "assistant"):
+            messages_for_ai.append({"role": m.role, "content": m.content})
+
+    # 注入基础上下文（持仓 + 绑定股票的行情/建议）
+    context_parts: list[str] = []
+
+    # 用户持仓
+    portfolio_ctx = _build_portfolio_context(db)
+    if portfolio_ctx:
+        context_parts.append(portfolio_ctx)
+
+    # 绑定股票的实时数据
+    if conv.stock_symbol and conv.stock_market:
+        realtime = await _fetch_realtime_context(conv.stock_symbol, conv.stock_market)
+        if realtime:
+            context_parts.append(realtime)
+        technical = await _fetch_technical_context(conv.stock_symbol, conv.stock_market)
+        if technical:
+            context_parts.append(technical)
+        stock_ctx = _build_stock_context(db, conv.stock_symbol, conv.stock_market)
+        if stock_ctx:
+            context_parts.append(stock_ctx)
+
+    if context_parts:
+        # 把上下文追加到 system message
+        messages_for_ai[0]["content"] += "\n\n--- 当前数据 ---\n" + "\n\n".join(context_parts)
+
+    return messages_for_ai
+
+
+async def _run_tool_loop(ai_client: AIClient, messages_for_ai: list[dict], db: Session):
+    """带 tool use 的多轮对话(异步生成器)。
+
+    产出两类事件:
+    - ("stage", 阶段提示文案): 每个 tool 执行前产出, 供流式端点实时推送
+    - ("text", 最终回复全文): 循环结束时产出, 且只会产出一次
+
+    语义与原 send_message 内联循环完全等价(tool 不可用回落 chat_multi /
+    轮次上限兜底 / 异常兜底), send_message 非流式路径同样消费本生成器。
+    """
+    try:
+        for _round in range(MAX_TOOL_ROUNDS):
+            try:
+                response_msg = await ai_client.chat_with_tools(
+                    messages_for_ai, tools=CHAT_TOOLS, temperature=0.5,
+                )
+            except Exception:
+                # 模型不支持 tool use → 直接用 chat_multi
+                logger.info("Tool use 不可用，使用普通对话")
+                ai_response = await ai_client.chat_multi(messages_for_ai, temperature=0.5)
+                yield "text", ai_response
+                return
+
+            if not response_msg.tool_calls:
+                yield "text", (response_msg.content or "")
+                return
+
+            # 执行 tool calls
+            messages_for_ai.append({
+                "role": "assistant",
+                "content": response_msg.content or None,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                    }
+                    for tc in response_msg.tool_calls
+                ],
+            })
+
+            for tc in response_msg.tool_calls:
+                tool_args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                logger.info(f"Tool call: {tc.function.name}({tool_args})")
+                yield "stage", _TOOL_STAGE_LABELS.get(tc.function.name, f"正在调用 {tc.function.name}...")
+                result = await _execute_tool(db, tc.function.name, tool_args)
+                messages_for_ai.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result,
+                })
+        else:
+            yield "text", (response_msg.content or "抱歉，处理轮次过多，请精简问题再试。")
+    except Exception as e:
+        logger.error(f"AI 对话失败: {e}")
+        yield "text", f"抱歉，AI 服务暂时不可用：{e}"
+
+
+def _sse_event(event: str, data: dict) -> str:
+    """格式化一条 SSE 事件(event + data 两行, 空行结尾)。"""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _iter_text_chunks(text: str, size: int = 6):
+    """把最终回复切成小块, 模拟打字机逐段输出。"""
+    for i in range(0, len(text), size):
+        yield text[i : i + size]
 
 
 class CreateConversationBody(BaseModel):
@@ -935,7 +1082,7 @@ async def send_message(
     body: SendMessageBody,
     user: User = Depends(get_current_user),
 ):
-    """发送消息并获取 AI 回复。"""
+    """发送消息并获取 AI 回复（非流式，向后兼容）。"""
     db = SessionLocal()
     try:
         conv = db.query(ChatConversation).filter(ChatConversation.id == conversation_id).first()
@@ -957,111 +1104,13 @@ async def send_message(
         db.commit()
         db.refresh(user_msg)
 
-        # 构建消息列表
-        messages_for_ai: list[dict] = []
-
-        # System prompt
-        system_content = SYSTEM_PROMPT
-
-        # 绑定股票提示
-        if conv.stock_symbol and conv.stock_market:
-            system_content += f"\n\n当前对话关联股票：{conv.stock_market}:{conv.stock_symbol}"
-
-        # 用户交易风格画像(影子账户落库, 精简注入; 无画像则完全向后兼容)
-        shadow_profile_block = _build_shadow_profile_block(getattr(user, "shadow_profile_json", None))
-        if shadow_profile_block:
-            system_content += "\n\n--- 用户交易风格画像 ---\n" + shadow_profile_block
-
-        # 前端页面快照（对话创建时传入）
-        if conv.initial_context:
-            system_content += "\n\n--- 用户页面快照（对话创建时） ---\n" + conv.initial_context
-
-        messages_for_ai.append({"role": "system", "content": system_content})
-
-        # 历史消息
-        history = (
-            db.query(ChatMessage)
-            .filter(ChatMessage.conversation_id == conversation_id)
-            .order_by(ChatMessage.created_at.asc())
-            .all()
-        )
-        recent = history[-MAX_HISTORY_MESSAGES:] if len(history) > MAX_HISTORY_MESSAGES else history
-        for m in recent:
-            if m.role in ("user", "assistant"):
-                messages_for_ai.append({"role": m.role, "content": m.content})
-
-        # 注入基础上下文（持仓 + 绑定股票的行情/建议）
-        context_parts: list[str] = []
-
-        # 用户持仓
-        portfolio_ctx = _build_portfolio_context(db)
-        if portfolio_ctx:
-            context_parts.append(portfolio_ctx)
-
-        # 绑定股票的实时数据
-        if conv.stock_symbol and conv.stock_market:
-            realtime = await _fetch_realtime_context(conv.stock_symbol, conv.stock_market)
-            if realtime:
-                context_parts.append(realtime)
-            technical = await _fetch_technical_context(conv.stock_symbol, conv.stock_market)
-            if technical:
-                context_parts.append(technical)
-            stock_ctx = _build_stock_context(db, conv.stock_symbol, conv.stock_market)
-            if stock_ctx:
-                context_parts.append(stock_ctx)
-
-        if context_parts:
-            # 把上下文追加到 system message
-            messages_for_ai[0]["content"] += "\n\n--- 当前数据 ---\n" + "\n\n".join(context_parts)
-
-        # 调用 AI（带 tool use，用于按需获取更多数据）
+        # 构建消息列表 + 调用 AI（带 tool use，用于按需获取更多数据）
+        messages_for_ai = await _build_ai_messages(db, conv, user)
         ai_client = _get_ai_client(db, conv.ai_model_id)
         ai_response = ""
-        try:
-            for _round in range(MAX_TOOL_ROUNDS):
-                try:
-                    response_msg = await ai_client.chat_with_tools(
-                        messages_for_ai, tools=CHAT_TOOLS, temperature=0.5,
-                    )
-                except Exception:
-                    # 模型不支持 tool use → 直接用 chat_multi
-                    logger.info("Tool use 不可用，使用普通对话")
-                    ai_response = await ai_client.chat_multi(messages_for_ai, temperature=0.5)
-                    break
-
-                if not response_msg.tool_calls:
-                    ai_response = response_msg.content or ""
-                    break
-
-                # 执行 tool calls
-                messages_for_ai.append({
-                    "role": "assistant",
-                    "content": response_msg.content or None,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {"name": tc.function.name, "arguments": tc.function.arguments},
-                        }
-                        for tc in response_msg.tool_calls
-                    ],
-                })
-
-                for tc in response_msg.tool_calls:
-                    tool_args = json.loads(tc.function.arguments) if tc.function.arguments else {}
-                    logger.info(f"Tool call: {tc.function.name}({tool_args})")
-                    result = await _execute_tool(db, tc.function.name, tool_args)
-                    messages_for_ai.append({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": result,
-                    })
-            else:
-                ai_response = response_msg.content or "抱歉，处理轮次过多，请精简问题再试。"
-
-        except Exception as e:
-            logger.error(f"AI 对话失败: {e}")
-            ai_response = f"抱歉，AI 服务暂时不可用：{e}"
+        async for _kind, payload in _run_tool_loop(ai_client, messages_for_ai, db):
+            if _kind == "text":
+                ai_response = payload
 
         # 保存 AI 回复
         assistant_msg = ChatMessage(
@@ -1084,3 +1133,102 @@ async def send_message(
         }
     finally:
         db.close()
+
+
+@router.post("/conversations/{conversation_id}/messages/stream")
+async def send_message_stream(
+    conversation_id: int,
+    body: SendMessageBody,
+    user: User = Depends(get_current_user),
+):
+    """发送消息并流式返回 AI 回复(SSE, text/event-stream)。
+
+    事件类型(每行 event: xxx / data: json, 空行分隔):
+    - stage: 阶段提示 {"message": "正在查询主力资金流向..."} — tool 执行前实时推送
+    - delta: 回复正文增量 {"content": "..."} — 最终回复打字机效果
+    - done:  回复落库完成 {"id","role","content","created_at"}
+    - error: 流中断/异常 {"message": "..."}
+
+    兼容性: 非流式 POST /messages 保持原样; 本端点仅在流式场景使用。
+    消息落库与 send_message 一致: 用户消息在开始时保存, AI 回复全文在流结束时保存。
+    """
+    async def gen():
+        db = SessionLocal()
+        try:
+            conv = db.query(ChatConversation).filter(ChatConversation.id == conversation_id).first()
+            if not conv:
+                yield _sse_event("error", {"message": "对话不存在"})
+                return
+
+            # 保存用户消息
+            user_msg = ChatMessage(
+                conversation_id=conversation_id,
+                role="user",
+                content=body.content,
+            )
+            db.add(user_msg)
+
+            # 更新对话标题（首条消息取前 20 字）
+            if not conv.title:
+                conv.title = body.content[:20]
+
+            db.commit()
+            db.refresh(user_msg)
+
+            # 构建消息列表(与 send_message 共用逻辑)
+            yield _sse_event("stage", {"message": "正在准备上下文..."})
+            messages_for_ai = await _build_ai_messages(db, conv, user)
+            ai_client = _get_ai_client(db, conv.ai_model_id)
+
+            # 多轮 tool use: 每轮 tool 执行前推送阶段提示
+            ai_response = ""
+            async for kind, payload in _run_tool_loop(ai_client, messages_for_ai, db):
+                if kind == "stage":
+                    yield _sse_event("stage", {"message": payload})
+                else:
+                    ai_response = payload
+
+            # 保存 AI 回复(全文落库, 与 send_message 一致)
+            assistant_msg = ChatMessage(
+                conversation_id=conversation_id,
+                role="assistant",
+                content=ai_response,
+            )
+            db.add(assistant_msg)
+
+            # 更新对话时间
+            conv.updated_at = datetime.now(timezone.utc)
+            db.commit()
+            db.refresh(assistant_msg)
+
+            # 最终回复正文: 打字机增量推送
+            for chunk in _iter_text_chunks(ai_response):
+                yield _sse_event("delta", {"content": chunk})
+                await asyncio.sleep(0.004)
+
+            yield _sse_event("done", {
+                "id": assistant_msg.id,
+                "role": "assistant",
+                "content": assistant_msg.content,
+                "created_at": str(assistant_msg.created_at or ""),
+            })
+        except Exception as e:
+            logger.error(f"流式对话失败: {e}")
+            try:
+                yield _sse_event("error", {"message": f"AI 服务暂时不可用：{e}"})
+            except Exception:
+                pass
+        finally:
+            db.close()
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            # 声明 identity 编码, 让 GZipMiddleware 跳过压缩(否则小事件被 zlib 缓冲延迟推送)
+            "Content-Encoding": "identity",
+        },
+    )

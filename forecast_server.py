@@ -101,13 +101,16 @@ def health():
 
 
 @app.get("/predict")
-def predict(symbol: str, days: int = 5, task_id: str = "", target_date: str = ""):
+def predict(symbol: str, days: int = 5, task_id: str = "", target_date: str = "", force: bool = False):
     """多模型预测: Kronos + Chronos-Bolt + XGBoost + 线性回归 加权投票。
 
     target_date 可选: 预测到该日期为止(自动换算交易日数)。task_id 可选(进度日志)。
+    force=True 可跳过"同 symbol 未到期不重复预测"节流, 强制重新预测。
 
     并发控制(2026-08-10 多用户): 信号量限流(2核跑2个推理, 超出排队)
     + 结果缓存(symbol+基准日, 团队重复查询零重算)。
+    + 预测节流(2026-08-13): 同 symbol 已有未到期预测(target_date >= 今天)时
+      拒绝重复预测(夜间连发 bug 根因: 002361 一晚 6 连发 22:49→00:30)。
     """
     if not symbol.isdigit() or len(symbol) != 6:
         raise HTTPException(400, "symbol 需为 6 位 A 股代码")
@@ -118,12 +121,48 @@ def predict(symbol: str, days: int = 5, task_id: str = "", target_date: str = ""
     if cached is not None:
         return cached
 
+    # 预测节流(2026-08-13): 同 symbol 且 target_date 未过期(>=今天)不重复预测
+    if not force:
+        active = _find_active_prediction(symbol)
+        if active is not None:
+            raise HTTPException(
+                409,
+                f"该股票已有未到期预测(target_date={active.get('target_date', '?')}, "
+                f"方向={active.get('final_direction') or '?'}, "
+                f"创建于 {active.get('created_at', '?')}); "
+                f"如需强制重新预测请在请求加 force=true",
+            )
+
     # 信号量限流: 最多 2 个并发推理(2核 CPU), 超出排队等待
     with _predict_semaphore:
         result = _do_predict(symbol, days, task_id, target_date)
         # 写缓存(TTL 30 分钟)
         _predict_cache[cache_key] = result
         return result
+
+
+def _find_active_prediction(symbol: str) -> dict | None:
+    """查 prediction_runs 里同 symbol 未到期(target_date >= 今天)的最新预测。
+
+    返回最新一条(含 target_date/final_direction/created_at), 无则 None。
+    target_date 为空的未完成 run 不算有效预测, 不参与节流。
+    """
+    import sqlite3 as _sq
+    today = datetime.now().strftime("%Y-%m-%d")
+    try:
+        _c = _sq.connect(FORECAST_DB_PATH, timeout=5)
+        _c.row_factory = _sq.Row
+        row = _c.execute(
+            "SELECT id, symbol, target_date, final_direction, created_at "
+            "FROM prediction_runs "
+            "WHERE symbol = ? AND target_date != '' AND target_date >= ? "
+            "ORDER BY id DESC LIMIT 1",
+            (symbol, today),
+        ).fetchone()
+        _c.close()
+        return dict(row) if row else None
+    except Exception:
+        return None
 
 
 def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str = ""):

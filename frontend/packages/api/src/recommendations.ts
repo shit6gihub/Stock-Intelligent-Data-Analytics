@@ -50,6 +50,22 @@ export interface EntryCandidateFeedbackPayload {
   reason?: string
 }
 
+export interface EntryCandidateFeedbackItem {
+  snapshot_date: string
+  stock_symbol: string
+  stock_market: string
+  candidate_source?: string
+  strategy_tags?: string[]
+  useful: boolean
+  reason?: string
+  created_at?: string
+}
+
+export interface EntryCandidateFeedbackListResponse {
+  count: number
+  items: EntryCandidateFeedbackItem[]
+}
+
 export interface EntryCandidateStatsResponse {
   window_days: number
   feedback: {
@@ -435,6 +451,21 @@ export const recommendationsApi = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+
+  listEntryCandidateFeedback: (params?: {
+    snapshot_date?: string
+    market?: string
+    limit?: number
+  }) => {
+    const q = new URLSearchParams()
+    appendQuery(q, 'snapshot_date', params?.snapshot_date)
+    appendQuery(q, 'market', params?.market)
+    if (typeof params?.limit === 'number') q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return fetchAPI<EntryCandidateFeedbackListResponse>(
+      `/recommendations/entry-candidates/feedback${qs ? `?${qs}` : ''}`
+    )
+  },
 
   getEntryCandidateStats: (days = 30) =>
     fetchAPI<EntryCandidateStatsResponse>(`/recommendations/entry-candidates/stats?days=${encodeURIComponent(String(days))}`),
