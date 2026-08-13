@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { RefreshCw, AlertTriangle, Sparkles, Activity, ShieldAlert, Newspaper, Share2, Plus, TrendingUp, Flame, FileText, Droplets } from 'lucide-react'
+// 反AI模板 P2:精简图标导入 — 段落头去"每节一图标"惯性, 只保留要紧事/体检两个扫描区的图标
+import { RefreshCw, AlertTriangle, Activity, ShieldAlert, Share2, Plus, FileText } from 'lucide-react'
 import {
   dashboardApi,
   portfolioApi,
@@ -462,8 +463,8 @@ export default function DashboardPage() {
 
       {/* 最新报告:Hermes cron 盘前/盘后报告速览(最近 4 条, 30s 随首页自动刷新, 点击进报告页) */}
       <div className="card mb-3 p-4">
-        <div className="mb-1.5 flex items-center gap-2">
-          <FileText className="h-4 w-4 text-primary" />
+        {/* 反AI模板 P2:段落头去图标惯性 — 报告区非高频扫描区, 用字号层级表达层级 */}
+        <div className="mb-1.5 flex items-baseline gap-2">
           <h2 className="text-[13px] font-semibold">最新报告</h2>
           <span className="text-[10px] text-muted-foreground">Hermes cron 盘前/盘后</span>
           <button
@@ -546,15 +547,14 @@ export default function DashboardPage() {
       </div>
 
       {/* 大盘资金流(东财两市主力净流入, 对齐同花顺APP) */}
+      {/* 反AI模板 P2:次要列表区去卡片化 — 去掉盒子, 顶部 1px hairline + 留白, 标题/指标直排 */}
       {marketFlow && (
-        <div className="card-subtle mt-3 p-3">
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-            <div className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-primary" />
-              <span className="text-[12px] font-semibold">大盘资金流</span>
-              <span className="text-[10px] text-muted-foreground">东财 · 两市主力</span>
-            </div>
-            <div className="flex items-center gap-4 text-[12px]">
+        <div className="mt-5 border-t border-border/60 pt-3">
+          <div className="flex items-baseline gap-2">
+            <span className="text-[13px] font-semibold">大盘资金流</span>
+            <span className="text-[10px] text-muted-foreground">东财 · 两市主力</span>
+          </div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px]">
               <span className="text-muted-foreground">主力净流入
                 <b className={`font-mono ${(marketFlow.total_main_flow ?? 0) >= 0 ? 'text-red-500' : 'text-green-500'}`}>
                   {(marketFlow.total_main_flow ?? 0) >= 0 ? '+' : ''}{(marketFlow.total_main_flow ?? 0).toFixed(1)}亿
@@ -566,14 +566,13 @@ export default function DashboardPage() {
               <span className="text-muted-foreground">沪 <b className="font-mono">{(marketFlow.sh_flow ?? 0).toFixed(1)}亿</b>
                 <span className="mx-1">/</span>深 <b className="font-mono">{(marketFlow.sz_flow ?? 0).toFixed(1)}亿</b></span>
             </div>
-          </div>
 
           {/* 板块资金明细: 流入榜 / 流出榜 */}
           {(marketFlow.inflow_boards?.length || marketFlow.outflow_boards?.length) ? (
             <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3">
               {marketFlow.inflow_boards?.length ? (
                 <div>
-                  <div className="text-[11px] font-semibold text-red-500 mb-1 flex items-center gap-1"><Flame className="w-3 h-3" />资金流入板块</div>
+                  <div className="mb-1 text-[11px] font-semibold text-red-500">资金流入板块</div>
                   <div className="space-y-0.5">
                     {marketFlow.inflow_boards.map(b => (
                       <div key={b.name} className="flex justify-between text-[11px]">
@@ -586,7 +585,7 @@ export default function DashboardPage() {
               ) : null}
               {marketFlow.outflow_boards?.length ? (
                 <div>
-                  <div className="text-[11px] font-semibold text-green-500 mb-1 flex items-center gap-1"><Droplets className="w-3 h-3" />资金流出板块</div>
+                  <div className="mb-1 text-[11px] font-semibold text-green-500">资金流出板块</div>
                   <div className="space-y-0.5">
                     {marketFlow.outflow_boards.map(b => (
                       <div key={b.name} className="flex justify-between text-[11px]">
@@ -603,15 +602,15 @@ export default function DashboardPage() {
       )}
 
       {/* 异动池(东财) | 热榜(同花顺):并排双列,移动端堆叠;独立加载,任一失败静默不影响首页 */}
-      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+      {/* 反AI模板 P2:异动/热榜同为列表感区块, 去卡片化 — 与大盘资金流一致 hairline 分隔 */}
+      <div className="mt-5 grid grid-cols-1 gap-x-6 gap-y-4 md:grid-cols-2">
         {/* 异动池(东财) */}
-        <div className="card-subtle p-3">
-          <div className="mb-2 flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-amber-500" />
+        <div className="border-t border-border/60 pt-2.5">
+          <div className="mb-2 flex items-baseline gap-2">
             <h2 className="text-[13px] font-semibold">异动池</h2>
             <span className="text-[10px] text-muted-foreground">东财异动</span>
             {anomaliesLoading && anomalies.length === 0 && (
-              <RefreshCw className="ml-auto h-3 w-3 animate-spin text-muted-foreground" />
+              <RefreshCw className="ml-auto h-3 w-3 animate-spin self-center text-muted-foreground" />
             )}
           </div>
           {anomaliesLoading && anomalies.length === 0 ? (
@@ -667,13 +666,12 @@ export default function DashboardPage() {
         </div>
 
         {/* 热榜(同花顺) */}
-        <div className="card-subtle p-3">
-          <div className="mb-2 flex items-center gap-2">
-            <Flame className="h-4 w-4 text-orange-500" />
+        <div className="border-t border-border/60 pt-2.5">
+          <div className="mb-2 flex items-baseline gap-2">
             <h2 className="text-[13px] font-semibold">热榜</h2>
             <span className="text-[10px] text-muted-foreground">同花顺热榜</span>
             {hotStocksLoading && hotStocks.length === 0 && (
-              <RefreshCw className="ml-auto h-3 w-3 animate-spin text-muted-foreground" />
+              <RefreshCw className="ml-auto h-3 w-3 animate-spin self-center text-muted-foreground" />
             )}
           </div>
           {hotStocksLoading && hotStocks.length === 0 ? (
@@ -742,7 +740,8 @@ export default function DashboardPage() {
       </div>
 
       {/* 主体:PC 工作台 3 列(要紧事3 | 体检6 | 机会3);次级 2 列(简报6 | 机会发现6)。1280px 以下回退 7/5-5/7 两行布局 */}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">
+      {/* 反AI模板 P2:上方列表区已去卡片化, 工作台卡片区补 mt-3 维持呼吸感 */}
+      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-12">
         {/* 今日要紧事(左列,窄) */}
         <div className="card p-4 lg:col-span-7 xl:col-span-3">
           <div className="mb-2 flex items-center gap-2">
@@ -987,11 +986,9 @@ export default function DashboardPage() {
 
         {/* 机会精选(右列,窄) */}
         <div className="card p-4 lg:col-span-5 xl:col-span-3">
+          {/* 反AI模板 P2:机会非高频扫描区, 去掉图标 — 只给要紧事/体检保留扫描图标 */}
           <div className="mb-2 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-sm font-semibold">
-              <Sparkles className="h-4 w-4 text-primary" />
-              机会精选
-            </h2>
+            <h2 className="text-sm font-semibold">机会精选</h2>
             <button
               type="button"
               className="text-[11px] text-muted-foreground hover:text-foreground"
@@ -1045,10 +1042,8 @@ export default function DashboardPage() {
         {brief && (brief.title || brief.content) && (
           <div className="card p-4 lg:col-span-7 xl:col-span-6">
             <div className="mb-1 flex items-center justify-between gap-2">
-              <h2 className="flex items-center gap-2 text-sm font-semibold">
-                <Newspaper className="h-4 w-4 text-primary" />
-                {brief.agent_label}
-              </h2>
+              {/* 反AI模板 P2:简报段落头去图标, 纯字号层级 */}
+              <h2 className="text-sm font-semibold">{brief.agent_label}</h2>
               <div className="flex shrink-0 items-center gap-2">
                 <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
                   AI{brief.date ? ` · ${brief.date}` : ''}
