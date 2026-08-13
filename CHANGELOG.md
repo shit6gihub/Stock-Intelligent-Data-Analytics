@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-08-13 (v0.2.32)
+
+### style(ui) — 反 AI 模板改造(P0+P1, 基于 hallmark 58门审计)
+
+- **P0 清理**: SelfCheckModal 紫蓝渐变→品牌色; transition-all 23处→指定属性; emoji 10处→Lucide(✅🔥✨💧→CheckCircle2/Flame/Sparkles/Droplets)
+- **P1 治本**: --primary 234默认蓝→215深青钢蓝(A股数据感); 中性色 220→215 色度化; 纯白卡→纸面白; 红涨绿跌不动
+- **数字字体**: --font-num 等宽数字栈应用 8处核心数字(指数/涨跌幅/预测值/持仓市值); tabular-nums 11→22处
+- 新增审计工具: bash ~/workspace/research/panwatch-ui-audit.sh(58门→11自动检查项)
+- 实测: build 8.70s, 纯白卡清零, transition-all/emoji/紫渐变全零
+
 ## 2026-08-13 (v0.2.31)
 
 ### feat(dashboard) — 首页顶部持仓速览条换成最新报告区
