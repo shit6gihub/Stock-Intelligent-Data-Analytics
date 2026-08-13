@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-08-13 (v0.2.23)
+
+### refactor(settings) — 删除多余模型引擎配置(统一 LLM 配置中心)
+
+- 删除设置页「预测引擎 LLM(情绪打分)」配置组(forecast_llm_base_url/model/api_key 三个输入框)
+- 删除设置页「预测引擎模型清单」只读区块(loadForecastModels + /forecast/models 前端调用)
+- 后端: SETTING_DESCRIPTIONS / SECRET_SETTING_KEYS 移除 forecast_llm_* 三键, 删除废弃路由 /forecast-llm-config 与 /forecast-llm-sync-guide
+- 预测引擎 AI 裁判/情绪打分模型统一走「场景分配」(ai_scene_bindings), 旧 forecast_llm_* 仅存 DB fallback(无 UI 入口)
+
+### 实测
+- 前端 build 9.0s, 产物无 forecast_llm 残留
+- 后端 settings 相关测试 17 passed
+
+# Changelog
+
 ## 2026-08-13 (v0.2.22)
 
 ### fix(shadow) — 影子账户页白屏(React #31)

@@ -64,17 +64,10 @@ SETTING_DESCRIPTIONS = {
     "ths_password": "同花顺登录凭证(扫码返回,非用户密码,自动续期用)",
     "ths_userid": "同花顺用户ID(登录后自动写入)",
     "ths_expires": "同花顺 session 过期时间(自动续期后更新)",
-    # ---- 预测引擎 LLM 配置(设置页维护，Compose 共享 DB 自动生效) ----
-    "forecast_llm_base_url": "预测引擎 LLM 接口地址(Base URL)",
-    "forecast_llm_model": "预测引擎 LLM 模型名(情绪打分)",
-    "forecast_llm_api_key": "预测引擎 LLM API Key(情绪打分)",
 }
 
 # 敏感 key:列表接口不回显完整值,只返回是否已配置
-SECRET_SETTING_KEYS = {"wudao_mcp_token", "zhitu_token", "forecast_llm_api_key", "tdx_api_key", "ths_password"}
-
-# 预测引擎 LLM 配置 key(设置页维护，Compose 共享 DB 自动生效)
-FORECAST_LLM_KEYS = ("forecast_llm_base_url", "forecast_llm_model", "forecast_llm_api_key")
+SECRET_SETTING_KEYS = {"wudao_mcp_token", "zhitu_token", "tdx_api_key", "ths_password"}
 
 SETTING_KEYS = list(SETTING_DESCRIPTIONS.keys())
 
@@ -233,27 +226,6 @@ def update_setting(key: str, update: SettingUpdate, db: Session = Depends(get_db
 def get_version():
     """获取应用版本号"""
     return {"version": get_app_version()}
-
-
-@router.get("/forecast-llm-config")
-def get_forecast_llm_config(db: Session = Depends(get_db)):
-    """预测引擎 LLM 配置（保留给旧版主机部署脚本）。
-
-    Compose 部署下预测引擎通过 PANWATCH_DB 直接读取共享数据库，
-    不调用此接口，也不需要将密钥写入额外的 env 文件。
-    """
-    rows = db.query(AppSettings).filter(AppSettings.key.in_(FORECAST_LLM_KEYS)).all()
-    return {r.key: r.value for r in rows if r.value}
-
-
-@router.get("/forecast-llm-sync-guide")
-def get_forecast_llm_sync_guide():
-    """返回预测 LLM 配置生效方式，保留该路由兼容旧前端。"""
-    return {
-        "automatic": True,
-        "command": "",
-        "note": "Docker Compose 模式下保存后自动生效，无需脚本或重启预测引擎",
-    }
 
 
 @router.get("/update-check")
