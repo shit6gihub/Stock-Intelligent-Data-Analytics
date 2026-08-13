@@ -54,9 +54,11 @@ const desktopNavGroups = [
   { key: 'trading', items: navItems.filter(n => ['/paper-trading', '/alerts', '/shadow'].includes(n.to)) },
   { key: 'system', items: navItems.filter(n => ['/agents', '/reports', '/strategies', '/history', '/datasources', '/settings'].includes(n.to)) },
 ]
-// 移动端保持原样: 前 5 项底部导航, 其余进头像下拉
-const mobilePrimaryNavItems = navItems.slice(0, 5)
-const mobileMoreNavItems = navItems.slice(5)
+// 移动端底部 5 槽位按 to 路径挑选: 首页/持仓/机会/预测/提醒(2026-08-13, 模拟盘移入"更多"下拉,
+// 不再用 slice(0,5) 依赖 navItems 顺序); navItems 数组顺序保持不动, 桌面端平铺分组完全不变
+const MOBILE_PRIMARY_TO = ['/', '/portfolio', '/opportunities', '/forecast', '/alerts']
+const mobilePrimaryNavItems = navItems.filter(n => MOBILE_PRIMARY_TO.includes(n.to))
+const mobileMoreNavItems = navItems.filter(n => !MOBILE_PRIMARY_TO.includes(n.to))
 
 function LegacyStocksRedirect() {
   const location = useLocation()

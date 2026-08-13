@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, RefreshCw, Share2, Sparkles, ScanSearch, ThumbsDown, ThumbsUp } from 'lucide-react'
 import {
   recommendationsApi,
@@ -231,6 +231,8 @@ const regimeToneClass = (regime?: string) => {
 export default function OpportunitiesPage() {
   const [loading, setLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  // 防重复提交锁:提交/轮询期间置 true,轮询结束或同步失败后复位
+  const refreshingRef = useRef(false)
   const [error, setError] = useState('')
   const [items, setItems] = useState<StrategySignalItem[]>([])
   const [stats, setStats] = useState<StrategyStatsResponse | null>(null)
@@ -511,31 +513,45 @@ export default function OpportunitiesPage() {
   }, [load, loadCatalog, loadStats, loadWatchlist])
 
   const pollRefreshCompletion = useCallback(async () => {
-    const maxPolls = 20
-    for (let i = 0; i < maxPolls; i += 1) {
-      try {
-        const state = await recommendationsApi.getStrategyRefreshStatus()
-        if (!state.running) {
-          if (state.last_error) {
-            setError(`后台刷新失败: ${state.last_error}`)
-          } else {
-            setError('')
+    // 每 10s 轮询一次任务状态,最多 12 次(约 2 分钟)
+    const maxPolls = 12
+    try {
+      for (let i = 0; i < maxPolls; i += 1) {
+        try {
+          const state = await recommendationsApi.getStrategyRefreshStatus()
+          if (!state.running) {
+            if (state.last_error) {
+              setError(`后台刷新失败: ${state.last_error}`)
+              toast(`后台刷新失败: ${state.last_error}`, 'error')
+            } else {
+              setError('')
+              toast('刷新完成,机会列表已更新', 'success')
+            }
+            await Promise.all([load(), loadStats()])
+            return
           }
-          await Promise.all([load(), loadStats()])
-          return
+        } catch {
+          // 轮询瞬时错误忽略,继续下一轮
         }
-      } catch {
-        // Ignore transient polling error and continue.
+        await sleep(10000)
       }
-      await sleep(3000)
+      // 2 分钟仍未完成:提示任务仍在后台,恢复按钮让用户稍后手动刷新
+      await Promise.all([load(), loadStats()])
+      setError((prev) => prev || '刷新任务仍在后台执行,全市场扫描约需 1-3 分钟,请稍后手动刷新查看')
+      toast('刷新任务仍在后台执行,预计 1-3 分钟完成', 'info')
+    } finally {
+      // 轮询结束:无论成功/失败/超时都恢复按钮,允许再次提交
+      refreshingRef.current = false
+      setRefreshing(false)
     }
-    await Promise.all([load(), loadStats()])
-    setError((prev) => prev || '刷新任务仍在后台执行，请稍后重试')
-  }, [load, loadStats])
+  }, [load, loadStats, toast])
 
   const handleRefresh = async () => {
+    if (refreshingRef.current) return
+    refreshingRef.current = true
     setRefreshing(true)
     setError('')
+    let backgroundQueued = false
     try {
       const resp = await recommendationsApi.refreshStrategySignals({
         rebuild_candidates: true,
@@ -546,7 +562,9 @@ export default function OpportunitiesPage() {
         wait: false,
       })
       if (resp.queued) {
-        setError(resp.accepted ? '已提交后台刷新任务，完成后自动更新' : '刷新任务已在执行中，完成后自动更新')
+        // 后台任务已接受:保持"刷新中"状态,轮询完成后自动重载列表
+        backgroundQueued = true
+        setError('')
         void pollRefreshCompletion()
         return
       }
@@ -554,13 +572,19 @@ export default function OpportunitiesPage() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : '刷新失败'
       if (msg.includes('超时')) {
-        setError('刷新任务耗时较长，已在后台继续执行，请稍后再点刷新')
+        setError('刷新任务耗时较长,已在后台继续执行,请稍后再点刷新')
+        toast('刷新任务已在后台继续执行', 'info')
         await load()
       } else {
         setError(msg)
+        toast(`刷新失败: ${msg}`, 'error')
       }
     } finally {
-      setRefreshing(false)
+      // 同步路径(未走后台轮询)才在此恢复按钮;后台轮询由 pollRefreshCompletion 统一恢复
+      if (!backgroundQueued) {
+        refreshingRef.current = false
+        setRefreshing(false)
+      }
     }
   }
 
@@ -687,11 +711,32 @@ export default function OpportunitiesPage() {
             onClick={handleRefresh}
             disabled={refreshing}
           >
-            {refreshing ? <span className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
-            刷新
+            {refreshing ? (
+              <>
+                <span className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin mr-1" />
+                刷新中…
+              </>
+            ) : (
+              <>
+                <RefreshCw className="w-3.5 h-3.5 mr-1" />
+                刷新
+              </>
+            )}
           </Button>
         </div>
       </div>
+
+      {/* 后台刷新任务进行中提示条:让用户知道任务在跑、预期多久 */}
+      {refreshing && (
+        <div className="card p-3 mb-4 flex items-center gap-2 text-[12px] text-primary">
+          <span className="w-3.5 h-3.5 border-2 border-primary/30 border-t-primary rounded-full animate-spin shrink-0" />
+          <div className="flex-1">
+            <span className="font-medium">后台刷新中…</span>
+            <span className="text-muted-foreground ml-1">全市场扫描约需 1-3 分钟,完成后将自动更新列表</span>
+          </div>
+          <span className="text-[11px] text-muted-foreground">已提交,请稍候</span>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
         <div className="card p-3">

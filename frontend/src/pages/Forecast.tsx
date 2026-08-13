@@ -724,6 +724,24 @@ export default function ForecastPage() {
                   加权方向 {result.direction === 'up' ? '↑ 看多' : result.direction === 'down' ? '↓ 看空' : '→ 横盘'} ({result.expected_pct > 0 ? '+' : ''}{result.expected_pct}%)
                 </span>
               </div>
+              {/* 模型权重透明度: 4 模型投票权重。
+                  数据源: 引擎无公开权重接口(/forecast/models 只返回模型清单、/health 无权重、
+                  predict 响应不含权重字段), 此处展示生产后端最新一次回测落盘的实时权重
+                  (~/.panwatch_model_weights.json, 2026-08-13 17:56 更新, source=backtest):
+                  kronos 0.4414 / chronos 0.3379 / xgboost 0.1103 / linreg 0.1103。
+                  权重按历史回测命中率动态调整, 下次回测后可能变化;
+                  待后端暴露权重接口后应改为运行时拉取, 避免数字过期。 */}
+              <div className="mb-2 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+                <span>当前模型权重</span>
+                <span className="font-mono font-medium text-foreground/80">Kronos 44%</span>
+                <span>·</span>
+                <span className="font-mono font-medium text-foreground/80">Chronos 34%</span>
+                <span>·</span>
+                <span className="font-mono font-medium text-foreground/80">XGB 11%</span>
+                <span>·</span>
+                <span className="font-mono font-medium text-foreground/80">线性回归 11%</span>
+                <span className="opacity-70">(按历史命中率动态调整 · 最近回测 2026-08-13)</span>
+              </div>
               <ModelDivergenceChart result={result} />
             </div>
 
