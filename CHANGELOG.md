@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-08-13 (v0.2.24)
+
+### fix(ai) — 场景绑定跨服务商 404 "model is not found"
+
+**根因**: 统一 LLM 配置中心场景绑定时只改 `ai_client.model` 字符串, base_url/api_key 未同步切换。
+agent_configs 里 premarket_outlook/daily_report 绑定商汤 deepseek-v4-flash, reports 场景绑定 agnes-2.5-flash,
+绑定后请求仍发往商汤 API + agnes 模型名 → 404 (商汤无此模型)。商汤 API 实测有 deepseek-v4-flash,
+直接调用正常, 故 404 非 key/模型缺失, 而是绑定切换不完整。
+
+**修复**:
+- src/agents/base.py `apply_scene_binding`: 绑定命中时整体重建 AIClient(base_url+api_key+model 一起换), 保留 total_tokens_used
+- src/web/api/insights.py 两处(评估/公告解读): 改走 `_client_from_scene_cfg` 整体重建(原实现 _coerce_bound_model 返回字符串, bound.get() 静默失败)
+
+### 实测
+- 模拟 build_context(商汤 deepseek) → apply_scene_binding(reports) → client 变为 agnes base_url/model, 真实 chat 成功
+- 231 tests passed
+
+# Changelog
+
 ## 2026-08-13 (v0.2.23)
 
 ### refactor(settings) — 删除多余模型引擎配置(统一 LLM 配置中心)
