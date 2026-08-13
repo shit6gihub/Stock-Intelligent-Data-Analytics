@@ -19,3 +19,4 @@ export * from './providers'
 export * from './reports'
 export * from "./strategies"
 export * from './tdx'
+export * from './fundamentals'

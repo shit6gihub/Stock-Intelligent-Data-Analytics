@@ -6,6 +6,8 @@ import {
   insightApi,
   stocksApi,
   tradingAgentsApi,
+  fundamentalsApi,
+  type FundamentalsDetail,
   type DeepAnalysisResult,
   type HistoryComparisonResponse,
 } from '@panwatch/api'
@@ -135,7 +137,7 @@ interface PortfolioSummaryResponse {
   }>
 }
 
-type InsightTab = 'overview' | 'kline' | 'suggestions' | 'news' | 'announcements' | 'reports' | 'deep' | 'company'
+type InsightTab = 'overview' | 'kline' | 'suggestions' | 'news' | 'announcements' | 'reports' | 'deep' | 'company' | 'fundamentals'
 
 interface StockAgentInfo {
   agent_name: string
@@ -387,6 +389,206 @@ function TechnicalIndicatorStrip(props: {
   )
 }
 
+/**
+ * 基本面明细面板(龙虎榜/融资融券/股东户数/分红/事件日历)。
+ * 数据来自 GET /api/market-data/fundamentals-detail/{symbol}?market=CN。
+ * 容错策略: 加载中→"加载中"; 失败/无数据→静默"暂无"(不 toast, 不阻断弹窗其他功能);
+ * 各分区有数据才显示, 字段缺失显示 "--"。字段口径与后端 chat.py 渲染保持一致
+ * (金额=元, 户数=户, change_ratio 为百分数值, transfer/bonus_ratio 为每10股股数)。
+ */
+function FundamentalsPanel(props: {
+  data: FundamentalsDetail | null
+  loading: boolean
+  loaded: boolean
+}) {
+  const { data, loading, loaded } = props
+  // 防御性取值: 后端字段可能缺省/为 null, 统一规整为数组
+  const d = data || ({} as FundamentalsDetail)
+  const dtList = Array.isArray(d.dragon_tiger) ? d.dragon_tiger : []
+  const mgList = Array.isArray(d.margin) ? d.margin : []
+  const scList = Array.isArray(d.shareholders) ? d.shareholders : []
+  const divList = Array.isArray(d.dividend) ? d.dividend : []
+  const evList = Array.isArray(d.events) ? d.events : []
+  const hasAny = dtList.length > 0 || mgList.length > 0 || scList.length > 0 || divList.length > 0 || evList.length > 0
+
+  if (loading) {
+    return <div className="card p-6 text-[12px] text-muted-foreground text-center">加载中...</div>
+  }
+  // 后端端点未就绪(404/超时)或该股确无数据: 静默降级为"暂无"
+  if (!loaded || !hasAny) {
+    return <div className="card p-6 text-[12px] text-muted-foreground text-center">暂无基本面数据</div>
+  }
+
+  /** 金额(元)→万/亿 紧凑展示; 龙虎榜净买入/股东变动用红涨绿跌配色 */
+  const money = (v: number | null | undefined) => (v == null ? '--' : formatCompactNumber(v))
+  const signedMoney = (v: number | null | undefined) =>
+    v == null ? '--' : `${v >= 0 ? '+' : ''}${formatCompactNumber(v)}`
+  const signedPct = (v: number | null | undefined) =>
+    v == null ? '--' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`
+
+  return (
+    <div className="space-y-3">
+      {/* 龙虎榜 */}
+      {dtList.length > 0 && (
+        <div className="card p-4">
+          <div className="text-[11px] text-muted-foreground mb-2">龙虎榜</div>
+          <div className="overflow-x-auto -mx-1">
+            <table className="w-full text-[11px]">
+              <thead className="text-muted-foreground">
+                <tr className="border-b border-border/40">
+                  <th className="text-left px-1 py-1 font-normal whitespace-nowrap">日期</th>
+                  <th className="text-right px-1 py-1 font-normal whitespace-nowrap">净买入</th>
+                  <th className="text-left px-1 py-1 font-normal">上榜原因</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dtList.map((item, i) => (
+                  <tr key={`dt-${item.trade_date || i}-${i}`} className="border-b border-border/20 hover:bg-accent/10">
+                    <td className="px-1 py-1 text-muted-foreground whitespace-nowrap">{item.trade_date || '--'}</td>
+                    <td className={`px-1 py-1 text-right font-mono whitespace-nowrap ${(item.net_buy ?? 0) >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                      {signedMoney(item.net_buy)}
+                    </td>
+                    <td className="px-1 py-1 text-foreground/80">{item.reason || '--'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 融资融券 */}
+      {mgList.length > 0 && (
+        <div className="card p-4">
+          <div className="text-[11px] text-muted-foreground mb-2">融资融券</div>
+          <div className="overflow-x-auto -mx-1">
+            <table className="w-full text-[11px]">
+              <thead className="text-muted-foreground">
+                <tr className="border-b border-border/40">
+                  <th className="text-left px-1 py-1 font-normal whitespace-nowrap">日期</th>
+                  <th className="text-right px-1 py-1 font-normal whitespace-nowrap">融资余额</th>
+                  <th className="text-right px-1 py-1 font-normal whitespace-nowrap">融券余额</th>
+                  <th className="text-right px-1 py-1 font-normal whitespace-nowrap">融资买入</th>
+                  <th className="text-right px-1 py-1 font-normal whitespace-nowrap">两融合计</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mgList.map((item, i) => (
+                  <tr key={`mg-${item.date || i}-${i}`} className="border-b border-border/20 hover:bg-accent/10">
+                    <td className="px-1 py-1 text-muted-foreground whitespace-nowrap">{item.date || '--'}</td>
+                    <td className="px-1 py-1 text-right font-mono whitespace-nowrap">{money(item.rz_balance)}</td>
+                    <td className="px-1 py-1 text-right font-mono whitespace-nowrap">{money(item.rq_balance)}</td>
+                    <td className="px-1 py-1 text-right font-mono whitespace-nowrap">{money(item.rz_buy)}</td>
+                    <td className="px-1 py-1 text-right font-mono whitespace-nowrap">{money(item.total_balance)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 股东户数 */}
+      {scList.length > 0 && (
+        <div className="card p-4">
+          <div className="text-[11px] text-muted-foreground mb-2">股东户数</div>
+          <div className="overflow-x-auto -mx-1">
+            <table className="w-full text-[11px]">
+              <thead className="text-muted-foreground">
+                <tr className="border-b border-border/40">
+                  <th className="text-left px-1 py-1 font-normal whitespace-nowrap">日期</th>
+                  <th className="text-right px-1 py-1 font-normal whitespace-nowrap">股东户数</th>
+                  <th className="text-right px-1 py-1 font-normal whitespace-nowrap">变动</th>
+                  <th className="text-right px-1 py-1 font-normal whitespace-nowrap">环比</th>
+                </tr>
+              </thead>
+              <tbody>
+                {scList.map((item, i) => (
+                  <tr key={`sc-${item.report_date || i}-${i}`} className="border-b border-border/20 hover:bg-accent/10">
+                    <td className="px-1 py-1 text-muted-foreground whitespace-nowrap">{item.report_date || '--'}</td>
+                    <td className="px-1 py-1 text-right font-mono whitespace-nowrap">{money(item.holder_num)}</td>
+                    {/* 户数减少=筹码集中, 按 A 股习惯红涨绿跌配色 */}
+                    <td className={`px-1 py-1 text-right font-mono whitespace-nowrap ${item.change_num == null ? 'text-foreground/80' : item.change_num < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                      {signedMoney(item.change_num)}
+                    </td>
+                    <td className={`px-1 py-1 text-right font-mono whitespace-nowrap ${item.change_ratio == null ? 'text-foreground/80' : item.change_ratio < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                      {signedPct(item.change_ratio)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 分红 */}
+      {divList.length > 0 && (
+        <div className="card p-4">
+          <div className="text-[11px] text-muted-foreground mb-2">分红</div>
+          <div className="overflow-x-auto -mx-1">
+            <table className="w-full text-[11px]">
+              <thead className="text-muted-foreground">
+                <tr className="border-b border-border/40">
+                  <th className="text-left px-1 py-1 font-normal">分红方案</th>
+                  <th className="text-left px-1 py-1 font-normal whitespace-nowrap">除权除息日</th>
+                  <th className="text-right px-1 py-1 font-normal whitespace-nowrap">每股派息</th>
+                  <th className="text-left px-1 py-1 font-normal whitespace-nowrap">进度</th>
+                </tr>
+              </thead>
+              <tbody>
+                {divList.map((item, i) => {
+                  // 方案拼装: 10派X元 + 10转X + 10送X(与后端 chat.py 口径一致)
+                  const parts: string[] = []
+                  if (item.dividend_per_share != null) parts.push(`10派${(item.dividend_per_share * 10).toFixed(2)}元`)
+                  if (item.transfer_ratio != null) parts.push(`10转${item.transfer_ratio}`)
+                  if (item.bonus_ratio != null) parts.push(`10送${item.bonus_ratio}`)
+                  return (
+                    <tr key={`div-${item.ex_date || i}-${i}`} className="border-b border-border/20 hover:bg-accent/10">
+                      <td className="px-1 py-1 text-foreground/90 whitespace-nowrap">{parts.length > 0 ? parts.join(' ') : '--'}</td>
+                      <td className="px-1 py-1 text-muted-foreground whitespace-nowrap">{item.ex_date || '--'}</td>
+                      <td className="px-1 py-1 text-right font-mono whitespace-nowrap">{item.dividend_per_share != null ? `${item.dividend_per_share.toFixed(2)}元` : '--'}</td>
+                      <td className="px-1 py-1 text-muted-foreground whitespace-nowrap">{item.progress || '--'}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 事件日历 */}
+      {evList.length > 0 && (
+        <div className="card p-4">
+          <div className="text-[11px] text-muted-foreground mb-2">事件日历(近7日)</div>
+          <div className="space-y-1.5">
+            {evList.map((item, i) => {
+              const evDate = typeof item.publish_time === 'string' ? item.publish_time.slice(0, 10) : ''
+              const title = item.title || '--'
+              return (
+                <div key={`ev-${item.external_id || item.publish_time || i}-${i}`} className="flex items-start gap-2 rounded bg-accent/15 px-2 py-1.5">
+                  <span className="text-[11px] text-muted-foreground whitespace-nowrap mt-px">{evDate || '--'}</span>
+                  {item.event_type && (
+                    <span className="shrink-0 rounded-full bg-accent/60 px-1.5 py-0.5 text-[10px] text-foreground/80">{item.event_type}</span>
+                  )}
+                  {item.url ? (
+                    <a href={item.url} target="_blank" rel="noreferrer" className="text-[12px] text-foreground/90 leading-snug hover:text-primary hover:underline line-clamp-2">
+                      {title}
+                    </a>
+                  ) : (
+                    <span className="text-[12px] text-foreground/90 leading-snug line-clamp-2">{title}</span>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function StockInsightModal(props: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -417,6 +619,10 @@ export default function StockInsightModal(props: {
   const [quote, setQuote] = useState<QuoteResponse | null>(null)
   const [companyInfo, setCompanyInfo] = useState<CompanyInfo | null>(null)
   const [companyLoading, setCompanyLoading] = useState(false)
+  // 基本面明细(龙虎榜/股东户数/分红/两融/事件日历): 懒加载 + 静默降级
+  const [fundamentals, setFundamentals] = useState<FundamentalsDetail | null>(null)
+  const [fundamentalsLoading, setFundamentalsLoading] = useState(false)
+  const [fundamentalsLoaded, setFundamentalsLoaded] = useState(false)
   const [klineSummary, setKlineSummary] = useState<KlineSummary | null>(null)
   /** 2026-08-12 预热优化: 弹窗打开即拉主力意图, 切到 K线 tab 秒显图例卡 */
   const [mainIntent, setMainIntent] = useState<MainIntentStructured | null>(null)
@@ -472,6 +678,24 @@ export default function StockInsightModal(props: {
       setCompanyLoading(false)
     }
   }, [symbol, market, companyInfo])
+
+  /**
+   * 拉取基本面明细(龙虎榜/股东户数/分红/融资融券/事件日历)。
+   * 该端点后端可能尚未就绪(404/超时): 失败静默降级, 不 toast、不阻断弹窗其他功能。
+   */
+  const loadFundamentals = useCallback(async () => {
+    if (!symbol) return
+    setFundamentalsLoading(true)
+    try {
+      const data = await fundamentalsApi.detail(symbol, market)
+      setFundamentals(data || null)
+    } catch {
+      setFundamentals(null)
+    } finally {
+      setFundamentalsLoaded(true)
+      setFundamentalsLoading(false)
+    }
+  }, [symbol, market])
 
   const loadKline = useCallback(async () => {
     if (!symbol) return
@@ -751,13 +975,13 @@ export default function StockInsightModal(props: {
     if (!symbol) return
     setLoading(true)
     try {
-      await Promise.allSettled([loadQuote(), loadKline(), loadMiniKline(), loadSuggestions(), loadNews(), loadAnnouncements(), loadHoldingAgg(), loadReports()])
+      await Promise.allSettled([loadQuote(), loadKline(), loadMiniKline(), loadSuggestions(), loadNews(), loadAnnouncements(), loadHoldingAgg(), loadReports(), loadFundamentals()])
     } catch (e) {
       toast(e instanceof Error ? e.message : '加载失败', 'error')
     } finally {
       setLoading(false)
     }
-  }, [symbol, loadQuote, loadKline, loadMiniKline, loadSuggestions, loadNews, loadAnnouncements, loadHoldingAgg, loadReports, toast])
+  }, [symbol, loadQuote, loadKline, loadMiniKline, loadSuggestions, loadNews, loadAnnouncements, loadHoldingAgg, loadReports, loadFundamentals, toast])
 
   const refreshForAuto = useCallback(async () => {
     if (!symbol) return
@@ -780,8 +1004,11 @@ export default function StockInsightModal(props: {
     if (tab === 'company') {
       tasks.push(loadCompany())
     }
+    if (tab === 'fundamentals') {
+      tasks.push(loadFundamentals())
+    }
     await Promise.allSettled(tasks)
-  }, [symbol, tab, loadQuote, loadHoldingAgg, loadKline, loadMiniKline, loadSuggestions, loadNews, loadAnnouncements, loadReports, loadCompany])
+  }, [symbol, tab, loadQuote, loadHoldingAgg, loadKline, loadMiniKline, loadSuggestions, loadNews, loadAnnouncements, loadReports, loadCompany, loadFundamentals])
 
   const loadDeepResult = useCallback(async () => {
     if (!symbol) return
@@ -816,6 +1043,8 @@ export default function StockInsightModal(props: {
     setDeepResult(null)
     setDeepLoaded(false)
     setDeepHistory(null)
+    setFundamentals(null)
+    setFundamentalsLoaded(false)
     loadCore()
   }, [props.open, symbol, market, loadCore])
 
@@ -826,6 +1055,14 @@ export default function StockInsightModal(props: {
       loadDeepResult()
     }
   }, [tab, props.open, symbol, deepLoaded, deepLoading, loadDeepResult])
+
+  // 切到「基本面」tab 时按需拉取(仅首次; 失败也置 loaded, 避免反复请求 404)
+  useEffect(() => {
+    if (!props.open || !symbol) return
+    if (tab === 'fundamentals' && !fundamentalsLoaded && !fundamentalsLoading) {
+      loadFundamentals()
+    }
+  }, [tab, props.open, symbol, fundamentalsLoaded, fundamentalsLoading, loadFundamentals])
 
   useEffect(() => {
     if (!props.open || !symbol) return
@@ -1463,6 +1700,7 @@ export default function StockInsightModal(props: {
                 { id: 'reports', label: `报告 (${reports.length})` },
                 { id: 'deep', label: deepResult ? '深度 (1)' : '深度' },
                 { id: 'kline', label: 'K线' },
+                { id: 'fundamentals', label: '基本面' },
                 { id: 'announcements', label: `公告 (${announcements.length})` },
                 { id: 'news', label: `新闻 (${news.length})` },
                 { id: 'company', label: '简介' },
@@ -2080,6 +2318,9 @@ export default function StockInsightModal(props: {
               </div>
             )}
 
+            {tab === 'fundamentals' && (
+              <FundamentalsPanel data={fundamentals} loading={fundamentalsLoading} loaded={fundamentalsLoaded} />
+            )}
 
           </div>
         </DialogContent>

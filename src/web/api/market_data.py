@@ -9,6 +9,7 @@
 暴露:
 - GET /api/market-data/dragon-tiger/{date}  龙虎榜(ftshare vendor)
 - GET /api/market-data/capital-flow/{symbol}  资金流(经 MarketData Engine, 走 UI 配置 vendor)
+- GET /api/market-data/fundamentals-detail/{symbol}  个股基本面明细合并端点(龙虎榜/两融/股东户数/分红/事件日历)
 """
 from __future__ import annotations
 
@@ -188,4 +189,154 @@ async def market_capital_flow_proxy():
         }
     except Exception as e:
         logger.warning(f"大盘资金代理失败: {e}")
+        raise HTTPException(502, f"数据源调用失败: {e}")
+
+
+# ──────────────── 个股基本面明细合并(龙虎榜/两融/股东户数/分红/事件日历) ────────────────
+
+
+def fetch_fundamentals_detail(symbol: str, market: str = "CN", dt_days: int = 10) -> dict:
+    """个股基本面明细合并取数(纯函数, 供 HTTP 端点与对话助手共用)。
+
+    - dragon_tiger: 市场级按日接口, 回溯最近 dt_days 个自然日并按 symbol 过滤
+    - margin / shareholders / dividend / events: 按 symbol 批量接口
+    每类独立容错: 单类 vendor 失败只记日志、该类别返回空数组, 不拖垮整体。
+    """
+    from datetime import date, timedelta
+
+    from src.core.marketdata_client import get_market_data
+
+    md = get_market_data()
+    out: dict = {
+        "symbol": symbol,
+        "market": market,
+        "dragon_tiger": [],
+        "margin": [],
+        "shareholders": [],
+        "dividend": [],
+        "events": [],
+    }
+
+    # 1) 龙虎榜(市场级按日, 回溯 dt_days 天按 symbol 过滤; 引擎内存缓存, 重复日期不重复抓)
+    scanned = max(1, min(int(dt_days), 30))
+    d = date.today()
+    for _ in range(scanned):
+        ds = d.strftime("%Y%m%d")
+        d -= timedelta(days=1)
+        try:
+            rows = md.dragon_tiger(date=ds, market=market) or []
+        except Exception as e:
+            logger.warning(f"基本面明细-龙虎榜[{ds}]查询失败(跳过): {e}")
+            continue
+        for i in rows:
+            if getattr(i, "symbol", "") != symbol:
+                continue
+            out["dragon_tiger"].append(
+                {
+                    "trade_date": getattr(i, "trade_date", ds),
+                    "symbol": getattr(i, "symbol", symbol),
+                    "name": getattr(i, "name", ""),
+                    "reason": getattr(i, "reason", None),
+                    "close": getattr(i, "close", None),
+                    "change_pct": getattr(i, "change_pct", None),
+                    "net_buy": getattr(i, "net_buy", None),
+                    "buy_amt": getattr(i, "buy_amt", None),
+                    "sell_amt": getattr(i, "sell_amt", None),
+                    "turnover_pct": getattr(i, "turnover_pct", None),
+                }
+            )
+    # 龙虎榜按交易日倒序(新→旧)
+    out["dragon_tiger"].sort(key=lambda r: r["trade_date"] or "", reverse=True)
+
+    # 2) 融资融券(按 symbol, 取最新快照)
+    try:
+        for i in md.margin([symbol], market=market) or []:
+            out["margin"].append(
+                {
+                    "date": getattr(i, "date", ""),
+                    "symbol": getattr(i, "symbol", symbol),
+                    "rz_balance": getattr(i, "rz_balance", None),
+                    "rz_buy": getattr(i, "rz_buy", None),
+                    "rz_repay": getattr(i, "rz_repay", None),
+                    "rq_balance": getattr(i, "rq_balance", None),
+                    "rq_sell_vol": getattr(i, "rq_sell_vol", None),
+                    "rq_repay_vol": getattr(i, "rq_repay_vol", None),
+                    "total_balance": getattr(i, "total_balance", None),
+                }
+            )
+    except Exception as e:
+        logger.warning(f"基本面明细-两融[{symbol}]查询失败: {e}")
+
+    # 3) 股东户数(按 symbol, 取最新一期)
+    try:
+        for i in md.shareholders([symbol], market=market) or []:
+            out["shareholders"].append(
+                {
+                    "report_date": getattr(i, "report_date", ""),
+                    "symbol": getattr(i, "symbol", symbol),
+                    "holder_num": getattr(i, "holder_num", None),
+                    "change_num": getattr(i, "change_num", None),
+                    "change_ratio": getattr(i, "change_ratio", None),
+                    "avg_shares": getattr(i, "avg_shares", None),
+                }
+            )
+    except Exception as e:
+        logger.warning(f"基本面明细-股东户数[{symbol}]查询失败: {e}")
+
+    # 4) 分红(按 symbol, 全部历史, 按除权日倒序)
+    try:
+        for i in md.dividend([symbol], market=market) or []:
+            out["dividend"].append(
+                {
+                    "ex_date": getattr(i, "ex_date", ""),
+                    "symbol": getattr(i, "symbol", symbol),
+                    "dividend_per_share": getattr(i, "dividend_per_share", None),
+                    "transfer_ratio": getattr(i, "transfer_ratio", None),
+                    "bonus_ratio": getattr(i, "bonus_ratio", None),
+                    "progress": getattr(i, "progress", ""),
+                }
+            )
+        out["dividend"].sort(key=lambda r: r["ex_date"] or "", reverse=True)
+    except Exception as e:
+        logger.warning(f"基本面明细-分红[{symbol}]查询失败: {e}")
+
+    # 5) 事件日历(按 symbol, 近 since_days=7 日公告/业绩)
+    try:
+        for i in md.events([symbol], market=market, since_days=7) or []:
+            ts = getattr(i, "publish_time", None)
+            out["events"].append(
+                {
+                    "source": getattr(i, "source", ""),
+                    "external_id": getattr(i, "external_id", ""),
+                    "event_type": getattr(i, "event_type", ""),
+                    "title": getattr(i, "title", ""),
+                    "publish_time": ts.isoformat() if ts else None,
+                    "importance": getattr(i, "importance", 0),
+                    "url": getattr(i, "url", ""),
+                }
+            )
+        out["events"].sort(
+            key=lambda r: r["publish_time"] or "", reverse=True
+        )
+    except Exception as e:
+        logger.warning(f"基本面明细-事件[{symbol}]查询失败: {e}")
+
+    return out
+
+
+@router.get("/fundamentals-detail/{symbol}")
+async def fundamentals_detail_proxy(
+    symbol: str,
+    market: str = Query("CN", description="市场"),
+    dt_days: int = Query(10, ge=1, le=30, description="龙虎榜回溯天数(自然日)"),
+):
+    """个股基本面明细合并端点: 龙虎榜/融资融券/股东户数/分红/事件日历。
+
+    每类独立容错, 无数据返回空数组; 单类 vendor 失败不影响其余四类。
+    key 来自「设置→接口Key」配置的 data_sources(type=dragon_tiger/margin/...), 实时生效。
+    """
+    try:
+        return fetch_fundamentals_detail(symbol, market=market, dt_days=dt_days)
+    except Exception as e:
+        logger.warning(f"基本面明细代理失败 [{symbol}]: {e}")
         raise HTTPException(502, f"数据源调用失败: {e}")

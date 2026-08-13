@@ -74,6 +74,7 @@ _TOOL_STAGE_LABELS = {
     "get_opportunities": "正在读取今日机会候选...",
     "get_strategy_signals": "正在读取策略信号...",
     "get_notifications": "正在读取系统通知...",
+    "get_fundamentals_detail": "正在查询基本面明细(龙虎榜/股东/分红/两融/事件)...",
 }
 
 # 画像注入节流: profile_text 截断 + rules 只取前 N 条, 避免每次对话占过多 token
@@ -343,6 +344,21 @@ CHAT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_fundamentals_detail",
+            "description": "获取个股基本面明细（合并五类）：龙虎榜（近10日上榜记录，含净买入/买卖额）、融资融券（两融余额/融资买入偿还）、股东户数（最新一期及环比变化）、分红历史（每股派息/送转）、事件日历（近7日公告/业绩预告）。用于回答「XX最近有什么龙虎榜/分红/股东户数变化/融资融券/事件公告」等个股基本面明细类问题。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "股票代码，如 002361"},
+                    "market": {"type": "string", "description": "市场代码：CN/HK/US", "default": "CN"},
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
 ]
 
 
@@ -538,6 +554,95 @@ def _read_notifications(db: Session, limit: int = 10, unread_only: bool = False)
     return "\n".join(lines)
 
 
+# ──────────────── 个股基本面明细工具(2026-08-13): 龙虎榜/两融/股东/分红/事件 ────────────────
+
+
+def _fmt_yi(v) -> str:
+    """元 → 亿(2位小数); None → —。"""
+    if v is None:
+        return "—"
+    try:
+        return f"{float(v) / 1e8:,.2f}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _fmt_num(v) -> str:
+    """千分位整数; None → —。"""
+    if v is None:
+        return "—"
+    try:
+        return f"{float(v):,.0f}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _format_fundamentals_text(symbol: str, market: str, data: dict) -> str:
+    """把 fetch_fundamentals_detail 的 dict 渲染成对话助手可读文本(无数据明确说「暂无」)。"""
+    lines = [f"【{symbol} 基本面明细】(市场 {market})"]
+
+    # 1) 龙虎榜(近10日)
+    dt = data.get("dragon_tiger") or []
+    lines.append(f"■ 龙虎榜(近10日): {len(dt)}条" if dt else "■ 龙虎榜(近10日): 暂无")
+    for r in dt[:8]:
+        chg = r.get("change_pct")
+        chg_str = f"{chg:+.2f}%" if isinstance(chg, (int, float)) else "—"
+        reason = r.get("reason") or "—"
+        lines.append(
+            f"- {r.get('trade_date') or '—'} 收盘{_fmt_num(r.get('close'))} "
+            f"涨跌{chg_str} 净买{_fmt_yi(r.get('net_buy'))}亿 "
+            f"买入{_fmt_yi(r.get('buy_amt'))}亿 卖出{_fmt_yi(r.get('sell_amt'))}亿 原因:{reason}"
+        )
+
+    # 2) 融资融券
+    mg = data.get("margin") or []
+    lines.append(f"■ 融资融券: {len(mg)}条" if mg else "■ 融资融券: 暂无")
+    for r in mg[:3]:
+        lines.append(
+            f"- {r.get('date') or '—'} 融资余额{_fmt_yi(r.get('rz_balance'))}亿 "
+            f"融券余额{_fmt_yi(r.get('rq_balance'))}亿 两融合计{_fmt_yi(r.get('total_balance'))}亿 "
+            f"融资买入{_fmt_yi(r.get('rz_buy'))}亿 融资偿还{_fmt_yi(r.get('rz_repay'))}亿"
+        )
+
+    # 3) 股东户数
+    sh = data.get("shareholders") or []
+    lines.append(f"■ 股东户数: {len(sh)}期" if sh else "■ 股东户数: 暂无")
+    for r in sh[:3]:
+        cr = r.get("change_ratio")
+        cr_str = f"{cr:+.2f}%" if isinstance(cr, (int, float)) else "—"
+        cn = r.get("change_num")
+        cn_str = f"{int(cn):+,}" if isinstance(cn, (int, float)) else "—"
+        lines.append(
+            f"- {r.get('report_date') or '—'} 户数{_fmt_num(r.get('holder_num'))} "
+            f"较上期{cn_str}户(环比{cr_str}) 户均持股{_fmt_num(r.get('avg_shares'))}"
+        )
+
+    # 4) 分红
+    dv = data.get("dividend") or []
+    lines.append(f"■ 分红: {len(dv)}次" if dv else "■ 分红: 暂无")
+    for r in dv[:8]:
+        dps = r.get("dividend_per_share")
+        dps_str = f"{dps:.2f}元" if isinstance(dps, (int, float)) else "—"
+        tf = r.get("transfer_ratio")
+        bf = r.get("bonus_ratio")
+        tf_str = f"{tf:g}" if isinstance(tf, (int, float)) else "—"
+        bf_str = f"{bf:g}" if isinstance(bf, (int, float)) else "—"
+        lines.append(
+            f"- {r.get('ex_date') or '—'} 每股派息{dps_str} 每10股转增{tf_str} "
+            f"每10股送股{bf_str} [{r.get('progress') or '—'}]"
+        )
+
+    # 5) 事件日历(近7日)
+    ev = data.get("events") or []
+    lines.append(f"■ 事件日历(近7日): {len(ev)}条" if ev else "■ 事件日历(近7日): 暂无")
+    for r in ev[:10]:
+        ts = (r.get("publish_time") or "")[:10]
+        src = r.get("source") or ""
+        lines.append(f"- [{ts}] {r.get('title') or '—'} ({src})")
+
+    return "\n".join(lines)
+
+
 async def _execute_tool(db: Session, name: str, args: dict) -> str:
     """执行工具调用，返回结果文本。"""
     try:
@@ -722,6 +827,23 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
             limit = int(args.get("limit", 10) or 10)
             unread_only = bool(args.get("unread_only") or False)
             return _read_notifications(db, limit, unread_only)
+        elif name == "get_fundamentals_detail":
+            symbol = (args.get("symbol") or "").strip()
+            market = args.get("market", "CN")
+            if not symbol:
+                return "请提供股票代码(symbol)。"
+            try:
+                # 局部 import asyncio: _execute_tool 内 get_market_news 分支已有
+                # `import asyncio`, 使 asyncio 成为整个函数作用域的局部名, 顶层 import 不可见
+                import asyncio
+                # 懒加载避免模块级循环依赖; 同步取数放线程池不阻塞事件循环
+                from src.web.api.market_data import fetch_fundamentals_detail
+
+                data = await asyncio.to_thread(fetch_fundamentals_detail, symbol, market)
+                return _format_fundamentals_text(symbol, market, data)
+            except Exception as e:
+                logger.warning(f"get_fundamentals_detail 工具失败 [{symbol}]: {e}")
+                return f"基本面明细查询失败: {e}"
         else:
             return f"未知工具: {name}"
     except Exception as e:
