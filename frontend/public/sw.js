@@ -1,9 +1,10 @@
 // PanWatch Service Worker
-const CACHE_NAME = 'panwatch-v13';
+const CACHE_NAME = 'panwatch-__SW_VERSION__';
 
 // 需要缓存的静态资源
+// 注意: 不缓存 '/' (index.html) —— 每次发版 HTML 都变, 缓存旧 HTML 会导致
+// 旧 hash 资源 404 → 白屏。SW 只缓存不可变的静态资源。
 const STATIC_ASSETS = [
-  '/',
   '/manifest.json',
   '/icon-192.png',
   '/icon-512.png',
@@ -47,11 +48,13 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // HTML 文档请求走网络且不写入缓存(发版后 index.html 变化, 缓存旧 HTML 会白屏)
+  const reqInit = event.request.mode === 'navigate';
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        // 成功获取网络响应，更新缓存
-        if (response.ok) {
+        // 成功获取网络响应，更新缓存(跳过 HTML 导航请求)
+        if (response.ok && !reqInit) {
           const responseClone = response.clone();
           caches.open(CACHE_NAME).then((cache) => {
             cache.put(event.request, responseClone);
@@ -60,7 +63,8 @@ self.addEventListener('fetch', (event) => {
         return response;
       })
       .catch(() => {
-        // 网络失败，尝试从缓存获取
+        // 网络失败: HTML 导航直接失败(不回退旧 HTML), 静态资源尝试缓存
+        if (reqInit) return Response.error();
         return caches.match(event.request);
       })
   );

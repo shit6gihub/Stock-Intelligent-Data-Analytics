@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-08-13 (v0.2.25)
+
+### fix(frontend) — 首页白屏(旧 SW 缓存 + SPA 资源回退 HTML)
+
+**根因**: 两个问题叠加:
+1. SW 缓存名固定(panwatch-v13), 发版后旧缓存不清, 用户浏览器回退旧 index.html
+2. SPA fallback 对所有路径返回 index.html —— 旧 index.html 引用的旧 hash JS 已不存在,
+   服务器返回 HTML → 浏览器把 HTML 当 JS 执行 → 语法错误 → 整页白屏
+
+**修复**:
+- server.py: 静态资源(.js/.css/图片等)不存在时返回 404, 绝不回退 index.html
+- sw.js: CACHE_NAME 注入版本号(构建时 sed), 发版后 SW 字节变化 → 浏览器自动更新清旧缓存
+- sw.js: 不再缓存 '/' (index.html) 且导航请求不回退旧 HTML —— 旧 HTML 残留是白屏根源
+
+### 实测
+- 前端 build 9.2s, dist/sw.js 缓存名 = panwatch-v0.2.25
+- server.py 语法 OK
+
+# Changelog
+
 ## 2026-08-13 (v0.2.24)
 
 ### fix(ai) — 场景绑定跨服务商 404 "model is not found"
