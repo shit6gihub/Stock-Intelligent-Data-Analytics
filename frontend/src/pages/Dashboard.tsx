@@ -2,24 +2,25 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { RefreshCw, AlertTriangle, Sparkles, Activity, ShieldAlert, Newspaper, Share2, Plus, TrendingUp, Flame } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Sparkles, Activity, ShieldAlert, Newspaper, Share2, Plus, TrendingUp, Flame, FileText } from 'lucide-react'
 import {
   dashboardApi,
   portfolioApi,
   recommendationsApi,
   homeApi,
   stocksApi,
+  reportsApi,
   type DashboardMarketIndex,
   type DashboardMarketCapitalFlow,
   type DashboardMarketStatus,
   type DashboardMonitorStock,
   type DashboardOverviewResponse,
-  type DashboardPortfolioSummary,
   type PortfolioDiagnostics,
   type PortfolioBenchmark,
   type StrategySignalItem,
   type AlertHitToday,
   type PortfolioTodo,
+  type ReportItem,
   type CurateCandidate,
   type CuratedItem,
   type AttributionItem,
@@ -56,12 +57,6 @@ function pctChipCls(v?: number | null): string {
   if (v < 0) return 'bg-emerald-500/10 text-emerald-500'
   return 'bg-accent text-muted-foreground'
 }
-/** 金额展示:+¥2,175 风格(千分位 + 正负号),脱敏场景外的常规展示用。 */
-function fmtMoney(v?: number | null): string {
-  if (v == null || !isFinite(v)) return '--'
-  const sign = v > 0 ? '+' : v < 0 ? '-' : ''
-  return `${sign}¥${Math.abs(v).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}`
-}
 /** 归一化后端列表响应:可能直接是数组,也可能是 {items:[...]} / {data:[...]},取不到返回空数组。 */
 function pickList<T>(v: unknown, key: string): T[] {
   if (Array.isArray(v)) return v as T[]
@@ -95,6 +90,24 @@ function formatHeaderTime(d: Date): string {
   const hh = String(d.getHours()).padStart(2, '0')
   const mm = String(d.getMinutes()).padStart(2, '0')
   return `${y}-${m}-${day} 周${WEEKDAY_LABEL[d.getDay()]} · ${hh}:${mm} 已刷新`
+}
+/** 报告相对时间:1分钟内→"刚刚";1小时内→"N分钟前";当天→"今天 HH:MM";昨天→"昨天 HH:MM";更早→"M月D日 HH:MM" */
+function formatReportTime(iso: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return iso.replace('T', ' ').slice(0, 16)
+  const now = new Date()
+  const diffMin = Math.floor((now.getTime() - d.getTime()) / 60000)
+  if (diffMin < 1) return '刚刚'
+  if (diffMin < 60) return `${diffMin}分钟前`
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const startDay = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  if (startDay === startToday) return `今天 ${hm}`
+  if (startDay === startToday - 86_400_000) return `昨天 ${hm}`
+  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}`
 }
 const ALERT_LABEL: Record<string, string> = {
   surge: '快速拉升',
@@ -141,8 +154,10 @@ export default function DashboardPage() {
   const [briefOpen, setBriefOpen] = useState(false)
   // 自选股集合(用于判断盘前标的是否已在自选)
   const [watchSymbols, setWatchSymbols] = useState<Set<string>>(new Set())
-  const [portfolioSummary, setPortfolioSummary] = useState<DashboardPortfolioSummary | null>(null)
   const [marketStatus, setMarketStatus] = useState<DashboardMarketStatus[]>([])
+  // 最新报告(Hermes cron):首页速览取最近 4 条,30s 随首页自动刷新
+  const [reports, setReports] = useState<ReportItem[]>([])
+  const [reportsLoading, setReportsLoading] = useState(true)
   // 大盘资金流(同花顺源,东财 502 替代)
   const [marketFlow, setMarketFlow] = useState<DashboardMarketCapitalFlow | null>(null)
   // 异动池(东财) / 热榜(同花顺):独立加载,任一失败静默,不影响首页其他内容
@@ -184,6 +199,13 @@ export default function DashboardPage() {
     dashboardApi.indices().then(setIndices).catch(() => {})
     // 大盘资金流(同花顺源):独立加载,失败静默
     dashboardApi.marketCapitalFlow().then(setMarketFlow).catch(() => {})
+    // 最新报告(Hermes cron):独立加载,失败静默;cacheMode reload 保证 30s 轮询必拿新数据
+    setReportsLoading(true)
+    reportsApi
+      .list({ limit: 8, cacheMode: 'reload' })
+      .then((r) => setReports((r.items || []).slice(0, 4)))
+      .catch(() => setReports([]))
+      .finally(() => setReportsLoading(false))
     // 异动池(东财):独立加载,失败静默(端点未就绪时优雅降级为空态)
     setAnomaliesLoading(true)
     dashboardApi
@@ -198,14 +220,13 @@ export default function DashboardPage() {
       .then((r) => setHotStocks(pickList<MarketHotStockItem>(r, 'items').slice(0, 10)))
       .catch(() => setHotStocks([]))
       .finally(() => setHotStocksLoading(false))
-    // 快车道:DB/轻量查询,先让首屏(要紧事/体检分布/组合速览)尽快出来
-    const [sc, ov, dg, ht, td, ps, ms] = await Promise.allSettled([
+    // 快车道:DB/轻量查询,先让首屏(要紧事/体检分布)尽快出来
+    const [sc, ov, dg, ht, td, ms] = await Promise.allSettled([
       dashboardApi.intradayScan(),
       dashboardApi.overview({ market: 'ALL', action_limit: 6, risk_limit: 6 }),
       portfolioApi.diagnostics(),
       homeApi.alertHitsToday(),
       homeApi.todos(),
-      dashboardApi.portfolioSummary(),
       dashboardApi.marketStatus(),
     ])
     if (sc.status === 'fulfilled') setScan(sc.value.stocks || [])
@@ -213,7 +234,6 @@ export default function DashboardPage() {
     if (dg.status === 'fulfilled') setDiag(dg.value)
     if (ht.status === 'fulfilled') setAlertHits(ht.value)
     if (td.status === 'fulfilled') setTodos(td.value.todos || [])
-    if (ps.status === 'fulfilled') setPortfolioSummary(ps.value)
     if (ms.status === 'fulfilled') setMarketStatus(ms.value)
     setLoading(false) // 首屏不再等基准/归因(要拉全持仓 K 线)
     setRefreshedAt(new Date())
@@ -397,32 +417,6 @@ export default function DashboardPage() {
   const hasHoldings = (diag?.position_count ?? 0) > 0
   const benchReady = bench && !bench.empty && bench.excess_return != null
   const hasWatchlist = (overview?.kpis?.watchlist_count ?? 0) > 0
-  const portfolioPnlPct =
-    diag && diag.total_market_value - diag.total_unrealized_pnl > 0
-      ? (diag.total_unrealized_pnl / (diag.total_market_value - diag.total_unrealized_pnl)) * 100
-      : null
-
-  // 行情所属交易日盈亏(组合速览条 hero):标签由后端依据真实报价日期给出。
-  const dailyPnl = portfolioSummary?.total?.total_daily_pnl ?? null
-  const dailyPnlLabel = useMemo(() => {
-    const total = portfolioSummary?.total
-    if (!total) return '当日盈亏'
-    const date = total.daily_pnl_date?.slice(5)
-    return date && total.daily_pnl_period === 'previous_trading_day'
-      ? `${total.daily_pnl_label} (${date})`
-      : total.daily_pnl_label || '当日盈亏'
-  }, [portfolioSummary])
-  const dailyPnlPct = useMemo(() => {
-    if (!portfolioSummary || dailyPnl == null) return null
-    const basis = portfolioSummary.total.total_market_value - dailyPnl
-    return basis > 0 ? (dailyPnl / basis) * 100 : null
-  }, [portfolioSummary, dailyPnl])
-  const positionRatioPct = useMemo(() => {
-    if (!portfolioSummary) return null
-    const { total_market_value, total_assets } = portfolioSummary.total
-    return total_assets > 0 ? (total_market_value / total_assets) * 100 : null
-  }, [portfolioSummary])
-  const benchPortfolioSeries = useMemo(() => (bench?.curve || []).map((p) => p.portfolio), [bench])
 
   // 市场分布 stacked 条的分段(占比降序,过滤掉 0 占比)
   const marketSegs = useMemo(() => {
@@ -466,74 +460,51 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* 组合速览条:最近行情日盈亏 hero + 累计浮盈 + 60日超额 + 仓位% + mini 净值走势 */}
+      {/* 最新报告:Hermes cron 盘前/盘后报告速览(最近 4 条, 30s 随首页自动刷新, 点击进报告页) */}
       <div className="card mb-3 p-4">
-        {loading && !diag ? (
-          /* 首次加载骨架(数据到位后不再闪) */
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-            <div className="space-y-1.5">
-              <Skeleton className="h-2.5 w-14" />
-              <Skeleton className="h-6 w-28" />
-              <Skeleton className="h-3 w-16" />
-            </div>
-            <div className="hidden h-9 w-px bg-border/60 sm:block" />
-            <div className="space-y-2">
-              <Skeleton className="h-2.5 w-16" />
-              <Skeleton className="h-4 w-24" />
-            </div>
-            <div className="space-y-2">
-              <Skeleton className="h-2.5 w-16" />
-              <Skeleton className="h-4 w-16" />
-            </div>
-            <div className="space-y-2">
-              <Skeleton className="h-2.5 w-10" />
-              <Skeleton className="h-4 w-12" />
-            </div>
-            <div className="ml-auto flex items-center gap-3">
-              <Skeleton className="h-8 w-24" />
-              <Skeleton className="h-3 w-14" />
-            </div>
+        <div className="mb-1.5 flex items-center gap-2">
+          <FileText className="h-4 w-4 text-primary" />
+          <h2 className="text-[13px] font-semibold">最新报告</h2>
+          <span className="text-[10px] text-muted-foreground">Hermes cron 盘前/盘后</span>
+          <button
+            type="button"
+            onClick={() => navigate('/reports')}
+            className="ml-auto shrink-0 text-[11px] text-muted-foreground transition-colors hover:text-primary"
+          >
+            查看全部 →
+          </button>
+        </div>
+        {reportsLoading && reports.length === 0 ? (
+          /* 首次加载骨架(后续 30s 刷新静默更新,不闪屏) */
+          <div className="space-y-2 py-1">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-9 w-full" />
+            ))}
           </div>
-        ) : !hasHoldings ? (
+        ) : reports.length === 0 ? (
           <div className="py-4 text-center text-[12px] text-muted-foreground">
-            {loading ? '加载中…' : '暂无持仓,添加持仓后这里展示持仓盈亏与组合走势'}
+            暂无报告,盘前/盘后报告生成后自动出现
           </div>
         ) : (
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-            <div>
-              <div className="text-[11px] text-muted-foreground">{dailyPnlLabel}</div>
-              <div className={`font-mono text-[22px] font-bold leading-tight ${moveColor(dailyPnl)}`}>{fmtMoney(dailyPnl)}</div>
-              {dailyPnlPct != null && <div className={`font-mono text-[11px] ${moveColor(dailyPnlPct)}`}>{pct(dailyPnlPct)}</div>}
-            </div>
-            <div className="hidden h-9 w-px bg-border/60 sm:block" />
-            <div>
-              <div className="text-[11px] text-muted-foreground">累计浮盈</div>
-              <div className={`font-mono text-[14px] ${moveColor(diag!.total_unrealized_pnl)}`}>
-                {fmtMoney(diag!.total_unrealized_pnl)} <span className="text-[11px]">{pct(portfolioPnlPct)}</span>
-              </div>
-            </div>
-            <div>
-              <div className="text-[11px] text-muted-foreground">60日超额</div>
-              <div className={`font-mono text-[14px] ${benchReady ? moveColor(bench!.excess_return) : 'text-muted-foreground'}`}>
-                {benchReady ? pct(bench!.excess_return) : '--'}
-              </div>
-            </div>
-            <div>
-              <div className="text-[11px] text-muted-foreground">仓位</div>
-              <div className="font-mono text-[14px]">{positionRatioPct != null ? `${positionRatioPct.toFixed(0)}%` : '--'}</div>
-            </div>
-            <div className="ml-auto flex items-center gap-3">
-              <div className="w-24">
-                <Sparkline data={benchPortfolioSeries} height={32} className="text-primary" />
-              </div>
+          <div className="divide-y divide-border/40">
+            {reports.map((r) => (
               <button
+                key={`${r.job_id}:${r.file}`}
                 type="button"
-                onClick={() => navigate('/portfolio')}
-                className="shrink-0 text-[11px] text-muted-foreground hover:text-primary"
+                onClick={() => navigate('/reports')}
+                className="flex w-full items-center gap-2.5 py-1.5 text-left transition-colors hover:bg-accent/30"
               >
-                持仓页 →
+                <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13px] font-medium">{r.title_preview || r.file}</div>
+                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span className="truncate">{r.job_name}</span>
+                    <span className="shrink-0">·</span>
+                    <span className="shrink-0">{formatReportTime(r.mtime_iso)}</span>
+                  </div>
+                </div>
               </button>
-            </div>
+            ))}
           </div>
         )}
       </div>
