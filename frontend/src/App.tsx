@@ -1,6 +1,6 @@
 import { Fragment, useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { Routes, Route, NavLink, useLocation, useNavigate, Navigate } from 'react-router-dom'
-import { TrendingUp, Bot, ScrollText, Settings, Database, Clock, LayoutDashboard, Github, BellRing, Sparkles, Activity, LineChart, FileText, BookOpen, Shield } from 'lucide-react'
+import { TrendingUp, Bot, ScrollText, Settings, List, Database, Clock, LayoutDashboard, Github, BellRing, Sparkles, Activity, LineChart, FileText, BookOpen, Shield } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
 import { useHotkeys } from '@/hooks/use-hotkeys'
 import { appApi, fetchAPI, isAuthenticated } from '@panwatch/api'
@@ -33,16 +33,15 @@ import SelfCheckModal from '@/components/SelfCheckModal'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@panwatch/base-ui/components/ui/dialog'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 
-// 2026-08-13 导航调整: 一级导航移除"持仓"(/portfolio 路由保留, 仅不再作为一级入口),
-// "报告"上移至第 2 位; 持仓页仍可通过 Dashboard 组合速览条"持仓页 →"入口访问
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: '首页' },
-  { to: '/reports', icon: FileText, label: '报告' },
+  { to: '/portfolio', icon: List, label: '持仓' },
   { to: '/opportunities', icon: Sparkles, label: '机会' },
   { to: '/forecast', icon: LineChart, label: '预测' },
   { to: '/paper-trading', icon: Activity, label: '模拟盘' },
   { to: '/alerts', icon: BellRing, label: '提醒' },
   { to: '/agents', icon: Bot, label: 'Agent' },
+  { to: '/reports', icon: FileText, label: '报告' },
   { to: '/strategies', icon: BookOpen, label: '策略库' },
   { to: '/shadow', icon: Shield, label: '影子账户' },
   { to: '/history', icon: Clock, label: '历史' },
@@ -51,13 +50,13 @@ const navItems = [
 ]
 // 桌面端导航按业务分组(2026-08-12): 行情 / 交易 / 系统, 13 项全部平铺显示, 不再 slice 截断
 const desktopNavGroups = [
-  { key: 'market', items: navItems.filter(n => ['/', '/reports', '/opportunities', '/forecast'].includes(n.to)) },
+  { key: 'market', items: navItems.filter(n => ['/', '/portfolio', '/opportunities', '/forecast'].includes(n.to)) },
   { key: 'trading', items: navItems.filter(n => ['/paper-trading', '/alerts', '/shadow'].includes(n.to)) },
-  { key: 'system', items: navItems.filter(n => ['/agents', '/strategies', '/history', '/datasources', '/settings'].includes(n.to)) },
+  { key: 'system', items: navItems.filter(n => ['/agents', '/reports', '/strategies', '/history', '/datasources', '/settings'].includes(n.to)) },
 ]
-// 移动端底部 5 槽位按 to 路径挑选: 首页/报告/机会/预测/提醒(2026-08-13, 模拟盘移入"更多"下拉,
-// 不再用 slice(0,5) 依赖 navItems 顺序); 持仓移除一级入口后槽位 2 由报告顶替
-const MOBILE_PRIMARY_TO = ['/', '/reports', '/opportunities', '/forecast', '/alerts']
+// 移动端底部 5 槽位按 to 路径挑选: 首页/持仓/机会/预测/提醒(2026-08-13, 模拟盘移入"更多"下拉,
+// 不再用 slice(0,5) 依赖 navItems 顺序); navItems 数组顺序保持不动, 桌面端平铺分组完全不变
+const MOBILE_PRIMARY_TO = ['/', '/portfolio', '/opportunities', '/forecast', '/alerts']
 const mobilePrimaryNavItems = navItems.filter(n => MOBILE_PRIMARY_TO.includes(n.to))
 const mobileMoreNavItems = navItems.filter(n => !MOBILE_PRIMARY_TO.includes(n.to))
 
@@ -174,7 +173,7 @@ function App() {
     },
     { combo: 'mod+,', handler: runOnDesktop(() => navigate('/settings')) },
     { sequence: ['g', 'd'], sequenceTimeout: 1500, handler: runOnDesktop(() => navigate('/')) },
-    { sequence: ['g', 'p'], sequenceTimeout: 1500, handler: runOnDesktop(() => navigate('/reports')) },
+    { sequence: ['g', 'p'], sequenceTimeout: 1500, handler: runOnDesktop(() => navigate('/portfolio')) },
     { combo: '?', preventDefault: true, handler: runOnDesktop(() => setHotkeysOpen(true)) },
   ])
 
@@ -406,7 +405,7 @@ function App() {
               { desc: '打开日志(搜索占位)', keys: ['⌘/Ctrl', 'K'] },
               { desc: '跳转设置', keys: ['⌘/Ctrl', ','] },
               { desc: '跳转首页', keys: ['G', 'D'] },
-              { desc: '跳转报告', keys: ['G', 'P'] },
+              { desc: '跳转持仓', keys: ['G', 'P'] },
               { desc: '显示本帮助', keys: ['?'] },
             ].map(row => (
               <div key={row.desc} className="flex items-center justify-between gap-4">
