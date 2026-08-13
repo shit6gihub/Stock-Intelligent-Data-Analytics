@@ -713,7 +713,8 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
                 return "主力意图仅支持 A 股(CN)。"
             try:
                 from src.agents.intraday_monitor import _main_intent_summary
-                result = _main_intent_summary(symbol)
+                # 热修 2026-08-14: 同步网络调用包 to_thread, 防阻塞 asyncio 事件循环(登录超时根因)
+                result = await asyncio.to_thread(_main_intent_summary, symbol)
                 # 数据源口径标注(腾讯逐笔·主力意图), 用户可见, 避免与东财四档混淆
                 return f"[数据源: 腾讯逐笔·主力意图口径]\n{result}" if result else f"未能获取 {symbol} 的主力意图数据。"
             except Exception as e:
@@ -725,7 +726,8 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
                 return "拉升段分析仅支持 A 股(CN)。"
             try:
                 from src.core.rally_analysis import analyze_rallies, format_rally_report
-                result = analyze_rallies(symbol)
+                # 热修 2026-08-14: 同步网络调用包 to_thread, 防阻塞事件循环
+                result = await asyncio.to_thread(analyze_rallies, symbol)
                 if not result:
                     return f"未能获取 {symbol} 的拉升段分析数据(可能盘前无数据)。"
                 return format_rally_report(result)
@@ -751,7 +753,8 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
             try:
                 from marketdata.vendors.tdx import ask_wenda
 
-                res = ask_wenda(question)
+                # 热修 2026-08-14: 同步网络调用包 to_thread, 防阻塞事件循环
+                res = await asyncio.to_thread(ask_wenda, question)
                 if not res or not isinstance(res, dict):
                     return f"通达信问小达未返回数据: {question}"
                 rows = res.get("data") or []
@@ -811,8 +814,9 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
                 try:
                     from src.collectors.wudao_mcp_client import WudaoMCPClient
                     cli = WudaoMCPClient()
-                    cli._initialize()
-                    hot = cli.call_tool("news_hotlist", {"limit": limit})
+                    # 热修 2026-08-14: wudao MCP 同步 requests(timeout 30-60s)包 to_thread, 防阻塞事件循环
+                    await asyncio.to_thread(cli._initialize)
+                    hot = await asyncio.to_thread(cli.call_tool, "news_hotlist", {"limit": limit})
                     hot_text = hot.get("text") if isinstance(hot, dict) else ""
                     if hot_text:
                         parts.append("【资讯热榜】\n" + str(hot_text))
@@ -837,7 +841,7 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
                     brief_args = {"detailLevel": "digest"}
                     if briefing_type:
                         brief_args["type"] = briefing_type
-                    brief = cli.call_tool("briefings", brief_args)
+                    brief = await asyncio.to_thread(cli.call_tool, "briefings", brief_args)
                     brief_text = ""
                     if isinstance(brief, dict):
                         brief_text = brief.get("text") or brief.get("digest") or ""

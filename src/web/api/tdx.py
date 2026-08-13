@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
@@ -31,7 +32,8 @@ async def tdx_ask(
     try:
         from marketdata.vendors.tdx import ask_wenda
 
-        result = ask_wenda(q.strip(), config=None)
+        # 热修 2026-08-14: 同步网络调用包 to_thread, 防阻塞 asyncio 事件循环(登录超时根因)
+        result = await asyncio.to_thread(ask_wenda, q.strip(), config=None)
     except Exception as e:
         logger.warning(f"通达信问小达调用失败: {e}")
         raise HTTPException(502, f"数据源调用失败: {e}")

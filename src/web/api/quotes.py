@@ -172,7 +172,10 @@ async def get_company_info(symbol: str, market: str = "CN"):
 
         url = f"https://api.zhituapi.com/hs/gs/gsjj/{symbol}?token={token}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        raw = json.loads(urllib.request.urlopen(req, timeout=15).read().decode("utf-8", "ignore"))
+        # 热修 2026-08-14: 同步 urlopen 包 to_thread, 防阻塞 asyncio 事件循环(登录超时根因)
+        raw = json.loads(
+            (await asyncio.to_thread(lambda: urllib.request.urlopen(req, timeout=15).read())).decode("utf-8", "ignore")
+        )
         if not isinstance(raw, dict) or not raw.get("name"):
             payload = {"symbol": symbol, "market": market, "name": None, "note": "未查到公司信息"}
         else:

@@ -1628,6 +1628,13 @@ async def trigger_agent_for_stock(
 @asynccontextmanager
 async def lifespan(app):
     """应用生命周期: 初始化 + 启动调度器"""
+    # 热修 2026-08-14: SIGCHLD 置 SIG_IGN, 让内核自动回收子进程(healthcheck 超时 fork 的 python
+    # 子进程变僵尸堆积 87+ 个的根因; 容器 PID1 默认不 reap)。
+    import signal
+    try:
+        signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+    except Exception:
+        pass
     init_db()
     setup_logging()
     setup_proxy()  # 设置进程 env 代理(HTTP_PROXY/NO_PROXY);所有 httpx(trust_env=True)据此走代理
