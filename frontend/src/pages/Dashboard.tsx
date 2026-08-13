@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { RefreshCw, AlertTriangle, Sparkles, Activity, ShieldAlert, Newspaper, Share2, Plus, TrendingUp, Flame, FileText } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Sparkles, Activity, ShieldAlert, Newspaper, Share2, Plus, TrendingUp, Flame, FileText, Droplets } from 'lucide-react'
 import {
   dashboardApi,
   portfolioApi,
@@ -573,7 +573,7 @@ export default function DashboardPage() {
             <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3">
               {marketFlow.inflow_boards?.length ? (
                 <div>
-                  <div className="text-[11px] font-semibold text-red-500 mb-1">🔥 资金流入板块</div>
+                  <div className="text-[11px] font-semibold text-red-500 mb-1 flex items-center gap-1"><Flame className="w-3 h-3" />资金流入板块</div>
                   <div className="space-y-0.5">
                     {marketFlow.inflow_boards.map(b => (
                       <div key={b.name} className="flex justify-between text-[11px]">
@@ -586,7 +586,7 @@ export default function DashboardPage() {
               ) : null}
               {marketFlow.outflow_boards?.length ? (
                 <div>
-                  <div className="text-[11px] font-semibold text-green-500 mb-1">💧 资金流出板块</div>
+                  <div className="text-[11px] font-semibold text-green-500 mb-1 flex items-center gap-1"><Droplets className="w-3 h-3" />资金流出板块</div>
                   <div className="space-y-0.5">
                     {marketFlow.outflow_boards.map(b => (
                       <div key={b.name} className="flex justify-between text-[11px]">

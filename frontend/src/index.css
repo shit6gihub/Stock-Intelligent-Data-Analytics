@@ -93,16 +93,16 @@
     @apply bg-card rounded-xl border border-border/60 shadow-[0_1px_0_hsl(var(--border)/0.35)];
   }
   .card-hover {
-    @apply bg-card rounded-xl border border-border/60 hover:border-primary/30 hover:shadow-[0_10px_30px_-26px_hsl(var(--primary)/0.55)] transition-all;
+    @apply bg-card rounded-xl border border-border/60 hover:border-primary/30 hover:shadow-[0_10px_30px_-26px_hsl(var(--primary)/0.55)] transition-[border-color,box-shadow];
   }
   .card-subtle {
     @apply rounded-xl border border-border/40 bg-accent/20;
   }
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg text-[13px] font-semibold hover:bg-primary/90 active:scale-[0.98] transition-all;
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg text-[13px] font-semibold hover:bg-primary/90 active:scale-[0.98] transition-[background-color,transform];
   }
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-secondary text-secondary-foreground border border-border rounded-lg text-[13px] font-medium hover:bg-secondary/80 active:scale-[0.98] transition-all;
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-secondary text-secondary-foreground border border-border rounded-lg text-[13px] font-medium hover:bg-secondary/80 active:scale-[0.98] transition-[background-color,transform];
   }
   .input-field {
     @apply w-full h-10 px-3 rounded-lg border border-border bg-background text-[13px] placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors;

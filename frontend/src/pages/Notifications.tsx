@@ -427,13 +427,13 @@ export default function NotificationsPage() {
                   type="button"
                   onClick={() => void selectItem(item)}
                   aria-pressed={isSelected}
-                  className={`group relative flex w-full gap-3 border-b border-l-[3px] px-4 py-3.5 text-left transition-all last:border-b-0 ${
+                  className={`group relative flex w-full gap-3 border-b border-l-[3px] px-4 py-3.5 text-left transition-[border-color,background-color,box-shadow] last:border-b-0 ${
                     isSelected
                       ? 'border-b-primary/20 border-l-primary bg-primary/12 shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.18)]'
                       : 'border-b-border/30 border-l-transparent hover:border-l-primary/35 hover:bg-accent/35'
                   }`}
                 >
-                  <span className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all ${meta.className} ${isSelected ? 'ring-2 ring-primary/30 ring-offset-2 ring-offset-card' : ''}`}>
+                  <span className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-shadow ${meta.className} ${isSelected ? 'ring-2 ring-primary/30 ring-offset-2 ring-offset-card' : ''}`}>
                     <Icon className="h-4 w-4" />
                   </span>
                   <span className="min-w-0 flex-1">

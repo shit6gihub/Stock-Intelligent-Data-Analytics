@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Search, BookOpen, AlertCircle, CheckCircle2, Loader2, Play } from 'lucide-react'
+import { Search, BookOpen, AlertCircle, AlertTriangle, CheckCircle2, Loader2, Play, XCircle } from 'lucide-react'
 import { strategiesApi, type StrategyItem, type ApplyResult } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Input } from '@panwatch/base-ui/components/ui/input'
@@ -259,7 +259,7 @@ export default function StrategiesPage() {
                 {applyResult && (
                   <div className={`card-subtle p-4 ${applyResult.passed ? 'border-emerald-500/30' : 'border-amber-500/30'}`}>
                     {applyResult.error ? (
-                      <div className="text-red-500 text-sm">❌ {applyResult.error}</div>
+                      <div className="text-red-500 text-sm flex items-center gap-1.5"><XCircle className="w-4 h-4 shrink-0" />{applyResult.error}</div>
                     ) : (
                       <>
                         <div className="flex items-center justify-between mb-3">
@@ -268,8 +268,9 @@ export default function StrategiesPage() {
                               {applyResult.score.toFixed(1)}
                             </div>
                             <div>
-                              <div className={`text-sm font-medium ${applyResult.passed ? 'text-emerald-500' : 'text-amber-500'}`}>
-                                {applyResult.passed ? '✅ 通过' : '⚠️ 未通过'}
+                              <div className={`text-sm font-medium inline-flex items-center gap-1.5 ${applyResult.passed ? 'text-emerald-500' : 'text-amber-500'}`}>
+                                {applyResult.passed ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+                                {applyResult.passed ? '通过' : '未通过'}
                               </div>
                               <div className="text-xs text-muted-foreground">{applyResult.symbol} @ {applyResult.market}</div>
                             </div>
@@ -297,8 +298,9 @@ export default function StrategiesPage() {
 
                         {/* 缺失字段 */}
                         {applyResult.missing_fields.length > 0 && (
-                          <div className="mb-3 text-xs text-yellow-500">
-                            ⚠️ 缺失字段: {applyResult.missing_fields.join(', ')}(盘后可拿)
+                          <div className="mb-3 text-xs text-yellow-500 flex items-center gap-1.5">
+                            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                            缺失字段: {applyResult.missing_fields.join(', ')}(盘后可拿)
                           </div>
                         )}
 

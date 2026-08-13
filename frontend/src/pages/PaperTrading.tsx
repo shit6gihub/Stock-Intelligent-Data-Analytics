@@ -380,7 +380,7 @@ export default function PaperTradingPage() {
                 <button
                   key={m}
                   onClick={() => setMarketView(m)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-[background-color,color,box-shadow] ${
                     active
                       ? 'bg-primary text-primary-foreground'
                       : isOff
@@ -714,7 +714,7 @@ export default function PaperTradingPage() {
                         <button
                           key={ch.id}
                           onClick={() => toggleChannel(ch.id)}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                          className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-[background-color,color,box-shadow] ${
                             selectedChannelIds.has(ch.id)
                               ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
                               : 'bg-muted/50 text-muted-foreground'

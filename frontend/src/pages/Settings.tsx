@@ -895,7 +895,7 @@ export default function SettingsPage() {
                 onClick={() => avatarFileRef.current?.click()}
                 disabled={avatarSaving}
                 title="点击上传头像"
-                className="group relative h-9 w-9 rounded-full overflow-hidden bg-gradient-to-br from-primary to-primary/70 text-white shadow-sm flex items-center justify-center ring-1 ring-border/40 hover:ring-primary/40 transition-all shrink-0"
+                className="group relative h-9 w-9 rounded-full overflow-hidden bg-gradient-to-br from-primary to-primary/70 text-white shadow-sm flex items-center justify-center ring-1 ring-border/40 hover:ring-primary/40 transition-shadow shrink-0"
               >
                 {avatar ? (
                   <img src={avatar} alt="头像" className="w-full h-full object-cover" />
@@ -1256,7 +1256,7 @@ export default function SettingsPage() {
                       <button
                         onClick={() => handleSave(setting.key)}
                         disabled={!isChanged || saving === setting.key}
-                        className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all ${
+                        className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
                           saved === setting.key
                             ? 'bg-emerald-500/10 text-emerald-600'
                             : isChanged
@@ -1386,7 +1386,7 @@ export default function SettingsPage() {
                       <button
                         onClick={() => handleSave(setting.key)}
                         disabled={!isChanged || saving === setting.key}
-                        className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all ${
+                        className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
                           saved === setting.key
                             ? 'bg-emerald-500/10 text-emerald-600'
                             : isChanged

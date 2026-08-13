@@ -124,7 +124,7 @@ export default function AccountMenu({
     >
       <button
         onClick={() => setOpen(v => !v)}
-        className={`${avatarSize} rounded-full overflow-hidden bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center shadow-sm ring-1 transition-all ${
+        className={`${avatarSize} rounded-full overflow-hidden bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center shadow-sm ring-1 transition-shadow ${
           open ? 'ring-primary/50' : 'ring-border/40 hover:ring-primary/40'
         }`}
         title="账户与设置"

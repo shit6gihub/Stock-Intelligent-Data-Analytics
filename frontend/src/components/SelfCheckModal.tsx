@@ -185,7 +185,8 @@ export default function SelfCheckModal({ open, onClose }: SelfCheckModalProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
-  const heroGradient = 'bg-gradient-to-br from-violet-500 via-purple-500 to-indigo-500'
+  // 反 AI 模板:紫蓝渐变是教科书级 AI 模板感 → 品牌色单向渐变(用现有 token, 不引新色)
+  const heroGradient = 'bg-gradient-to-br from-primary to-primary/80'
 
   const renderCategory = (cat: string) => {
     const catRows = rows.filter((r) => r.category === cat)
@@ -235,7 +236,7 @@ export default function SelfCheckModal({ open, onClose }: SelfCheckModalProps) {
           </div>
           <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-white/25">
             <div
-              className="h-full rounded-full bg-white transition-all duration-300 ease-out"
+              className="h-full rounded-full bg-white transition-[width] duration-300 ease-out"
               style={{ width: `${progress}%` }}
             />
           </div>

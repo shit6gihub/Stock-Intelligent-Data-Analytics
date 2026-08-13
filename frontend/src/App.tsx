@@ -220,14 +220,14 @@ function App() {
                         className="relative shrink-0"
                       >
                         <span
-                          className={`absolute inset-0 rounded-xl transition-all ${
+                          className={`absolute inset-0 rounded-xl transition-shadow ${
                             isActive
                               ? 'bg-[linear-gradient(135deg,hsl(var(--primary)/0.14),hsl(var(--primary)/0.04),hsl(var(--success)/0.06))] ring-1 ring-primary/20 shadow-[0_8px_24px_-18px_hsl(var(--primary)/0.55)]'
                               : 'bg-transparent'
                           }`}
                         />
                         <span
-                          className={`relative px-2.5 py-2 rounded-xl text-[13px] font-medium transition-all flex items-center gap-1.5 ${
+                          className={`relative px-2.5 py-2 rounded-xl text-[13px] font-medium transition-colors flex items-center gap-1.5 ${
                             isActive
                               ? 'text-foreground'
                               : 'text-muted-foreground hover:text-foreground hover:bg-accent'
@@ -247,14 +247,14 @@ function App() {
             <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-2xl bg-accent/20 border border-border/40 shrink-0">
               <button
                 onClick={() => window.open(repoUrl, '_blank', 'noopener,noreferrer')}
-                className="w-9 h-9 rounded-xl flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-background/70 transition-all"
+                className="w-9 h-9 rounded-xl flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-background/70 transition-colors"
                 title="GitHub 项目"
               >
                 <Github className="w-4 h-4" />
               </button>
               <button
                 onClick={() => setLogsOpen(true)}
-                className="w-9 h-9 rounded-xl flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-background/70 transition-all"
+                className="w-9 h-9 rounded-xl flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-background/70 transition-colors"
                 title="查看日志"
               >
                 <ScrollText className="w-4 h-4" />
@@ -285,14 +285,14 @@ function App() {
             <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-2xl bg-accent/20 border border-border/40">
               <button
                 onClick={() => window.open(repoUrl, '_blank', 'noopener,noreferrer')}
-                className="w-8 h-8 rounded-xl flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-background/70 transition-all"
+                className="w-8 h-8 rounded-xl flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-background/70 transition-colors"
                 title="GitHub 项目"
               >
                 <Github className="w-4 h-4" />
               </button>
               <button
                 onClick={() => setLogsOpen(true)}
-                className="w-8 h-8 rounded-xl flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-background/70 transition-all"
+                className="w-8 h-8 rounded-xl flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-background/70 transition-colors"
                 title="查看日志"
               >
                 <ScrollText className="w-4 h-4" />
@@ -319,7 +319,7 @@ function App() {
               <NavLink
                 key={to}
                 to={to}
-                className={`flex flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-xl transition-all min-w-[56px] ${
+                className={`flex flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-xl transition-[background-color,color,box-shadow] min-w-[56px] ${
                   isActive
                     ? 'text-primary bg-primary/8 ring-1 ring-primary/15'
                     : 'text-muted-foreground hover:bg-accent/30'

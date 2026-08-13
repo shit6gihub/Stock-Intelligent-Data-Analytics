@@ -1,4 +1,6 @@
 import ShareCardDialog from './ShareCardDialog'
+import { Bell, BarChart3, Eye, AlertTriangle, Sparkles } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 
 /** digest 单条:与 Dashboard 的 feed(CurateCandidate & { why }）同构。 */
 export interface DigestItem {
@@ -30,13 +32,13 @@ function pct(v?: number | null): string {
   return `${v > 0 ? '+' : ''}${v.toFixed(2)}%`
 }
 
-/** 各类型的徽标:文字 + 配色(emoji 作图标,纯文本可被 PNG 正确渲染,无外部图片)。 */
-const TYPE_BADGE: Record<string, { label: string; icon: string; color: string; bg: string }> = {
-  alert: { label: '提醒命中', icon: '🔔', color: '#e11d48', bg: '#fff1f2' },
-  holding: { label: '持仓', icon: '📊', color: '#059669', bg: '#ecfdf5' },
-  watch: { label: '自选', icon: '👀', color: '#475569', bg: '#f1f5f9' },
-  risk: { label: '风险', icon: '⚠️', color: '#d97706', bg: '#fffbeb' },
-  opportunity: { label: '机会', icon: '✨', color: '#6366f1', bg: '#eef2ff' },
+/** 各类型的徽标:文字 + 配色(Lucide 图标 — 反 AI 模板:emoji → 单图标库笔画统一;SVG 可被 html-to-image 正确渲染)。 */
+const TYPE_BADGE: Record<string, { label: string; icon: string | LucideIcon; color: string; bg: string }> = {
+  alert: { label: '提醒命中', icon: Bell, color: '#e11d48', bg: '#fff1f2' },
+  holding: { label: '持仓', icon: BarChart3, color: '#059669', bg: '#ecfdf5' },
+  watch: { label: '自选', icon: Eye, color: '#475569', bg: '#f1f5f9' },
+  risk: { label: '风险', icon: AlertTriangle, color: '#d97706', bg: '#fffbeb' },
+  opportunity: { label: '机会', icon: Sparkles, color: '#6366f1', bg: '#eef2ff' },
 }
 const FALLBACK_BADGE = { label: '要点', icon: '•', color: '#475569', bg: '#f1f5f9' }
 
@@ -103,7 +105,7 @@ export default function DigestShareCard({ open, onClose, date, items }: DigestSh
                     fontWeight: 700,
                   }}
                 >
-                  <span style={{ fontSize: 13 }}>{badge.icon}</span>
+                  {typeof badge.icon === 'string' ? <span style={{ fontSize: 13 }}>{badge.icon}</span> : <badge.icon size={13} />}
                   {badge.label}
                 </span>
                 <div style={{ minWidth: 0, flex: 1 }}>

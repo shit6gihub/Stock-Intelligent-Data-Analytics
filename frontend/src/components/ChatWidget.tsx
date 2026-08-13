@@ -512,7 +512,7 @@ export default function ChatWidget() {
     return (
       <button
         onClick={() => setOpen(true)}
-        className={`fixed bottom-20 right-4 md:bottom-5 z-40 w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:bg-primary/90 transition-all hover:scale-105 ${DESKTOP_POSITION_CLASSES[desktopPosition]}`}
+        className={`fixed bottom-20 right-4 md:bottom-5 z-40 w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:bg-primary/90 transition-[background-color,transform] hover:scale-105 ${DESKTOP_POSITION_CLASSES[desktopPosition]}`}
         title="打开 AI 助手"
         aria-label="打开 AI 助手"
       >
