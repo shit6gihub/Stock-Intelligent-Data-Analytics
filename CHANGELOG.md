@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-14 (v0.2.34)
+
+### fix(login-timeout) — 登录请求超时修复(生产热修, 已部署)
+
+- **根因**: 海外节点外部数据源(wudao MCP/智兔/东财)抖动挂起时, async 端点里同步 `requests/urlopen`(timeout 30-60s)阻塞 asyncio 事件循环 40s+, 所有请求(登录/health)排队超时; healthcheck 超时 fork 的子进程不被 PID1 reap, 堆积 87 个僵尸 + 容器 unhealthy 7h
+- **修复**: chat.py `_execute_tool`(主力意图/拉升分析/问小达/wudao 热榜+简报)、tdx.py、quotes.py 同步网络调用全部包 `asyncio.to_thread`; wudao_mcp_client 超时收紧 `(5,25)`; server.py `SIGCHLD` 置 `SIG_IGN` 自动回收僵尸
+- 实测: health 5 连测 2ms(修复前偶发 18-49s), 登录 7ms, 僵尸 87→0
+
+### feat(chat) — 重复提问守卫(dsh loop-hygiene)
+
+- 同股+同意图连续提问 ≥3 次 → 模型回复注入温和提醒("是否已获答案?可问:主力意图/资金流向/技术形态"), 只提醒不阻断
+- 同股不同意图=正常深化不触发; 换话题重置; 阈值常量可调
+- 实测: 10/10 用例(4连问/换话题/阈值5/日期金额不误报)
+
 ## 2026-08-14 (v0.2.33)
 
 ### style(ui) — 反 AI 模板 P2 + 收尾
