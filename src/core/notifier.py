@@ -8,6 +8,7 @@ import re
 import apprise
 import asyncio
 import httpx
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -399,7 +400,7 @@ class NotifierManager:
         elif ch_type == "hermes":
             await self._send_hermes(config, title, content)
         elif ch_type == "openclaw":
-            await self._send_hermes(config, title, content)
+            return await self._send_openclaw(config, title, content)
         else:
             logger.warning(f"未知的自定义渠道类型: {ch_type}")
 
@@ -522,6 +523,43 @@ class NotifierManager:
             if data.get("status") not in (None, "delivered", "ok"):
                 raise RuntimeError(f"Hermes 中转未送达: {data}")
             logger.info(f"Hermes 中转通知发送成功: {title}")
+
+    async def _send_openclaw(self, config: dict, title: str, content: str):
+        """OpenClaw 个人微信桥接发送。
+
+        config 由扫码绑定写入: webhook_url 为宿主机桥接地址,
+        account_id/user_id 为桥接侧扫码成功后返回的微信账号标识。
+        桥接 /send 接口: POST {webhook_url}/send
+        body: {"account_id", "to": user_id, "message", "idempotency_key"}
+        """
+        url = (config.get("webhook_url") or "").strip().rstrip("/")
+        account_id = str(config.get("account_id") or "").strip()
+        wechat_user_id = str(config.get("user_id") or "").strip()
+        if not url or not account_id or not wechat_user_id:
+            raise ValueError("OpenClaw 需要 webhook_url/account_id/user_id")
+
+        payload = {
+            "account_id": account_id,
+            "to": wechat_user_id,
+            "message": content or "",
+            "idempotency_key": str(int(time.time())),
+        }
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(f"{url}/send", json=payload)
+            try:
+                data = resp.json()
+            except Exception:
+                data = {}
+            if not data.get("ok"):
+                raise RuntimeError(
+                    f"OpenClaw 桥接发送失败: HTTP {resp.status_code} {resp.text[:200]}"
+                )
+            logger.info(f"OpenClaw 微信通知发送成功: {title}")
+            return {
+                "ok": True,
+                "message_id": str(data.get("message_id") or "")[:128],
+            }
 
     async def _send_serverchan(self, config: dict, title: str, content: str):
         sendkey = config.get("sendkey", "")

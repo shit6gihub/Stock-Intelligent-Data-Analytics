@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { Check, Eye, EyeOff, Plus, Pencil, Trash2, Star, Send, Cpu, Play, Download, Upload, FileJson, BarChart3, User, Radar, RefreshCw, QrCode, MonitorUp, MailCheck } from 'lucide-react'
-import { fetchAPI, listSceneBindings, setSceneBinding, type AIService, type AIModel, type NotifyChannel, type SceneBinding, type UserInfo, type SubscriptionItem, authApi } from '@panwatch/api'
+import { Check, Eye, EyeOff, Plus, Pencil, Trash2, Star, Send, Cpu, Play, Download, Upload, FileJson, BarChart3, User, Radar, RefreshCw, QrCode, MonitorUp, MailCheck, Copy } from 'lucide-react'
+import { fetchAPI, listSceneBindings, setSceneBinding, wechatBindStart, wechatBindStatus, wechatBindUnbind, wechatBindGet, type AIService, type AIModel, type NotifyChannel, type SceneBinding, type UserInfo, type SubscriptionItem, type WechatBindStartResult, type WechatBindInfo, authApi } from '@panwatch/api'
+import { QRCodeSVG } from 'qrcode.react'
 import UserManagement from '@/components/UserManagement'
 import { useAvatar, saveAvatar, fileToAvatarDataUrl } from '@/hooks/use-avatar'
 import { Input } from '@panwatch/base-ui/components/ui/input'
@@ -223,6 +224,15 @@ export default function SettingsPage() {
   const [browserPushEnabled, setBrowserPushEnabled] = useState(browserNotificationsEnabled)
   const [browserPushTesting, setBrowserPushTesting] = useState(false)
 
+  // 扫码绑定个人微信(OpenClaw 渠道)
+  const [wechatBindInfo, setWechatBindInfo] = useState<WechatBindInfo | null>(null)
+  const [wechatBindStarting, setWechatBindStarting] = useState(false)
+  const [wechatUnbinding, setWechatUnbinding] = useState(false)
+  const [wechatQrOpen, setWechatQrOpen] = useState(false)
+  const [wechatQr, setWechatQr] = useState<WechatBindStartResult | null>(null)
+  const [wechatQrStatus, setWechatQrStatus] = useState<'waiting' | 'success' | 'failed' | 'expired'>('waiting')
+  const wechatPollRef = useRef<number | null>(null)
+
   // 头像
   const avatar = useAvatar()
   const avatarFileRef = useRef<HTMLInputElement | null>(null)
@@ -317,6 +327,8 @@ export default function SettingsPage() {
         const ths = await fetchAPI<any>('/ths/session')
         setThsSession(ths?.data ?? ths)
       } catch { /* 静默 */ }
+      // 个人微信绑定状态(静默加载,失败不阻塞)
+      void loadWechatBind()
     } catch (e) {
       console.error(e)
     } finally {
@@ -445,6 +457,9 @@ export default function SettingsPage() {
   }
 
   useEffect(() => { load(); loadFeedbackStats() }, [])
+
+  // 卸载时停止扫码轮询
+  useEffect(() => () => stopWechatPoll(), [])
 
   // 多用户: 当前用户 + 订阅(2026-08-10 阶段5)
   useEffect(() => {
@@ -795,6 +810,84 @@ export default function SettingsPage() {
     }
   }
 
+  // ── 扫码绑定个人微信(OpenClaw 渠道) ──
+  const loadWechatBind = async () => {
+    try {
+      const info = await wechatBindGet()
+      setWechatBindInfo(info)
+    } catch { /* 后端未实现/未绑定时不阻塞设置页 */ }
+  }
+
+  const stopWechatPoll = () => {
+    if (wechatPollRef.current !== null) {
+      window.clearInterval(wechatPollRef.current)
+      wechatPollRef.current = null
+    }
+  }
+
+  const startWechatPoll = (bindId: string) => {
+    stopWechatPoll()
+    wechatPollRef.current = window.setInterval(async () => {
+      try {
+        const st = await wechatBindStatus(bindId)
+        setWechatQrStatus(st.status)
+        if (st.status === 'success') {
+          stopWechatPoll()
+          setWechatQrOpen(false)
+          toast('微信绑定成功', 'success')
+          void loadWechatBind()
+          load()
+        } else if (st.status === 'failed' || st.status === 'expired') {
+          stopWechatPoll()
+        }
+      } catch { /* 网络抖动忽略，下轮重试 */ }
+    }, 3000)
+  }
+
+  const startWechatBind = async () => {
+    setWechatBindStarting(true)
+    try {
+      const res = await wechatBindStart()
+      setWechatQr(res)
+      setWechatQrStatus('waiting')
+      setWechatQrOpen(true)
+      startWechatPoll(res.bind_id)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '发起绑定失败，请稍后重试', 'error')
+    } finally {
+      setWechatBindStarting(false)
+    }
+  }
+
+  const closeWechatQr = () => {
+    stopWechatPoll()
+    setWechatQrOpen(false)
+  }
+
+  const copyWechatLink = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url)
+      toast('链接已复制，请在微信中打开', 'success')
+    } catch {
+      toast('复制失败，请手动复制链接', 'error')
+    }
+  }
+
+  const unbindWechat = async () => {
+    if (!confirm('确定解除个人微信绑定？解除后将无法通过微信接收通知。')) return
+    setWechatUnbinding(true)
+    try {
+      await wechatBindUnbind()
+      toast('已解除微信绑定', 'success')
+      setWechatBindInfo(null)
+      load()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '解除绑定失败', 'error')
+    } finally {
+      setWechatUnbinding(false)
+    }
+  }
+
   const toggleBrowserPush = async (enabled: boolean) => {
     if (!enabled) {
       setBrowserNotificationsEnabled(false)
@@ -1132,6 +1225,48 @@ export default function SettingsPage() {
                 {browserPushTesting ? '测试中…' : '测试电脑通知'}
               </Button>
             )}
+          </div>
+          {/* OpenClaw 个人微信: 扫码绑定 */}
+          <div className="mb-3 rounded-xl border border-border/50 bg-accent/20 p-3.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-2.5">
+                <QrCode className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
+                <div className="min-w-0">
+                  <div className="text-[12px] font-medium text-foreground">OpenClaw 个人微信</div>
+                  {wechatBindInfo?.account_id ? (
+                    <p className="mt-0.5 text-[10.5px] text-muted-foreground">
+                      已绑定：
+                      <span className="font-mono text-foreground">{wechatBindInfo.user_id || wechatBindInfo.account_id}</span>
+                      {wechatBindInfo.nickname ? `（${wechatBindInfo.nickname}）` : ''}
+                    </p>
+                  ) : (
+                    <p className="mt-0.5 text-[10.5px] text-muted-foreground">扫码绑定个人微信，绑定成功后自动创建 OpenClaw 通知渠道</p>
+                  )}
+                </div>
+              </div>
+              {wechatBindInfo?.account_id ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 shrink-0 px-2 text-[11px] hover:text-destructive"
+                  onClick={() => void unbindWechat()}
+                  disabled={wechatUnbinding}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {wechatUnbinding ? '解除中…' : '解除绑定'}
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  className="h-7 shrink-0 px-2 text-[11px]"
+                  onClick={() => void startWechatBind()}
+                  disabled={wechatBindStarting}
+                >
+                  <QrCode className="h-3.5 w-3.5" />
+                  {wechatBindStarting ? '发起中…' : '绑定个人微信'}
+                </Button>
+              )}
+            </div>
           </div>
           {channels.length === 0 ? (
             <p className="text-[13px] text-muted-foreground text-center py-6">暂无通知渠道，点击"添加"创建</p>
@@ -1731,6 +1866,52 @@ export default function SettingsPage() {
         </DialogContent>
       </Dialog>
 
+      {/* 微信扫码绑定弹窗 */}
+      <Dialog open={wechatQrOpen} onOpenChange={open => { if (!open) closeWechatQr() }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>绑定个人微信</DialogTitle>
+            <DialogDescription>使用微信「扫一扫」扫描二维码，在手机上确认绑定</DialogDescription>
+          </DialogHeader>
+          <div className="mt-2 flex flex-col items-center gap-3">
+            {wechatQr && (
+              <>
+                <div className="rounded-xl border border-border/50 bg-white p-3">
+                  <QRCodeSVG value={wechatQr.qrcode_url} size={200} />
+                </div>
+                <p className="text-[11px] text-muted-foreground text-center">
+                  {wechatQr.expires_in ? `二维码 ${Math.round(wechatQr.expires_in / 60)} 分钟内有效，` : ''}请用微信「扫一扫」扫描
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void copyWechatLink(wechatQr.qrcode_url)}
+                  className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border/50 bg-accent/30 px-2.5 py-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                  title="点击复制链接"
+                >
+                  <Copy className="h-3 w-3 flex-shrink-0" />
+                  <span className="truncate font-mono">{wechatQr.qrcode_url}</span>
+                </button>
+                {wechatQrStatus === 'waiting' && (
+                  <p className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                    <span className="h-3 w-3 border-2 border-current/30 border-t-current rounded-full animate-spin" />
+                    等待扫码确认…
+                  </p>
+                )}
+                {wechatQrStatus === 'failed' && (
+                  <p className="text-[11px] text-destructive">绑定失败，请关闭后重试</p>
+                )}
+                {wechatQrStatus === 'expired' && (
+                  <p className="text-[11px] text-destructive">二维码已过期，请关闭后重新发起绑定</p>
+                )}
+              </>
+            )}
+            <div className="flex w-full justify-end gap-2 pt-1">
+              <Button variant="ghost" onClick={closeWechatQr}>关闭</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Channel Dialog */}
       <Dialog open={channelDialogOpen} onOpenChange={setChannelDialogOpen}>
         <DialogContent>
@@ -1739,14 +1920,16 @@ export default function SettingsPage() {
             <DialogDescription>配置通知推送方式</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 mt-2">
-            <div>
-              <Label>名称</Label>
-              <Input
-                value={channelForm.name}
-                onChange={e => setChannelForm({ ...channelForm, name: e.target.value })}
-                placeholder="如 我的 Telegram"
-              />
-            </div>
+            {channelForm.type !== 'openclaw' && (
+              <div>
+                <Label>名称</Label>
+                <Input
+                  value={channelForm.name}
+                  onChange={e => setChannelForm({ ...channelForm, name: e.target.value })}
+                  placeholder="如 我的 Telegram"
+                />
+              </div>
+            )}
             <div>
               <Label>类型</Label>
               <Select
@@ -1763,37 +1946,61 @@ export default function SettingsPage() {
                 </SelectContent>
               </Select>
             </div>
-            {CHANNEL_TYPE_FIELDS[channelForm.type]?.fields.map(field => (
-              <div key={field.key}>
-                <Label>{field.label}{!field.required && <span className="text-muted-foreground font-normal"> (选填)</span>}</Label>
-                <div className="relative">
-                  <Input
-                    type={field.secret && !channelKeyVisible ? 'password' : 'text'}
-                    value={channelForm.config[field.key] || ''}
-                    onChange={e => setChannelForm({
-                      ...channelForm,
-                      config: { ...channelForm.config, [field.key]: e.target.value },
-                    })}
-                    placeholder={field.placeholder}
-                    className={`font-mono ${field.secret ? 'pr-10' : ''}`}
-                  />
-                  {field.secret && (
-                    <Button
-                      type="button" variant="ghost" size="icon"
-                      className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8"
-                      onClick={() => setChannelKeyVisible(!channelKeyVisible)}
-                    >
-                      {channelKeyVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </Button>
-                  )}
+            {channelForm.type === 'openclaw' ? (
+              <div className="rounded-xl border border-border/50 bg-accent/20 p-4">
+                <div className="flex items-start gap-2.5">
+                  <QrCode className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
+                  <div>
+                    <div className="text-[12px] font-medium text-foreground">扫码绑定个人微信</div>
+                    <p className="mt-0.5 text-[10.5px] text-muted-foreground">
+                      无需填写 Webhook 地址与密钥。点击下方按钮，用微信扫码确认后自动创建「OpenClaw 个人微信」渠道。
+                    </p>
+                  </div>
                 </div>
+                <Button className="mt-3" size="sm" onClick={() => void startWechatBind()} disabled={wechatBindStarting}>
+                  <QrCode className="h-3.5 w-3.5" />
+                  {wechatBindStarting ? '发起中…' : '绑定个人微信'}
+                </Button>
               </div>
-            ))}
+            ) : (
+              CHANNEL_TYPE_FIELDS[channelForm.type]?.fields.map(field => (
+                <div key={field.key}>
+                  <Label>{field.label}{!field.required && <span className="text-muted-foreground font-normal"> (选填)</span>}</Label>
+                  <div className="relative">
+                    <Input
+                      type={field.secret && !channelKeyVisible ? 'password' : 'text'}
+                      value={channelForm.config[field.key] || ''}
+                      onChange={e => setChannelForm({
+                        ...channelForm,
+                        config: { ...channelForm.config, [field.key]: e.target.value },
+                      })}
+                      placeholder={field.placeholder}
+                      className={`font-mono ${field.secret ? 'pr-10' : ''}`}
+                    />
+                    {field.secret && (
+                      <Button
+                        type="button" variant="ghost" size="icon"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8"
+                        onClick={() => setChannelKeyVisible(!channelKeyVisible)}
+                      >
+                        {channelKeyVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="ghost" onClick={() => setChannelDialogOpen(false)}>取消</Button>
-              <Button onClick={saveChannel} disabled={!isChannelFormValid() || testing !== null}>
-                {testing !== null ? '测试中…' : (editChannelId ? '保存并测试' : '创建并测试')}
-              </Button>
+              {channelForm.type === 'openclaw' ? (
+                <Button onClick={() => void startWechatBind()} disabled={wechatBindStarting}>
+                  {wechatBindStarting ? '发起中…' : '绑定个人微信'}
+                </Button>
+              ) : (
+                <Button onClick={saveChannel} disabled={!isChannelFormValid() || testing !== null}>
+                  {testing !== null ? '测试中…' : (editChannelId ? '保存并测试' : '创建并测试')}
+                </Button>
+              )}
             </div>
           </div>
         </DialogContent>

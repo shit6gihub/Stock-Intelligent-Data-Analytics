@@ -44,6 +44,7 @@ from src.web.api import factors
 from src.web.api import notifications
 from src.web.api import health
 from src.web.api import insights
+from src.web.api import wechat_bind
 from src.web.api.auth import get_current_user
 from src.web.api.settings import get_app_version
 from src.web.response import ResponseWrapperMiddleware
@@ -123,6 +124,11 @@ app.include_router(
     notifications.router,
     prefix="/api/notifications",
     tags=["notifications"],
+    dependencies=protected,
+)
+app.include_router(
+    wechat_bind.router,
+    tags=["wechat-bind"],
     dependencies=protected,
 )
 app.include_router(

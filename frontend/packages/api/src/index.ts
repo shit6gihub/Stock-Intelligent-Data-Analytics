@@ -20,3 +20,4 @@ export * from './reports'
 export * from "./strategies"
 export * from './tdx'
 export * from './fundamentals'
+export * from './notify'
