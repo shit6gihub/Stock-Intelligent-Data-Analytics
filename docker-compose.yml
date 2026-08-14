@@ -11,7 +11,7 @@
 # 数据持久化:
 #   - 命名卷 panwatch_data(主后端 DB + Playwright 浏览器)
 #   - 命名卷 panwatch_forecast_data(预测引擎 SQLite + 回测报告)
-#   - 可选 bind 挂载 ~/.hermes(cron 输出只读)+ ~/Obsidian/FinanceVault(报告中心同步目标)
+#   - 可选 bind 挂载 ~/.hermes(cron 输出只读, 报告中心数据源)
 
 services:
   # ============== 主后端 8000 (FastAPI) ==============
@@ -26,8 +26,6 @@ services:
       - FORECAST_ENGINE_URL=http://forecast:8010
       # Hermes cron 输出根目录(可选,挂载 ~/.hermes 后自动可用)
       - HERMES_HOME=/hermes
-      # Obsidian vault 根目录(可选,挂载后报告中心「同步到 Obsidian」可用)
-      - OBSIDIAN_VAULT=/obsidian-vault
       # 数据源 key 在「设置 → 接口Key」UI 维护;此处只传 Hermes 必需的环境变量
       - TZ=Asia/Shanghai
       - PYTHONUNBUFFERED=1
@@ -37,9 +35,6 @@ services:
       # 可选: Hermes cron 输出(报告中心读取 cron 报告用)
       # ⚠️ 朋友请改成自己的路径,不存在会自动创建空目录不影响服务启动
       - ~/.hermes:/hermes:ro
-      # 可选: Obsidian vault 双向同步(报告中心「同步到 Obsidian」写入目标)
-      # ⚠️ 朋友请改成自己的路径,不存在会自动创建空目录不影响服务启动
-      - ./obsidian-vault:/obsidian-vault:rw
     depends_on:
       forecast:
         condition: service_healthy

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
-import { RefreshCw, Search, FileText, Calendar, Hash, ArrowDownToLine, CheckCircle2, AlertCircle, Loader2, ExternalLink } from 'lucide-react'
-import { reportsApi, type ReportItem, type VaultStatus, type SyncResult } from '@panwatch/api'
+import { RefreshCw, Search, FileText, Calendar, Hash, Loader2, ExternalLink } from 'lucide-react'
+import { reportsApi, type ReportItem } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Input } from '@panwatch/base-ui/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@panwatch/base-ui/components/ui/dialog'
@@ -25,9 +25,6 @@ export default function ReportsPage() {
   const [jobFilter, setJobFilter] = useState<string>('') // 空 = 全部
   const [selected, setSelected] = useState<{ item: ReportItem; content: string } | null>(null)
   const [loadingContent, setLoadingContent] = useState(false)
-  const [vault, setVault] = useState<VaultStatus | null>(null)
-  const [syncing, setSyncing] = useState(false)
-  const [syncResult, setSyncResult] = useState<SyncResult | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -42,15 +39,7 @@ export default function ReportsPage() {
     }
   }
 
-  const loadVault = async () => {
-    try {
-      setVault(await reportsApi.vaultStatus())
-    } catch (e) {
-      console.error(e)
-    }
-  }
-
-  useEffect(() => { load(); loadVault() }, [])
+  useEffect(() => { load() }, [])
 
   const filtered = useMemo(() => {
     let r = items
@@ -89,20 +78,6 @@ export default function ReportsPage() {
     }
   }
 
-  const doSync = async () => {
-    setSyncing(true)
-    setSyncResult(null)
-    try {
-      const res = await reportsApi.syncToVault()
-      setSyncResult(res)
-      await loadVault()
-    } catch (e: any) {
-      setSyncResult({ synced: 0, skipped: 0, errors: [String(e)], target_dir: '' })
-    } finally {
-      setSyncing(false)
-    }
-  }
-
   return (
     <div className="space-y-5 p-4 md:p-6">
       {/* Header */}
@@ -117,57 +92,11 @@ export default function ReportsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={() => { load(); loadVault() }} disabled={loading}>
+          <Button variant="ghost" size="sm" onClick={load} disabled={loading}>
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          </Button>
-          <Button onClick={doSync} disabled={syncing} size="sm">
-            {syncing ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <ArrowDownToLine className="w-4 h-4 mr-1" />}
-            同步到 Obsidian
           </Button>
         </div>
       </div>
-
-      {/* Vault 状态卡片 */}
-      {vault && (
-        <div className="card-subtle p-3.5 text-sm">
-          {vault.exists ? (
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                <span>Obsidian vault 已连接: <code className="text-xs">{vault.reports_dir}</code></span>
-              </div>
-              <span className="text-muted-foreground">
-                已同步 <strong className="text-foreground">{vault.reports_count}</strong> 份
-                {vault.tasks && vault.tasks.length > 0 && (
-                  <> · {vault.tasks.length} 个任务</>
-                )}
-              </span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 text-yellow-600">
-              <AlertCircle className="w-4 h-4" />
-              <span>Obsidian vault 不存在:{vault.hint}</span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* 同步结果提示 */}
-      {syncResult && (
-        <div className={`card-subtle p-3 text-sm ${syncResult.errors.length === 0 ? 'border-emerald-500/30' : 'border-red-500/30'}`}>
-          {syncResult.errors.length === 0 ? (
-            <div className="flex items-center gap-2 text-emerald-600">
-              <CheckCircle2 className="w-4 h-4" />
-              同步完成:新增 <strong>{syncResult.synced}</strong> 份 · 跳过(已存在)<strong>{syncResult.skipped}</strong> 份
-            </div>
-          ) : (
-            <div className="text-red-500">
-              <div>同步失败:{syncResult.errors.length} 个错误</div>
-              <div className="text-xs mt-1">{syncResult.errors[0]}</div>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* 筛选条 */}
       <div className="flex items-center gap-2 flex-wrap">

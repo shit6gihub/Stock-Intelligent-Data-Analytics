@@ -91,7 +91,7 @@ dual_low:
 </details>
 
 <details open>
-<summary><b>📊 报告中心（多源报告聚合 + Obsidian 同步）</b></summary>
+<summary><b>📊 报告中心（多源报告聚合）</b></summary>
 
 聚合所有 Agent / cron / 定时任务产出的 Markdown 报告，统一在 Web UI 展示。
 
@@ -102,14 +102,7 @@ dual_low:
 
 **API 端点**（`/api/reports/*`）：
 - `GET /reports/list` — 列出所有报告（按日期 / Job 分组）
-- `GET /reports/content?date=YYYY-MM-DD&job=xxx` — 读取精修版正文（自动去 cron 元信息噪音）
-- `POST /reports/sync-to-vault` — 同步到 Obsidian vault
-- `GET /reports/vault-status` — 同步状态检查
-
-**Obsidian 同步**：
-- 目标目录：`~/Obsidian/FinanceVault/03-CronReports/<job_name>/YYYY-MM-DD.md`
-- 自动去噪（剥掉 `## Prompt` + skill 定义 + 整段 `## Response` 前的元信息），保留 `# 📈 ...` 起的精修正文
-- 容器挂载配置：`OBSIDIAN_VAULT=/obsidian-vault` + `-v /home/ubuntu/Obsidian/FinanceVault:/obsidian-vault:rw`
+- `GET /reports/content?job_id=xxx&file=xxx` — 读取报告正文（自动去 cron 元信息噪音）
 
 **报告中心 Dialog**：点开直接是去噪后的精修正文（不带原始 cron 元信息噪音）。
 
@@ -261,15 +254,14 @@ docker compose up -d
 
 数据持久化: 命名卷 `panwatch_data`(主后端 DB + Playwright 浏览器) + `panwatch_forecast_data`(预测历史 SQLite + 回测报告)。
 
-**可选挂载**(报告中心 Obsidian vault 同步用):
+**可选挂载**(报告中心数据源):
 
 ```yaml
 volumes:
   - ~/.hermes:/hermes:ro                    # Hermes cron 输出只读
-  - ~/Obsidian/FinanceVault:/obsidian-vault:rw  # Obsidian vault 双向同步
 ```
 
-不挂载时 `报告中心` 页面会显示「Obsidian vault 不存在」,但不影响主功能(预测/持仓/策略库等都能用)。**已写在 `docker-compose.yml` 里**,朋友改路径即可。
+不挂载时 `报告中心` 页面为空,但不影响主功能(预测/持仓/策略库等都能用)。**已写在 `docker-compose.yml` 里**,朋友改路径即可。
 
 **无需宿主机 systemd、不需要手动起 forecast_server.py**。compose 网络内主后端通过 `FORECAST_ENGINE_URL=http://forecast:8010` 自动互联。
 
@@ -296,14 +288,10 @@ services:
       - "8000:8000"
     volumes:
       - panwatch_data:/app/data
-      # 可选: Obsidian vault 同步
-      - /home/ubuntu/Obsidian/FinanceVault:/obsidian-vault:rw
       # 可选: Hermes cron 输出挂载(报告中心用)
       - /home/ubuntu/.hermes:/hermes:ro
     environment:
       - TZ=Asia/Shanghai
-      # 可选: Obsidian vault 路径
-      - OBSIDIAN_VAULT=/obsidian-vault
     restart: unless-stopped
 
 volumes:
@@ -329,7 +317,6 @@ docker-compose up -d
 | `PLAYWRIGHT_SKIP_BROWSER_INSTALL` | 跳过首次 Chromium 安装（不需要截图时可用） | 未设置 |
 | `LOG_LEVEL` | 控制台日志级别。默认 `INFO`（只输出业务事件 + 错误）；排查问题时设 `DEBUG` 可看到调度心跳、采集过程等底层日志。UI 日志板始终保留完整记录，不受影响 | `INFO` |
 | `HTTP_PROXY` / `HTTPS_PROXY` / `http_proxy` | 出站 HTTP 代理。三种配置方式任选其一: ① 启动前 `export HTTP_PROXY=...`；② `.env` 里写 `http_proxy=http://host:port`；③ UI「设置 → 全局 HTTP 代理」。三者优先级:外部环境变量 > UI > `.env`。生效后所有 httpx 客户端走代理。`NO_PROXY` 默认包含 `localhost,127.0.0.1` | 未设置 |
-| `OBSIDIAN_VAULT` | Obsidian vault 路径（报告同步目标） | `/home/ubuntu/Obsidian/FinanceVault` |
 | `HERMES_HOME` | Hermes 根目录（报告中心从这里读 cron 输出） | `/hermes` |
 | `CRON_OUTPUT_DIR` | 兼容旧版环境变量（设了 HERMES_HOME 时会被忽略） | — |
 
@@ -452,9 +439,9 @@ cd frontend && pnpm install && pnpm dev       # 前端 :5183
 
 YAML 配置 + alphasift 因子（资金热度/量比突破/动量质量/低波质量）→ 全市场横截面选股。详见上文 [📚 策略库](#-策略库多因子-yaml-选股) 节。
 
-### 8. 报告中心 + Obsidian vault 同步
+### 8. 报告中心
 
-聚合所有 cron 报告 + 去噪 + 同步到 Obsidian。详见上文 [📊 报告中心](#-报告中心多源报告聚合--obsidian-同步) 节。
+聚合所有 cron 报告 + 去噪展示。详见上文 [📊 报告中心](#-报告中心多源报告聚合) 节。
 
 ### 9. 站内消息通知中心
 

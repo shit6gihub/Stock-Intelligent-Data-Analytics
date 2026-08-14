@@ -1,19 +1,15 @@
-"""报告中心 API: 列出/读取/同步 Hermes cron 输出报告。
+"""报告中心 API: 列出/读取 Hermes cron 输出报告。
 
 数据源: ~/.hermes/cron/output/<job_id>/*.md
-同步目标: ~/Obsidian/FinanceVault/03-CronReports/<job_name>/YYYY-MM-DD.md
 """
-import os
-import re
 import json
 import logging
-import shutil
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -27,10 +23,6 @@ HERMES_HOME = Path(
     or "/hermes"  # 推荐挂载点
 )
 CRON_OUTPUT_DIR = HERMES_HOME / "cron" / "output"
-
-# Obsidian vault 目标目录
-OBSIDIAN_VAULT = Path(os.environ.get("OBSIDIAN_VAULT", "/home/ubuntu/Obsidian/FinanceVault"))
-OB_REPORTS_DIR = OBSIDIAN_VAULT / "03-CronReports"
 
 
 def _strip_meta(content: str) -> str:
@@ -175,165 +167,19 @@ async def get_report_content(
 ):
     """读取单个报告完整 markdown。
 
-    优先读 Obsidian 精修版(03-CronReports/<job_name>/<date>.md, 已去噪);
-    找不到则 fallback 到 cron 原始输出(同样过 _strip_meta 去噪), 保证 Dialog 不展示元信息噪音。
+    读取 cron 原始输出并自动去噪(_strip_meta), 保证 Dialog 不展示元信息噪音。
     """
     # 防止路径穿越
     if ".." in file or "/" in file or "\\" in file:
         raise HTTPException(400, "非法文件名")
 
-    # 1) 优先 Obsidian 精修版: 用文件名日期 YYYY-MM-DD 匹配 <date>.md
-    m = re.match(r"^(\d{4}-\d{2}-\d{2})_", file)
-    vault_content = None
-    if m and OB_REPORTS_DIR.exists():
-        date_str = m.group(1)
-        job_name = _job_name_map().get(job_id, job_id)
-        # 任务名清理规则需与 sync_to_vault 保持一致
-        safe_name = re.sub(r"[^\w\u4e00-\u9fff\-_]", "_", job_name).strip("_")[:60]
-        if not safe_name:
-            safe_name = job_id
-        vault_file = OB_REPORTS_DIR / safe_name / f"{date_str}.md"
-        if vault_file.exists():
-            vault_content = vault_file.read_text(encoding="utf-8", errors="ignore")
-
-    # 2) fallback: cron 原始输出
     f = CRON_OUTPUT_DIR / job_id / file
-    if vault_content is None:
-        if not f.exists() or not f.is_file():
-            raise HTTPException(404, f"报告不存在: {job_id}/{file}")
-        try:
-            vault_content = f.read_text(encoding="utf-8", errors="ignore")
-        except Exception as e:
-            raise HTTPException(500, f"读取失败: {e}")
+    if not f.exists() or not f.is_file():
+        raise HTTPException(404, f"报告不存在: {job_id}/{file}")
+    try:
+        raw = f.read_text(encoding="utf-8", errors="ignore")
+    except Exception as e:
+        raise HTTPException(500, f"读取失败: {e}")
 
-    # 统一去噪(cron 原始版必去; Obsidian 版已是去噪后的, 再跑一次无副作用)
-    content = _strip_meta(vault_content)
+    content = _strip_meta(raw)
     return {"job_id": job_id, "file": file, "content": content}
-
-
-class SyncResult(BaseModel):
-    synced: int
-    skipped: int
-    errors: list
-    target_dir: str
-
-
-@router.post("/sync-to-vault", response_model=SyncResult)
-async def sync_to_vault(
-    job_id: Optional[str] = Query(None, description="只同步某个 job; 缺省全部"),
-):
-    """同步 cron 报告到 Obsidian vault: ~/Obsidian/FinanceVault/03-CronReports/<job_name>/
-
-    目标文件名: YYYY-MM-DD.md(从源文件名提取日期, 多次同日合并取最新)。
-    """
-    if not CRON_OUTPUT_DIR.exists():
-        raise HTTPException(503, "cron 输出目录不存在")
-
-    OB_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    name_map = _job_name_map()
-
-    synced = 0
-    skipped = 0
-    errors = []
-
-    # 按 (job_id, 日期) 分组: 选最新 mtime 的文件代表那天
-    grouped: dict[tuple[str, str], Path] = {}
-    for job_dir in CRON_OUTPUT_DIR.iterdir():
-        if not job_dir.is_dir():
-            continue
-        jid = job_dir.name
-        if job_id and jid != job_id:
-            continue
-        for f in job_dir.iterdir():
-            if not f.is_file() or not f.name.endswith(".md"):
-                continue
-            # 文件名格式: YYYY-MM-DD_HH-MM-SS.md
-            m = re.match(r"^(\d{4}-\d{2}-\d{2})_", f.name)
-            if not m:
-                continue
-            date_str = m.group(1)
-            key = (jid, date_str)
-            # 同日多份 → 取 mtime 最新
-            existing = grouped.get(key)
-            if existing is None or f.stat().st_mtime > existing.stat().st_mtime:
-                grouped[key] = f
-
-    for (jid, date_str), src in grouped.items():
-        job_name = name_map.get(jid, jid)
-        # 任务名清理(去掉路径不安全字符)
-        safe_name = re.sub(r"[^\w\u4e00-\u9fff\-_]", "_", job_name).strip("_")[:60]
-        if not safe_name:
-            safe_name = jid
-        target_dir = OB_REPORTS_DIR / safe_name
-        try:
-            target_dir.mkdir(parents=True, exist_ok=True)
-            target = target_dir / f"{date_str}.md"
-            # 加 frontmatter 让 Obsidian 能识别任务名
-            try:
-                rel = target.relative_to(OBSIDIAN_VAULT)
-            except ValueError:
-                rel = target
-            content = src.read_text(encoding="utf-8", errors="ignore")
-            # 剥掉 cron 元信息噪音(Job ID / Run Time / Prompt 区块), 只留正文
-            content = _strip_meta(content)
-            if not content.startswith("---"):
-                fm = (
-                    f"---\n"
-                    f"job_id: {jid}\n"
-                    f"job_name: \"{job_name}\"\n"
-                    f"source_file: {src.name}\n"
-                    f"synced_at: {datetime.now().isoformat()}\n"
-                    f"tags: [cron-report, panwatch, {safe_name}]\n"
-                    f"---\n\n"
-                )
-                content = fm + content
-            # 仅在内容变化时覆盖, 减少无谓写入
-            if target.exists() and target.read_text(encoding="utf-8", errors="ignore") == content:
-                skipped += 1
-            else:
-                target.write_text(content, encoding="utf-8")
-                synced += 1
-        except Exception as e:
-            errors.append(f"{safe_name}/{date_str}: {e}")
-
-    return SyncResult(
-        synced=synced,
-        skipped=skipped,
-        errors=errors,
-        target_dir=str(OB_REPORTS_DIR),
-    )
-
-
-@router.get("/vault-status")
-async def vault_status():
-    """检查 Obsidian vault 是否可写,返回现有报告统计。"""
-    if not OBSIDIAN_VAULT.exists():
-        return {
-            "exists": False,
-            "vault_path": str(OBSIDIAN_VAULT),
-            "hint": "Obsidian vault 路径不存在, 同步会失败",
-            "reports_count": 0,
-        }
-    if not OB_REPORTS_DIR.exists():
-        return {
-            "exists": True,
-            "vault_path": str(OBSIDIAN_VAULT),
-            "reports_dir": str(OB_REPORTS_DIR),
-            "reports_count": 0,
-            "tasks": [],
-        }
-    tasks = []
-    total = 0
-    for d in OB_REPORTS_DIR.iterdir():
-        if d.is_dir():
-            n = sum(1 for f in d.iterdir() if f.suffix == ".md")
-            total += n
-            tasks.append({"task_name": d.name, "count": n})
-    tasks.sort(key=lambda x: x["count"], reverse=True)
-    return {
-        "exists": True,
-        "vault_path": str(OBSIDIAN_VAULT),
-        "reports_dir": str(OB_REPORTS_DIR),
-        "reports_count": total,
-        "tasks": tasks,
-    }
