@@ -12,7 +12,7 @@ router = APIRouter()
 
 # 全量场景注册表: scene → 显示名 + 描述。新增使用点需在此登记。
 SCENES = {
-    "chat": {"name": "对话助手", "desc": "日常对话 / 个股问答助手"},
+    "chat": {"name": "数智分析BOT", "desc": "日常对话 / 个股问答助手"},
     "trading_agents": {"name": "TradingAgents 深度分析", "desc": "多智能体深度分析报告"},
     "reports": {"name": "报告复盘 Agent", "desc": "盘前 / 盘后复盘报告生成"},
     "referee": {"name": "AI 裁判", "desc": "多模型结果裁决 / 交叉验证"},
