@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from src.web.database import get_db
 from src.web.models import AIService, AIModel, AISceneBinding
@@ -108,12 +108,31 @@ class ServiceUpdate(BaseModel):
     api_key: str | None = None
 
 
+# 模型能力标签(2026-08-15): chat=对话, vision=视觉/图片理解, image=图像生成, video=视频生成, tools=工具调用
+CAPABILITY_TAGS = ("chat", "vision", "image", "video", "tools")
+
+
+def _parse_capabilities(raw) -> list[str]:
+    """从存储串(逗号分隔)解析能力标签; 空串/None = 默认 chat(兼容存量模型)。"""
+    if isinstance(raw, list):
+        return raw or ["chat"]
+    if not raw or not str(raw).strip():
+        return ["chat"]
+    return [t.strip() for t in str(raw).split(",") if t.strip()]
+
+
 class ModelResponse(BaseModel):
     id: int
     name: str
     service_id: int
     model: str
     is_default: bool
+    capabilities: list[str] = []
+
+    @field_validator("capabilities", mode="before")
+    @classmethod
+    def _validate_capabilities(cls, v):
+        return _parse_capabilities(v)
 
     class Config:
         from_attributes = True
@@ -143,7 +162,14 @@ def _service_to_response(service: AIService) -> dict:
         "base_url": service.base_url,
         "api_key": service.api_key or "",
         "models": [
-            {"id": m.id, "name": m.name, "service_id": m.service_id, "model": m.model, "is_default": m.is_default}
+            {
+                "id": m.id,
+                "name": m.name,
+                "service_id": m.service_id,
+                "model": m.model,
+                "is_default": m.is_default,
+                "capabilities": _parse_capabilities(m.capabilities),
+            }
             for m in service.models
         ],
     }
@@ -189,6 +215,8 @@ class ModelCreate(BaseModel):
     service_id: int
     model: str
     is_default: bool = False
+    # None/缺省 = 不指定(存空串, 读回默认 chat), 兼容存量前端
+    capabilities: list[str] | None = None
 
 
 class ModelUpdate(BaseModel):
@@ -196,6 +224,7 @@ class ModelUpdate(BaseModel):
     service_id: int | None = None
     model: str | None = None
     is_default: bool | None = None
+    capabilities: list[str] | None = None  # None = 不变
 
 
 class BatchModelItem(BaseModel):
@@ -225,6 +254,9 @@ def create_model(body: ModelCreate, db: Session = Depends(get_db)):
     data = body.model_dump()
     if not data["name"]:
         data["name"] = data["model"]
+    # capabilities: list/None → 逗号分隔存储串(空=默认 chat, 兼容存量)
+    caps = data.get("capabilities")
+    data["capabilities"] = ",".join(caps) if caps else ""
     model = AIModel(**data)
     db.add(model)
     db.commit()
@@ -241,6 +273,13 @@ def update_model(model_id: int, body: ModelUpdate, db: Session = Depends(get_db)
     data = body.model_dump(exclude_unset=True)
     if data.get("is_default"):
         db.query(AIModel).update({"is_default": False})
+
+    # capabilities: None = 不变(不覆盖); list = 覆盖为逗号分隔存储串
+    caps = data.get("capabilities")
+    if caps is None:
+        data.pop("capabilities", None)
+    else:
+        data["capabilities"] = ",".join(caps)
 
     for key, value in data.items():
         setattr(model, key, value)

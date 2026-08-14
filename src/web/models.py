@@ -89,6 +89,8 @@ class AIModel(Base):
     )
     model = Column(String, nullable=False)  # 实际模型标识，如 "glm-4-flash"
     is_default = Column(Boolean, default=False)
+    # 功能选型(2026-08-15): 逗号分隔能力标签 chat,vision,image,video,tools; 空串=默认 chat(兼容存量模型)
+    capabilities = Column(Text, nullable=False, default="")
     created_at = Column(DateTime, server_default=func.now())
 
     service = relationship("AIService", back_populates="models")

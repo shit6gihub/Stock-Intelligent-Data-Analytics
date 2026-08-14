@@ -70,6 +70,7 @@ interface ModelForm {
   name: string
   service_id: number | null
   model: string
+  capabilities: string[]
 }
 
 interface ChannelForm {
@@ -160,8 +161,33 @@ const CHANNEL_TYPE_FIELDS: Record<string, { label: string; fields: ChannelFieldD
 }
 
 const emptyServiceForm: ServiceForm = { name: '', base_url: '', api_key: '' }
-const emptyModelForm: ModelForm = { name: '', service_id: null, model: '' }
+const emptyModelForm: ModelForm = { name: '', service_id: null, model: '', capabilities: [] }
 const emptyChannelForm: ChannelForm = { name: '', type: 'telegram', config: {} }
+
+// 模型功能标签(capabilities): 彩色小徽标展示; key 与后端 capabilities 取值一致
+const MODEL_CAP_META: Record<string, { label: string; badge: string }> = {
+  chat: { label: '对话', badge: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25' },
+  vision: { label: '视觉', badge: 'bg-sky-500/10 text-sky-400 border-sky-500/25' },
+  image: { label: '图像', badge: 'bg-purple-500/10 text-purple-400 border-purple-500/25' },
+  video: { label: '视频', badge: 'bg-orange-500/10 text-orange-400 border-orange-500/25' },
+  tools: { label: '工具', badge: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/25' },
+}
+const MODEL_CAP_ORDER = ['chat', 'vision', 'image', 'video', 'tools']
+
+// 模型功能标签徽标(缺失/未知标签按空处理,兼容后端未部署 capabilities)
+function CapBadges({ caps }: { caps?: string[] }) {
+  const list = (caps || []).filter(c => MODEL_CAP_META[c]).sort((a, b) => MODEL_CAP_ORDER.indexOf(a) - MODEL_CAP_ORDER.indexOf(b))
+  if (list.length === 0) return null
+  return (
+    <span className="inline-flex items-center gap-1">
+      {list.map(c => (
+        <span key={c} className={`inline-flex items-center rounded-full border px-1.5 py-px text-[10px] leading-4 ${MODEL_CAP_META[c].badge}`}>
+          {MODEL_CAP_META[c].label}
+        </span>
+      ))}
+    </span>
+  )
+}
 
 // 敏感设置 key:值不回显(后端已掩码为 ********),输入框用密码态,掩码值不参与编辑
 const SECRET_SETTING_KEYS = new Set(['wudao_mcp_token', 'zhitu_token', 'tdx_api_key'])
@@ -199,6 +225,10 @@ export default function SettingsPage() {
   const [modelDialogOpen, setModelDialogOpen] = useState(false)
   const [modelForm, setModelForm] = useState<ModelForm>(emptyModelForm)
   const [editModelId, setEditModelId] = useState<number | null>(null)
+
+  // 模型管理第二窗口(Dialog): 查看/增删某服务商下的模型
+  const [modelsDialogOpen, setModelsDialogOpen] = useState(false)
+  const [modelsDialogServiceId, setModelsDialogServiceId] = useState<number | null>(null)
 
   // 批量选择嗅探到的模型
   const [batchOpen, setBatchOpen] = useState(false)
@@ -656,9 +686,27 @@ export default function SettingsPage() {
   }
 
   // Model CRUD
+  const openModelsDialog = (svc: AIService) => {
+    setModelsDialogServiceId(svc.id)
+    setModelsDialogOpen(true)
+  }
+
+  const closeModelsDialog = () => {
+    setModelsDialogOpen(false)
+    setModelsDialogServiceId(null)
+  }
+
+  // 模型管理 Dialog 当前服务商(删除服务商后自动失效)
+  const modelsSvc = services.find(s => s.id === modelsDialogServiceId) ?? null
+
   const openModelDialog = (serviceId?: number, model?: AIModel) => {
     if (model) {
-      setModelForm({ name: model.name, service_id: model.service_id, model: model.model })
+      setModelForm({
+        name: model.name,
+        service_id: model.service_id,
+        model: model.model,
+        capabilities: model.capabilities || [],
+      })
       setEditModelId(model.id)
     } else {
       setModelForm({ ...emptyModelForm, service_id: serviceId ?? null })
@@ -669,10 +717,11 @@ export default function SettingsPage() {
 
   const saveModel = async () => {
     try {
+      const payload = { ...modelForm, capabilities: modelForm.capabilities || [] }
       if (editModelId) {
-        await fetchAPI(`/providers/models/${editModelId}`, { method: 'PUT', body: JSON.stringify(modelForm) })
+        await fetchAPI(`/providers/models/${editModelId}`, { method: 'PUT', body: JSON.stringify(payload) })
       } else {
-        await fetchAPI('/providers/models', { method: 'POST', body: JSON.stringify(modelForm) })
+        await fetchAPI('/providers/models', { method: 'POST', body: JSON.stringify(payload) })
       }
       setModelDialogOpen(false)
       load()
@@ -952,10 +1001,22 @@ export default function SettingsPage() {
   const defaultModel = allModels.find(m => m.is_default)
   const defaultChannel = channels.find(c => c.is_default)
   const enabledChannels = channels.filter(c => c.enabled)
-  // 场景分配下拉选项: 模型池全部模型(模型名 + 服务商名)
+  // 场景分配下拉选项: 模型池全部模型(模型名 + 服务商名 + 功能徽标)
   const sceneModelOptions = services.flatMap(svc =>
-    (svc.models || []).map(m => ({ id: m.id, label: `${m.name} · ${svc.name}` })),
+    (svc.models || []).map(m => ({
+      id: m.id,
+      label: `${m.name} · ${svc.name}`,
+      caps: m.capabilities || [],
+    })),
   )
+  // 场景下拉选项生成器: vision 场景把含视觉能力的模型排前面
+  const sceneOptionsFor = (scene: string) => {
+    if (scene !== 'vision') return sceneModelOptions
+    const hasVision = (c: string[]) => (c || []).includes('vision')
+    return [...sceneModelOptions].sort(
+      (a, b) => (hasVision(b.caps) ? 1 : 0) - (hasVision(a.caps) ? 1 : 0),
+    )
+  }
 
   const filteredSettings = settings.filter(s => {
     // 敏感接口 key 由独立"接口 Key"区块管理,系统区块不重复展示
@@ -1070,75 +1131,37 @@ export default function SettingsPage() {
           {services.length === 0 ? (
             <p className="text-[13px] text-muted-foreground text-center py-6">暂无 AI 服务商，点击"添加服务商"创建</p>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-2">
               {services.map(svc => (
-                <div key={svc.id} className="rounded-xl bg-accent/30 overflow-hidden">
-                  {/* Service header */}
-                  <div className="flex items-center justify-between p-3.5">
+                <div key={svc.id} className="flex items-center justify-between gap-3 rounded-lg bg-accent/30 px-3 py-2.5 hover:bg-accent/50 transition-colors">
+                  <div className="min-w-0 flex items-center gap-2.5">
+                    <Cpu className="w-3.5 h-3.5 text-primary flex-shrink-0" />
                     <div className="min-w-0">
-                      <span className="text-[13px] font-medium text-foreground">{svc.name}</span>
-                      <p className="text-[11px] text-muted-foreground mt-0.5 truncate font-mono">{svc.base_url}</p>
-                    </div>
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      <Button size="sm" variant="ghost" className="h-7 text-[11px]" onClick={() => openModelDialog(svc.id)}>
-                        <Plus className="w-3 h-3" /> 模型
-                      </Button>
-                      <Button
-                        variant="ghost" size="icon" className="h-7 w-7"
-                        title="嗅探模型（自动发现可用模型）"
-                        disabled={discoveringService === svc.id}
-                        onClick={() => discoverForService(svc.id)}
-                      >
-                        <Radar className={`w-3.5 h-3.5 ${discoveringService === svc.id ? 'animate-pulse' : ''}`} />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openServiceDialog(svc)}>
-                        <Pencil className="w-3.5 h-3.5" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-destructive" onClick={() => deleteService(svc.id)}>
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
+                      <span className="text-[12px] font-medium text-foreground">{svc.name}</span>
+                      <p className="text-[10px] text-muted-foreground truncate font-mono">{svc.base_url}</p>
                     </div>
                   </div>
-                  {/* Models under this service */}
-                  {svc.models.length > 0 && (
-                    <div className="px-3.5 pb-3.5 space-y-1.5">
-                      {svc.models.map(m => (
-                        <div key={m.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-background/60">
-                          <div className="flex items-center gap-2">
-                            {m.is_default && <Star className="w-3 h-3 text-amber-500" />}
-                            <Cpu className="w-3 h-3 text-muted-foreground" />
-                            <span className="text-[12px] font-medium text-foreground">{m.name}</span>
-                            <span className="text-[11px] text-muted-foreground font-mono">{m.model}</span>
-                          </div>
-                          <div className="flex items-center gap-0.5">
-                            <Button
-                              variant="ghost" size="icon" className="h-6 w-6"
-                              onClick={() => testModel(m.id)}
-                              disabled={testingModel === m.id}
-                              title="测试模型"
-                            >
-                              {testingModel === m.id ? (
-                                <span className="w-3 h-3 border-2 border-current/30 border-t-current rounded-full animate-spin" />
-                              ) : (
-                                <Play className="w-3 h-3" />
-                              )}
-                            </Button>
-                            {!m.is_default && (
-                              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setDefaultModel(m.id)} title="设为默认">
-                                <Star className="w-3 h-3" />
-                              </Button>
-                            )}
-                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openModelDialog(svc.id, m)}>
-                              <Pencil className="w-3 h-3" />
-                            </Button>
-                            <Button variant="ghost" size="icon" className="h-6 w-6 hover:text-destructive" onClick={() => deleteModel(m.id)}>
-                              <Trash2 className="w-3 h-3" />
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <span className="inline-flex items-center rounded-full border border-border/60 bg-background/60 px-2 py-0.5 text-[10px] text-muted-foreground">
+                      {svc.models.length} 模型
+                    </span>
+                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${
+                      svc.api_key
+                        ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-400'
+                        : 'border-amber-500/25 bg-amber-500/10 text-amber-400'
+                    }`}>
+                      {svc.api_key ? '已启用' : '未配置 Key'}
+                    </span>
+                    <Button size="sm" variant="secondary" className="h-7 px-2 text-[11px]" onClick={() => openModelsDialog(svc)}>
+                      管理
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openServiceDialog(svc)} title="编辑服务商">
+                      <Pencil className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-destructive" onClick={() => deleteService(svc.id)} title="删除服务商">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1162,7 +1185,10 @@ export default function SettingsPage() {
                       <span className="text-[12px] font-semibold text-foreground">{b.display_name}</span>
                       <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{b.description}</p>
                     </div>
-                    <div className="flex-shrink-0 w-[220px] sm:w-[260px]">
+                    <div className="flex-shrink-0 w-[220px] sm:w-[280px]">
+                      {b.scene === 'vision' && (
+                        <p className="mb-1 text-[10px] text-sky-400/90">优先选择含视觉(vision)能力的模型</p>
+                      )}
                       <Select
                         value={b.model_id != null ? String(b.model_id) : SCENE_DEFAULT_VALUE}
                         onValueChange={v => handleSceneChange(b.scene, v)}
@@ -1173,8 +1199,13 @@ export default function SettingsPage() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value={SCENE_DEFAULT_VALUE}>默认模型</SelectItem>
-                          {sceneModelOptions.map(opt => (
-                            <SelectItem key={opt.id} value={String(opt.id)}>{opt.label}</SelectItem>
+                          {sceneOptionsFor(b.scene).map(opt => (
+                            <SelectItem key={opt.id} value={String(opt.id)}>
+                              <span className="flex items-center gap-1.5">
+                                <span className="truncate">{opt.label}</span>
+                                <CapBadges caps={opt.caps} />
+                              </span>
+                            </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -1782,6 +1813,35 @@ export default function SettingsPage() {
                 className="font-mono"
               />
             </div>
+            <div>
+              <Label>功能 <span className="text-muted-foreground font-normal">(多选，决定模型可用于哪些场景)</span></Label>
+              <div className="flex flex-wrap gap-1.5">
+                {MODEL_CAP_ORDER.map(cap => {
+                  const meta = MODEL_CAP_META[cap]
+                  const checked = modelForm.capabilities.includes(cap)
+                  return (
+                    <button
+                      key={cap}
+                      type="button"
+                      onClick={() => setModelForm({
+                        ...modelForm,
+                        capabilities: checked
+                          ? modelForm.capabilities.filter(c => c !== cap)
+                          : [...modelForm.capabilities, cap],
+                      })}
+                      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+                        checked
+                          ? `${meta.badge} border-transparent`
+                          : 'border-border/60 bg-background/60 text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {checked && <Check className="h-3 w-3" strokeWidth={3} />}
+                      {meta.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="ghost" onClick={() => setModelDialogOpen(false)}>取消</Button>
               <Button onClick={saveModel} disabled={!modelForm.model || !modelForm.service_id}>
@@ -1789,6 +1849,83 @@ export default function SettingsPage() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 模型管理 Dialog(第二窗口): 某服务商下的模型列表 + 添加/嗅探/删除 */}
+      <Dialog open={modelsDialogOpen} onOpenChange={open => { if (!open) closeModelsDialog() }}>
+        <DialogContent className="max-w-2xl">
+          {modelsSvc && (
+            <>
+              <DialogHeader>
+                <DialogTitle>管理模型 · {modelsSvc.name}</DialogTitle>
+                <DialogDescription className="font-mono text-[11px]">{modelsSvc.base_url}</DialogDescription>
+              </DialogHeader>
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <span className="text-[11px] text-muted-foreground">
+                  共 <span className="font-mono text-foreground">{modelsSvc.models.length}</span> 个模型
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="secondary" size="sm" className="h-8 text-[12px]"
+                    disabled={discoveringService === modelsSvc.id}
+                    onClick={() => discoverForService(modelsSvc.id)}
+                  >
+                    <Radar className={`w-3.5 h-3.5 ${discoveringService === modelsSvc.id ? 'animate-pulse' : ''}`} />
+                    嗅探
+                  </Button>
+                  <Button size="sm" className="h-8 text-[12px]" onClick={() => openModelDialog(modelsSvc.id)}>
+                    <Plus className="w-3.5 h-3.5" /> 添加模型
+                  </Button>
+                </div>
+              </div>
+              {modelsSvc.models.length === 0 ? (
+                <p className="py-8 text-center text-[12px] text-muted-foreground">
+                  暂无模型，点击「添加模型」或「嗅探」自动发现
+                </p>
+              ) : (
+                <div className="max-h-[55vh] space-y-1.5 overflow-y-auto scrollbar pr-1">
+                  {modelsSvc.models.map(m => (
+                    <div key={m.id} className="flex items-center justify-between gap-2 rounded-lg border border-border/50 bg-background/60 px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          {m.is_default && <Star className="w-3 h-3 text-amber-500 flex-shrink-0" />}
+                          <span className="text-[12px] font-medium text-foreground truncate">{m.name}</span>
+                          <CapBadges caps={m.capabilities} />
+                        </div>
+                        <p className="text-[10px] text-muted-foreground font-mono truncate">{m.model}</p>
+                      </div>
+                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                        <Button
+                          variant="ghost" size="icon" className="h-6 w-6"
+                          onClick={() => testModel(m.id)}
+                          disabled={testingModel === m.id}
+                          title="测试模型"
+                        >
+                          {testingModel === m.id ? (
+                            <span className="w-3 h-3 border-2 border-current/30 border-t-current rounded-full animate-spin" />
+                          ) : (
+                            <Play className="w-3 h-3" />
+                          )}
+                        </Button>
+                        {!m.is_default && (
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setDefaultModel(m.id)} title="设为默认">
+                            <Star className="w-3 h-3" />
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openModelDialog(modelsSvc.id, m)} title="编辑模型">
+                          <Pencil className="w-3 h-3" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 hover:text-destructive" onClick={() => deleteModel(m.id)} title="删除模型">
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
         </DialogContent>
       </Dialog>
 

@@ -235,6 +235,12 @@ def _migrate(engine):
             "shadow_profile_json",
             "ALTER TABLE users ADD COLUMN shadow_profile_json TEXT",
         ),
+        # 模型功能选型(2026-08-15): ai_models 表加 capabilities 列(逗号分隔能力标签, 空=默认 chat)
+        (
+            "ai_models",
+            "capabilities",
+            "ALTER TABLE ai_models ADD COLUMN capabilities TEXT DEFAULT ''",
+        ),
     ]
     with engine.connect() as conn:
         for table, column, sql in migrations:
