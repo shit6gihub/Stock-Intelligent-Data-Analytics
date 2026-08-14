@@ -95,6 +95,11 @@ CHANNEL_TYPES = {
         "label": "Hermes 中转(企微/TG等)",
         "fields": ["webhook_url", "secret"],
     },
+    "openclaw": {
+        "label": "OpenClaw 个人微信",
+        "fields": ["webhook_url", "secret"],
+        "hint": "个人微信直通(ClawBot)。webhook_url 填 Hermes 的订阅地址, secret 填对应 HMAC 密钥。",
+    },
     "lark": {
         "label": "飞书机器人",
         "fields": ["webhook_token"],
@@ -121,13 +126,14 @@ CHANNEL_TYPES = {
 _APPRISE_TYPES = {"telegram", "bark", "dingtalk", "lark", "discord", "pushover"}
 
 # 自定义实现的渠道类型（带代理或特殊需求）
-_CUSTOM_IMPL_TYPES = {"wecom", "serverchan", "pushplus", "hermes"}
+_CUSTOM_IMPL_TYPES = {"wecom", "serverchan", "pushplus", "hermes", "openclaw"}
 
 _CUSTOM_REQUIRED_FIELDS = {
     "wecom": ("webhook_key",),
     "serverchan": ("sendkey",),
     "pushplus": ("token",),
     "hermes": ("webhook_url",),
+    "openclaw": ("webhook_url",),
 }
 
 # 支持 Markdown 的渠道（不需要 sanitize）
@@ -391,6 +397,8 @@ class NotifierManager:
         elif ch_type == "pushplus":
             return await self._send_pushplus(config, title, content)
         elif ch_type == "hermes":
+            await self._send_hermes(config, title, content)
+        elif ch_type == "openclaw":
             await self._send_hermes(config, title, content)
         else:
             logger.warning(f"未知的自定义渠道类型: {ch_type}")

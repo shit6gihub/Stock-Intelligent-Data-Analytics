@@ -135,6 +135,13 @@ const CHANNEL_TYPE_FIELDS: Record<string, { label: string; fields: ChannelFieldD
       { key: 'topic', label: '群组编码', placeholder: '选填，群组推送时填写' },
     ],
   },
+  openclaw: {
+    label: 'OpenClaw 个人微信',
+    fields: [
+      { key: 'webhook_url', label: 'Webhook 地址', placeholder: 'http://<hermes地址>:8644/webhooks/<订阅名>', required: true },
+      { key: 'secret', label: 'HMAC 密钥', placeholder: '订阅创建时返回的 Secret', secret: true, required: true },
+    ],
+  },
   discord: {
     label: 'Discord',
     fields: [
