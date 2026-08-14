@@ -36,6 +36,7 @@ class _AccountState:
         self.sync_buf = ""
         self.seen: deque[str] = deque(maxlen=MAX_MSG_IDS)
         self.conversation_id: str | None = None
+        self.typing_ticket: str | None = None
         self.initialized = False  # 首轮只建游标不回复(避免回复历史消息)
 
 
@@ -170,6 +171,17 @@ async def _account_loop(state: _AccountState):
                     continue  # 首轮建游标, 不回复历史消息
 
                 logger.info(f"微信收到用户消息: {text[:40]}")
+                # 发送"正在输入"状态(微信侧显示, 需 typing_ticket)
+                try:
+                    if not state.typing_ticket:
+                        cfg_resp = await wechat_ilink.get_config(
+                            account, peer, ctx or state.cfg.get("context_token")
+                        )
+                        state.typing_ticket = str(cfg_resp.get("typing_ticket") or "") or None
+                    if state.typing_ticket:
+                        await wechat_ilink.send_typing(account, peer, state.typing_ticket, 1)
+                except Exception as exc:
+                    logger.debug(f"typing 状态发送失败(可忽略): {exc}")
                 try:
                     reply, state.conversation_id = await _ask_ai(
                         text, state.conversation_id, state.user_id
@@ -177,6 +189,12 @@ async def _account_loop(state: _AccountState):
                 except Exception as exc:
                     logger.warning(f"AI 回复失败: {exc}")
                     reply = "🤖 数智分析BOT 暂时无法处理, 请稍后重试。"
+                # 停止"正在输入"
+                try:
+                    if state.typing_ticket:
+                        await wechat_ilink.send_typing(account, peer, state.typing_ticket, 2)
+                except Exception as exc:
+                    logger.debug(f"typing 停止发送失败(可忽略): {exc}")
                 reply = reply[:MAX_REPLY_LEN]
                 try:
                     await wechat_ilink.send_text(

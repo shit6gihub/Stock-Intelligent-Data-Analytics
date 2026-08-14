@@ -24,10 +24,15 @@ EP_GET_BOT_QR = "ilink/bot/get_bot_qrcode"
 EP_GET_QR_STATUS = "ilink/bot/get_qrcode_status"
 EP_SEND_MESSAGE = "ilink/bot/sendmessage"
 EP_GET_UPDATES = "ilink/bot/getupdates"
+EP_GET_CONFIG = "ilink/bot/getconfig"
+EP_SEND_TYPING = "ilink/bot/sendtyping"
 
 ITEM_TEXT = 1
 MSG_TYPE_BOT = 2
 MSG_STATE_FINISH = 2
+
+TYPING_START = 1
+TYPING_STOP = 2
 
 API_TIMEOUT = 15.0
 
@@ -144,3 +149,46 @@ async def get_updates(account: dict, sync_buf: str = "") -> dict:
         )
         resp.raise_for_status()
         return resp.json()
+
+
+async def get_config(account: dict, user_id: str, context_token: str | None = None) -> dict:
+    """获取用户会话配置(含 typing_ticket, 用于发送'正在输入'状态)。"""
+    payload: dict = {"ilink_user_id": user_id}
+    if context_token:
+        payload["context_token"] = context_token
+    body = json.dumps(
+        {**payload, "base_info": {"channel_version": CHANNEL_VERSION}},
+        ensure_ascii=False,
+    )
+    base_url = (account.get("base_url") or ILINK_BASE_URL).rstrip("/")
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(
+            f"{base_url}/{EP_GET_CONFIG}",
+            content=body,
+            headers=_headers(account.get("token"), body),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def send_typing(
+    account: dict, user_id: str, typing_ticket: str, status: int = TYPING_START
+) -> None:
+    """发送'正在输入/停止输入'状态(TYPING_START=1 开始, TYPING_STOP=2 结束)。"""
+    payload = {
+        "ilink_user_id": user_id,
+        "typing_ticket": typing_ticket,
+        "status": status,
+    }
+    body = json.dumps(
+        {**payload, "base_info": {"channel_version": CHANNEL_VERSION}},
+        ensure_ascii=False,
+    )
+    base_url = (account.get("base_url") or ILINK_BASE_URL).rstrip("/")
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(
+            f"{base_url}/{EP_SEND_TYPING}",
+            content=body,
+            headers=_headers(account.get("token"), body),
+        )
+        resp.raise_for_status()
