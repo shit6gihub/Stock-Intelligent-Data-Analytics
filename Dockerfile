@@ -1,10 +1,11 @@
 # PanWatch Dockerfile
 # 多阶段构建，减小最终镜像大小
-# 基础镜像源: 默认用阿里云 library(国内 ACR 构建环境访问 docker.io 受限,
-# 2026-08-14 实测卡在拉取 metadata)。海外自建/ghcr 发布可 build-arg 覆盖回官方:
+# 基础镜像源: 默认用 DaoCloud 公开镜像(docker.m.daocloud.io)—— 国内 ACR 构建
+# 环境访问 docker.io 超时、阿里云 library 需登录, DaoCloud 免登录实测可用(2026-08-14)。
+# 海外自建/ghcr 发布可 build-arg 覆盖回官方:
 #   --build-arg NODE_IMAGE=node:20-alpine --build-arg PYTHON_IMAGE=python:3.11-slim
-ARG NODE_IMAGE=registry.cn-hangzhou.aliyuncs.com/library/node:20-alpine
-ARG PYTHON_IMAGE=registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim
+ARG NODE_IMAGE=docker.m.daocloud.io/library/node:20-alpine
+ARG PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.11-slim
 
 # ===== Stage 1: 前端构建 =====
 FROM ${NODE_IMAGE} AS frontend-builder
