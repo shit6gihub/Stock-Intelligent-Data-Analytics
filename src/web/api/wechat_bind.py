@@ -1,23 +1,18 @@
-"""SIDA 扫码绑定个人微信(OpenClaw 桥接) API。
+"""SIDA 扫码绑定个人微信(直接 iLink, 零 OpenClaw 依赖) API。
 
-宿主机微信桥接服务(容器内经 172.17.0.1:8001 可达, 地址可用环境变量
-SIDA_WECHAT_BRIDGE 覆盖)提供:
-- POST /start {"bind_id": ...} -> {"qrcode_url": "..."}
-- GET  /status?bind=<bind_id> -> {"status": "waiting"}
-                             | {"status": "success", "account_id": "...", "user_id": "..."}
-- POST /send {"account_id", "to", "message", "idempotency_key"} -> {"ok": true, "message_id": "..."}
+链路: 设置页扫码 -> fetch_qr() 出二维码 -> 微信扫码确认 -> poll_qr() 轮询
+      -> 凭证(token/base_url/user_id)存 notify_channels(type=openclaw) -> 推送走 _send_openclaw
 
-绑定关系直接落 notify_channels(type=openclaw), 不建新表。
+凭证落 notify_channels.config: {account_id, token, base_url, user_id}
+不建新表。
 """
 
 import logging
-import os
-import uuid
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from src.core import wechat_ilink
 from src.web.api.auth import get_current_user
 from src.web.database import get_db
 from src.web.models import NotifyChannel, User
@@ -26,26 +21,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/notify/wechat-bind")
 
-# 宿主机微信桥接服务地址(容器内经 docker0 网关 172.17.0.1 可达)
-BRIDGE_BASE = os.getenv("SIDA_WECHAT_BRIDGE", "http://172.17.0.1:8001").rstrip("/")
-BRIDGE_TIMEOUT = 30.0
-
 CHANNEL_TYPE = "openclaw"
 CHANNEL_NAME = "个人微信(扫码绑定)"
-# 桥接地址固定存进 config.webhook_url, _send_openclaw 会往 {webhook_url}/send 推消息
-BRIDGE_WEBHOOK_URL = "http://172.17.0.1:8001"
-
-
-def _bridge_unavailable() -> HTTPException:
-    return HTTPException(status_code=503, detail="微信桥接服务不可用")
 
 
 def _find_bound_channel(db: Session, user: User) -> NotifyChannel | None:
-    """当前用户扫码绑定的 openclaw 渠道。
-
-    识别方式: name 为「个人微信(扫码绑定)」或 config 中带 account_id+user_id,
-    避免误删/误读用户手动添加的 openclaw(webhook_url+secret)渠道。
-    """
+    """当前用户扫码绑定的 openclaw 渠道(带 account_id+user_id 的)。"""
     rows = (
         db.query(NotifyChannel)
         .filter(
@@ -62,88 +43,81 @@ def _find_bound_channel(db: Session, user: User) -> NotifyChannel | None:
 
 
 @router.post("/start")
-async def start_bind(
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    """生成 bind_id 并请求桥接服务创建扫码会话, 返回二维码 URL。
-
-    桥接服务不可达时返回 503(微信桥接服务不可用), 前端可据此提示降级。
-    """
-    bind_id = uuid.uuid4().hex[:12]
+async def start_bind():
+    """获取 iLink 扫码二维码。返回 {qrcode, qrcode_url}(qrcode 用于轮询)。"""
     try:
-        async with httpx.AsyncClient(timeout=BRIDGE_TIMEOUT) as client:
-            resp = await client.post(f"{BRIDGE_BASE}/start", json={"bind_id": bind_id})
-            resp.raise_for_status()
-            data = resp.json()
+        qr = await wechat_ilink.fetch_qr()
     except Exception as exc:
-        logger.error(f"微信桥接 /start 失败(bind={bind_id}): {exc}")
-        raise _bridge_unavailable()
-
-    qrcode_url = str((data or {}).get("qrcode_url") or "").strip()
-    if not qrcode_url:
-        logger.error(f"微信桥接 /start 未返回 qrcode_url: {data}")
-        raise _bridge_unavailable()
-    logger.info(f"用户 {user.username} 发起微信扫码绑定, bind_id={bind_id}")
-    return {"bind_id": bind_id, "qrcode_url": qrcode_url}
+        logger.error(f"iLink 获取二维码失败: {exc}")
+        raise HTTPException(status_code=503, detail="微信扫码服务不可用, 请稍后重试")
+    return {"qrcode": qr["qrcode"], "qrcode_url": qr["qrcode_url"]}
 
 
 @router.get("/status")
-async def status_bind(
-    bind: str,
+async def bind_status(
+    qrcode: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """轮询扫码状态。扫码成功后把 account_id/user_id 落为当前用户的 openclaw 渠道。"""
+    """轮询扫码状态。成功后自动保存 openclaw 通知渠道(按 user 隔离)。"""
     try:
-        async with httpx.AsyncClient(timeout=BRIDGE_TIMEOUT) as client:
-            resp = await client.get(f"{BRIDGE_BASE}/status", params={"bind": bind})
-            resp.raise_for_status()
-            data = resp.json()
+        result = await wechat_ilink.poll_qr(qrcode)
     except Exception as exc:
-        logger.error(f"微信桥接 /status 失败(bind={bind}): {exc}")
-        raise _bridge_unavailable()
+        logger.error(f"iLink 轮询二维码失败: {exc}")
+        raise HTTPException(status_code=503, detail="微信扫码服务不可用, 请稍后重试")
 
-    data = data or {}
-    status = str(data.get("status") or "waiting")
-    if status == "success":
-        account_id = str(data.get("account_id") or "").strip()
-        wechat_user_id = str(data.get("user_id") or "").strip()
-        if not account_id or not wechat_user_id:
-            logger.error(f"微信桥接 /status success 但缺 account_id/user_id: {data}")
-            raise _bridge_unavailable()
-        channel = _find_bound_channel(db, user)
-        config = {
-            "account_id": account_id,
-            "user_id": wechat_user_id,
-            "webhook_url": BRIDGE_WEBHOOK_URL,
-            "secret": "",
-        }
-        if channel is None:
-            channel = NotifyChannel(
-                user_id=user.id,
-                name=CHANNEL_NAME,
-                type=CHANNEL_TYPE,
-                config=config,
-                enabled=True,
-                is_default=False,
-            )
-            db.add(channel)
-        else:
-            channel.name = CHANNEL_NAME
-            channel.type = CHANNEL_TYPE
-            channel.config = config
-            channel.enabled = True
-        db.commit()
-        logger.info(
-            f"用户 {user.username} 微信扫码绑定成功: account={account_id} user={wechat_user_id}"
+    if result.get("status") != "success":
+        return {"status": result.get("status", "wait")}
+
+    account_id = result.get("account_id") or ""
+    token = result.get("token") or ""
+    base_url = result.get("base_url") or wechat_ilink.ILINK_BASE_URL
+    user_id = result.get("user_id") or ""
+    if not account_id or not token:
+        logger.error(f"iLink 扫码确认但凭证不完整: {result}")
+        raise HTTPException(status_code=502, detail="微信授权凭证不完整, 请重试")
+
+    # upsert: 该用户已绑定则更新, 否则新建
+    channel = _find_bound_channel(db, user)
+    config = {
+        "account_id": account_id,
+        "token": token,
+        "base_url": base_url,
+        "user_id": user_id,
+    }
+    if channel:
+        channel.config = config
+        channel.enabled = True
+    else:
+        channel = NotifyChannel(
+            name=CHANNEL_NAME,
+            type=CHANNEL_TYPE,
+            config=config,
+            enabled=True,
+            is_default=False,
+            user_id=user.id,
         )
-        return {
-            "status": "success",
-            "account_id": account_id,
-            "user_id": wechat_user_id,
-        }
-    return {"status": status}
+        db.add(channel)
+    db.commit()
+    logger.info(f"用户 {user.id} 微信扫码绑定成功 account_id={account_id}")
+    return {"status": "success", "account_id": account_id, "user_id": user_id}
+
+
+@router.get("")
+async def get_bind(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """当前用户绑定状态。"""
+    channel = _find_bound_channel(db, user)
+    if not channel:
+        return {"bound": False, "account_id": None, "user_id": None}
+    cfg = channel.config or {}
+    return {
+        "bound": True,
+        "account_id": cfg.get("account_id"),
+        "user_id": cfg.get("user_id"),
+    }
 
 
 @router.delete("")
@@ -151,28 +125,9 @@ async def unbind(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """解除绑定: 删除当前用户的扫码绑定 openclaw 渠道。"""
+    """解除绑定(删除该用户扫码绑定的 openclaw 渠道)。"""
     channel = _find_bound_channel(db, user)
-    if channel is None:
-        return {"ok": True, "unbound": False}
-    db.delete(channel)
-    db.commit()
-    logger.info(f"用户 {user.username} 已解除微信绑定")
-    return {"ok": True, "unbound": True}
-
-
-@router.get("")
-async def bind_status(
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    """当前用户的 openclaw 绑定状态。"""
-    channel = _find_bound_channel(db, user)
-    if channel is None:
-        return {"bound": False, "account_id": None, "user_id": None}
-    cfg = channel.config or {}
-    return {
-        "bound": True,
-        "account_id": cfg.get("account_id") or None,
-        "user_id": cfg.get("user_id") or None,
-    }
+    if channel:
+        db.delete(channel)
+        db.commit()
+    return {"ok": True, "unbound": bool(channel)}

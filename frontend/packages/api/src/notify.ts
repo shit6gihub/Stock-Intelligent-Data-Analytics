@@ -1,21 +1,19 @@
 import { fetchAPI } from './client'
 
-// ── 扫码绑定个人微信(OpenClaw 渠道) ──
+// ── 扫码绑定个人微信(iLink 直连, 零 OpenClaw 依赖) ──
 // 后端端点:
-//   POST   /notify/wechat-bind/start   → { bind_id, qrcode_url }
-//   GET    /notify/wechat-bind/status?bind=<bind_id> → { bind_id, status: 'waiting'|'success', ... }
+//   POST   /notify/wechat-bind/start   → { qrcode, qrcode_url }
+//   GET    /notify/wechat-bind/status?qrcode=<qrcode> → { status: 'waiting'|'success', ... }
 //   DELETE /notify/wechat-bind/        → 解除绑定
 //   GET    /notify/wechat-bind/        → 当前绑定信息(未绑定返回 account_id 为空)
 
 export interface WechatBindStartResult {
-  bind_id: string
+  qrcode: string
   qrcode_url: string
-  expires_in?: number
 }
 
 export interface WechatBindStatusResult {
-  bind_id: string
-  status: 'waiting' | 'success' | 'failed' | 'expired'
+  status: 'waiting' | 'success' | 'scaned' | 'expired'
   user_id?: string | null
   account_id?: string | null
   message?: string
@@ -29,15 +27,15 @@ export interface WechatBindInfo {
   [key: string]: unknown
 }
 
-/** 发起扫码绑定,返回 bind_id 与二维码链接(成功后后端自动保存 openclaw 渠道) */
+/** 发起扫码绑定,返回 qrcode 与二维码链接(成功后后端自动保存 openclaw 渠道) */
 export function wechatBindStart(): Promise<WechatBindStartResult> {
   return fetchAPI<WechatBindStartResult>('/notify/wechat-bind/start', { method: 'POST' })
 }
 
 /** 查询绑定状态(waiting / success)。轮询用,禁用 GET 缓存避免读到旧状态 */
-export function wechatBindStatus(bindId: string): Promise<WechatBindStatusResult> {
+export function wechatBindStatus(qrcode: string): Promise<WechatBindStatusResult> {
   return fetchAPI<WechatBindStatusResult>(
-    `/notify/wechat-bind/status?bind=${encodeURIComponent(bindId)}`,
+    `/notify/wechat-bind/status?qrcode=${encodeURIComponent(qrcode)}`,
     { cacheMode: false },
   )
 }

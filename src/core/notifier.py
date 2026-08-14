@@ -525,41 +525,28 @@ class NotifierManager:
             logger.info(f"Hermes 中转通知发送成功: {title}")
 
     async def _send_openclaw(self, config: dict, title: str, content: str):
-        """OpenClaw 个人微信桥接发送。
+        """个人微信 iLink 直连发送(零 OpenClaw 依赖)。
 
-        config 由扫码绑定写入: webhook_url 为宿主机桥接地址,
-        account_id/user_id 为桥接侧扫码成功后返回的微信账号标识。
-        桥接 /send 接口: POST {webhook_url}/send
-        body: {"account_id", "to": user_id, "message", "idempotency_key"}
+        config 由扫码绑定写入: token/base_url/user_id。
+        调 src.core.wechat_ilink.send_text -> 腾讯官方 iLink sendmessage。
         """
-        url = (config.get("webhook_url") or "").strip().rstrip("/")
-        account_id = str(config.get("account_id") or "").strip()
+        token = str(config.get("token") or "").strip()
+        base_url = str(config.get("base_url") or "").strip()
         wechat_user_id = str(config.get("user_id") or "").strip()
-        if not url or not account_id or not wechat_user_id:
-            raise ValueError("OpenClaw 需要 webhook_url/account_id/user_id")
+        if not token or not wechat_user_id:
+            raise ValueError("微信渠道需要 token/user_id(请重新扫码绑定)")
 
-        payload = {
-            "account_id": account_id,
-            "to": wechat_user_id,
-            "message": content or "",
-            "idempotency_key": str(int(time.time())),
-        }
+        account = {"token": token, "base_url": base_url or None}
+        text = f"{title}\n{content}" if title else content
+        try:
+            from src.core import wechat_ilink
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{url}/send", json=payload)
-            try:
-                data = resp.json()
-            except Exception:
-                data = {}
-            if not data.get("ok"):
-                raise RuntimeError(
-                    f"OpenClaw 桥接发送失败: HTTP {resp.status_code} {resp.text[:200]}"
-                )
-            logger.info(f"OpenClaw 微信通知发送成功: {title}")
-            return {
-                "ok": True,
-                "message_id": str(data.get("message_id") or "")[:128],
-            }
+            resp = await wechat_ilink.send_text(account, wechat_user_id, text)
+        except Exception as exc:
+            raise RuntimeError(f"微信 iLink 发送失败: {exc}")
+        message_id = str(resp.get("message_id") or "")[:128] if isinstance(resp, dict) else ""
+        logger.info(f"OpenClaw 微信通知发送成功: {title}")
+        return {"ok": True, "message_id": message_id}
 
     async def _send_serverchan(self, config: dict, title: str, content: str):
         sendkey = config.get("sendkey", "")

@@ -230,7 +230,7 @@ export default function SettingsPage() {
   const [wechatUnbinding, setWechatUnbinding] = useState(false)
   const [wechatQrOpen, setWechatQrOpen] = useState(false)
   const [wechatQr, setWechatQr] = useState<WechatBindStartResult | null>(null)
-  const [wechatQrStatus, setWechatQrStatus] = useState<'waiting' | 'success' | 'failed' | 'expired'>('waiting')
+  const [wechatQrStatus, setWechatQrStatus] = useState<'waiting' | 'success' | 'scaned' | 'expired'>('waiting')
   const wechatPollRef = useRef<number | null>(null)
 
   // 头像
@@ -825,11 +825,11 @@ export default function SettingsPage() {
     }
   }
 
-  const startWechatPoll = (bindId: string) => {
+  const startWechatPoll = (qrcode: string) => {
     stopWechatPoll()
     wechatPollRef.current = window.setInterval(async () => {
       try {
-        const st = await wechatBindStatus(bindId)
+        const st = await wechatBindStatus(qrcode)
         setWechatQrStatus(st.status)
         if (st.status === 'success') {
           stopWechatPoll()
@@ -837,7 +837,7 @@ export default function SettingsPage() {
           toast('微信绑定成功', 'success')
           void loadWechatBind()
           load()
-        } else if (st.status === 'failed' || st.status === 'expired') {
+        } else if (st.status === 'expired') {
           stopWechatPoll()
         }
       } catch { /* 网络抖动忽略，下轮重试 */ }
@@ -851,7 +851,7 @@ export default function SettingsPage() {
       setWechatQr(res)
       setWechatQrStatus('waiting')
       setWechatQrOpen(true)
-      startWechatPoll(res.bind_id)
+      startWechatPoll(res.qrcode)
     } catch (e) {
       toast(e instanceof Error ? e.message : '发起绑定失败，请稍后重试', 'error')
     } finally {
@@ -1880,7 +1880,7 @@ export default function SettingsPage() {
                   <QRCodeSVG value={wechatQr.qrcode_url} size={200} />
                 </div>
                 <p className="text-[11px] text-muted-foreground text-center">
-                  {wechatQr.expires_in ? `二维码 ${Math.round(wechatQr.expires_in / 60)} 分钟内有效，` : ''}请用微信「扫一扫」扫描
+                  请用微信「扫一扫」扫描二维码(约 3 分钟内有效)
                 </p>
                 <button
                   type="button"
@@ -1896,9 +1896,6 @@ export default function SettingsPage() {
                     <span className="h-3 w-3 border-2 border-current/30 border-t-current rounded-full animate-spin" />
                     等待扫码确认…
                   </p>
-                )}
-                {wechatQrStatus === 'failed' && (
-                  <p className="text-[11px] text-destructive">绑定失败，请关闭后重试</p>
                 )}
                 {wechatQrStatus === 'expired' && (
                   <p className="text-[11px] text-destructive">二维码已过期，请关闭后重新发起绑定</p>
