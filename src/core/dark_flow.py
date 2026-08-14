@@ -30,6 +30,22 @@ _HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://gu.qq.com/"}
 BIG_AMOUNT = 100e4   # 100万元
 BIG_VOLUME = 1000    # 1000手
 
+# ── 主力意图增强算法阈值(2026-08-14, 全部为经验值, 可调)──────────────────
+# 三个纯函数: _detect_big_mid_divergence / _detect_price_divergence / _detect_rhythm。
+# 单位: 金额阈值一律为"元", 百分比阈值为"涨跌幅%"。调参只改这里, 函数内不写死。
+# 1) 超大单/大单背离(托盘出货 vs 压盘吸筹)
+_DIV_BIG_NET = 800e4      # 超大单(≥100万)净额阈值: ±800万
+_DIV_FLAT_PCT = 1.0       # 托盘出货: 价格滞涨判定 |涨跌幅%| < 1.0
+_DIV_NO_DROP_PCT = -0.5   # 压盘吸筹: 价格抗跌判定 涨跌幅% >= -0.5
+# 2) 量价背离(净流入滞涨 vs 净流出抗跌)
+_DIV_MAIN_NET = 500e4     # 主力(≥20万)净额阈值: ±500万
+_DIV_STALL_PCT = 0.5      # 净流入滞涨: 涨跌幅% < +0.5(价格不涨)
+_DIV_HOLD_PCT = -0.5      # 净流出抗跌: 涨跌幅% > -0.5(价格不跌)
+# 3) 时段节奏(早吸尾抛 / 早压尾拉 / 尾盘异动)
+_RHYTHM_SEG_NET = 300e4   # 单时段净额阈值: ±300万
+_RHYTHM_DAY_NET = 500e4   # 尾盘异动: 全天四段合计 |净额| > 500万
+_RHYTHM_TAIL_RATIO = 0.4  # 尾盘异动: 尾盘 |净额| > 40% * 四段绝对值之和
+
 # 暗盘数据源(2026-08-11 预留): 环境变量 PANWATCH_DARK_SOURCE 可切换
 #   tencent_ticks = 腾讯逐笔(免费, 默认, 已与同花顺暗盘验证误差7%)
 #   l2_tencent    = 腾讯L2(预留, 需付费账号)
@@ -569,6 +585,127 @@ def _judge_mnemonic(dark: dict, quote: dict | None = None) -> dict | None:
     return None
 
 
+def _detect_big_mid_divergence(big_net, mid_net, change_pct) -> dict | None:
+    """超大单/大单背离检测(托盘出货 vs 压盘吸筹)。
+
+    逻辑: 超大单(≥100万)与大单(20-100万)方向相反, 叠加价格异动缺失 → 主力对倒嫌疑。
+    - 托盘出货(危险): 超大单大幅净买(拉抬) + 大单大幅净卖(出逃) + 价格滞涨 → 诱多
+    - 压盘吸筹: 超大单大幅净卖(打压) + 大单大幅净买(吸筹) + 价格抗跌 → 洗盘
+    参数可能为 None(数据缺失), 一律不触发(宁可漏报不误报)。纯函数, 无 IO。
+    阈值常量: _DIV_BIG_NET(±800万) / _DIV_FLAT_PCT / _DIV_NO_DROP_PCT, 见文件顶部。
+
+    Returns: 命中返回 {type, big_net, mid_net, change_pct, detail}; 否则 None。
+    """
+    big_net = _num(big_net)
+    mid_net = _num(mid_net)
+    change_pct = _num(change_pct)
+    if big_net is None or mid_net is None or change_pct is None:
+        return None
+    # 托盘出货(危险): 超大单拉抬 + 大单出逃 + 价格滞涨
+    if big_net > _DIV_BIG_NET and mid_net < -_DIV_BIG_NET and abs(change_pct) < _DIV_FLAT_PCT:
+        return {
+            "type": "托盘出货",
+            "big_net": round(big_net),
+            "mid_net": round(mid_net),
+            "change_pct": change_pct,
+            "detail": "超大单拉抬+大单出逃+价格滞涨, 警惕诱多",
+        }
+    # 压盘吸筹: 超大单打压 + 大单吸筹 + 价格抗跌
+    if big_net < -_DIV_BIG_NET and mid_net > _DIV_BIG_NET and change_pct >= _DIV_NO_DROP_PCT:
+        return {
+            "type": "压盘吸筹",
+            "big_net": round(big_net),
+            "mid_net": round(mid_net),
+            "change_pct": change_pct,
+            "detail": "超大单打压+大单吸筹+价格抗跌, 疑洗盘",
+        }
+    return None
+
+
+def _detect_price_divergence(main_net, change_pct) -> dict | None:
+    """量价背离检测(净流入滞涨 vs 净流出抗跌)。
+
+    主力净额方向与价格表现相悖 → 对倒/换手 或 压盘吸筹嫌疑。
+    - 净流入滞涨: 主力大幅净买(≥500万)但价格不涨(涨跌幅% < +0.5) → 对倒/换手嫌疑
+    - 净流出抗跌: 主力大幅净卖(≤-500万)但价格抗跌(涨跌幅% > -0.5) → 压盘吸筹嫌疑
+    参数为 None 一律不触发。纯函数, 无 IO。
+    阈值常量: _DIV_MAIN_NET(±500万) / _DIV_STALL_PCT / _DIV_HOLD_PCT, 见文件顶部。
+
+    Returns: 命中返回 {type, main_net, change_pct, detail}; 否则 None。
+    """
+    main_net = _num(main_net)
+    change_pct = _num(change_pct)
+    if main_net is None or change_pct is None:
+        return None
+    # 净流入滞涨: 主力净流入但价格不涨
+    if main_net > _DIV_MAIN_NET and change_pct < _DIV_STALL_PCT:
+        return {
+            "type": "净流入滞涨",
+            "main_net": round(main_net),
+            "change_pct": change_pct,
+            "detail": "主力净流入但价格不涨, 对倒/换手嫌疑",
+        }
+    # 净流出抗跌: 主力净流出但价格抗跌
+    if main_net < -_DIV_MAIN_NET and change_pct > _DIV_HOLD_PCT:
+        return {
+            "type": "净流出抗跌",
+            "main_net": round(main_net),
+            "change_pct": change_pct,
+            "detail": "主力净流出但价格抗跌, 压盘吸筹嫌疑",
+        }
+    return None
+
+
+def _detect_rhythm(segments: dict) -> dict | None:
+    """时段节奏模式检测(早吸尾抛 / 早压尾拉 / 尾盘异动)。
+
+    segments: {morning, mid, afternoon, tail} 四段净额(单位: 元)。
+    值可能为 0 或 None(数据缺失), 统一容错为 0.0。
+    - 早吸尾抛: 早盘净买(≥300万) + 尾盘净卖(≤-300万) → 拉高出货特征
+    - 早压尾拉: 早盘净卖(≤-300万) + 尾盘净买(≥300万) → 洗盘特征
+    - 尾盘异动: 全天四段合计 |净额| > 500万 且 (尾盘 |净额| > 40%*四段绝对值之和
+      或 尾盘方向与全天净额相反且 |尾盘净额| > 300万) → 尾盘方向与全天背离
+    纯函数, 无 IO。阈值常量: _RHYTHM_SEG_NET / _RHYTHM_DAY_NET / _RHYTHM_TAIL_RATIO。
+
+    Returns: 命中返回 {pattern, detail, ...}; 否则 None。
+    """
+    keys = ("morning", "mid", "afternoon", "tail")
+    vals: dict[str, float] = {}
+    for k in keys:
+        v = _num((segments or {}).get(k))
+        vals[k] = 0.0 if v is None else v
+    morning, tail = vals["morning"], vals["tail"]
+    # 早吸尾抛: 早盘吸筹 + 尾盘抛压
+    if morning > _RHYTHM_SEG_NET and tail < -_RHYTHM_SEG_NET:
+        return {
+            "pattern": "早吸尾抛",
+            "morning": round(morning),
+            "tail": round(tail),
+            "detail": "早盘吸筹尾盘抛压, 拉高出货特征",
+        }
+    # 早压尾拉: 早盘打压 + 尾盘回补
+    if morning < -_RHYTHM_SEG_NET and tail > _RHYTHM_SEG_NET:
+        return {
+            "pattern": "早压尾拉",
+            "morning": round(morning),
+            "tail": round(tail),
+            "detail": "早盘打压尾盘回补, 洗盘特征",
+        }
+    # 尾盘异动: 全天净额显著 + 尾盘占比过高 或 尾盘方向与全天相反
+    day_net = sum(vals.values())
+    sum_abs = sum(abs(v) for v in vals.values())
+    tail_heavy = sum_abs > 0 and abs(tail) > _RHYTHM_TAIL_RATIO * sum_abs
+    tail_contrary = tail * day_net < 0 and abs(tail) > _RHYTHM_SEG_NET
+    if abs(day_net) > _RHYTHM_DAY_NET and (tail_heavy or tail_contrary):
+        return {
+            "pattern": "尾盘异动",
+            "day_net": round(day_net),
+            "tail": round(tail),
+            "detail": "尾盘方向与全天背离",
+        }
+    return None
+
+
 def compute_dark_flow(symbol: Symbol) -> dict | None:
     """计算暗盘资金 v5: 三分类 + 大单/暗盘分层 + 价格维度 + 时段。"""
     code = _tencent_code(symbol)
@@ -736,6 +873,14 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
         auction_amt, auction_vol,
         result.get("main_intensity"), result.get("main_buy_ratio"),
     )
+
+    # ---- 主力意图增强算法(2026-08-14): 超大单/大单背离 + 量价背离 + 时段节奏 ----
+    # 三个独立纯函数(可单测), 注入 result 新字段, 不破坏现有字段。
+    # change_pct 从腾讯 Quote 取(可能 None, 函数内部容错为不触发); seg 为已算出的四段净额。
+    _change_pct = _num((quote_dict or {}).get("change_pct"))
+    result["divergence"] = _detect_big_mid_divergence(big_net, mid_net, _change_pct)
+    result["price_divergence"] = _detect_price_divergence(main_net, _change_pct)
+    result["rhythm"] = _detect_rhythm(seg)
 
     # ---- 拆单识别(主力伪装的中小单) ----
     try:

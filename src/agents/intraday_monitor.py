@@ -85,6 +85,9 @@ def _main_intent_both(symbol: str) -> tuple[str, dict | None]:
                 "tail_net": tail,
                 "data_status": "insufficient",
                 "tick_count": dark.get("tick_count", 0),
+                # AI 反证层(算法5): 数据不足 → 方向强制 neutral, 跳过 LLM(ai_verdict=None)
+                "ai_verdict": None,
+                "board": _board_snapshot(symbol),
             }
         else:
             strong_absorb = (intensity or 0) >= 35 and (buy_ratio or 0) >= 48
@@ -114,6 +117,9 @@ def _main_intent_both(symbol: str) -> tuple[str, dict | None]:
                 if band:
                     structured["chip_band"] = {"low": band["low"], "high": band["high"]}
                 structured["profit_ratio"] = chips.get("profit_ratio")
+            # AI 反证层(算法5): 与 _main_intent_structured 同字段(LLM 失败静默降级 None)
+            structured["ai_verdict"] = _ai_counter_check(symbol, dark)
+            structured["board"] = _board_snapshot(symbol)
         return summary_str, structured
     except Exception:
         return "", None
@@ -214,6 +220,10 @@ def _main_intent_structured(symbol: str) -> dict | None:
                 "tail_net": tail,
                 "data_status": "insufficient",
                 "tick_count": dark.get("tick_count", 0),
+                # AI 反证层(算法5): 数据不足 → 方向强制 neutral, 无算法结论可反证,
+                # 跳过 LLM 调用(ai_verdict=None); 板块快照仍可附带(失败→None)
+                "ai_verdict": None,
+                "board": _board_snapshot(symbol),
             }
         # v14 判据(与 _judge_signal 对齐): 参与度≥35% 且 买占≥48% = 强吸筹力度
         strong_absorb = (intensity or 0) >= 35 and (buy_ratio or 0) >= 48
@@ -250,8 +260,232 @@ def _main_intent_structured(symbol: str) -> dict | None:
                 out["profit_ratio"] = chips.get("profit_ratio")
         except Exception:
             pass
+        # ---- AI 反证层(算法5, 2026-08-14): 算法结论 + 当日事件 → LLM 综合评级+置信度 ----
+        # 防对倒/拆单骗过纯算法; LLM 失败/超时/解析失败 → None(静默降级, 不影响算法结论)
+        out["ai_verdict"] = _ai_counter_check(symbol, dark)
+        # 板块异动快照(src.core.board_snapshot 缺失/采样不足/失败 → None 容错)
+        out["board"] = _board_snapshot(symbol)
         return out
     except Exception:
+        return None
+
+
+# ──────────────── AI 反证层(算法5, 2026-08-14) ────────────────
+# 纯算法(dark_flow)会被对倒/拆单骗: 算法给出方向后, 结合当日个股事件(公告/新闻)
+# 用 LLM 做最终评级+置信度。LLM 失败/超时(8s)/解析失败一律静默降级返回 None,
+# 绝不影响算法结论。事件源失败返回空 → prompt 明示"无当日事件"。
+
+_AI_LLM_TIMEOUT = 8  # 反证层 LLM 超时秒数(超时 → 静默降级)
+
+_AI_COUNTER_SYSTEM_PROMPT = (
+    "你是一名A股主力资金行为反证分析师。给定算法(逐笔主力净额/参与度/买占比)给出的"
+    "主力意图结论, 以及该股当日公告/新闻事件, 判断算法结论是否可信。\n"
+    "规则:\n"
+    "1. 事件与算法结论矛盾时必须给\"算法存疑\"或\"算法结论错误\"。例如: 算法说吸筹"
+    "(buy/absorb/wash)但当日有减持/利空/立案/大额解禁等公告 → \"算法存疑\"或"
+    "\"算法结论错误\"; 算法说派发(sell)但当日有大股东增持/回购 → 同样存疑。\n"
+    "2. 无事件或事件中性(例行公告、与主力行为无关) → \"支持算法结论\"。\n"
+    "3. 严禁编造事件; 事件为空就按\"无事件\"处理。\n"
+    "4. 只输出 JSON, 不要任何其他文字。\n"
+    "输出格式(严格 JSON):\n"
+    '{"verdict": "支持算法结论"|"算法存疑"|"算法结论错误", '
+    '"confidence": "高"|"中"|"低", "reason": "一句话理由(≤60字)"}'
+)
+
+
+def _run_coro(coro):
+    """同步上下文执行异步协程: 无运行中事件循环 → asyncio.run; 有(如 FastAPI
+    请求上下文)→ 新建独立事件循环执行, 避免 asyncio.run 抛
+    "cannot be called from a running event loop"。"""
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    new_loop = asyncio.new_event_loop()
+    try:
+        return new_loop.run_until_complete(coro)
+    finally:
+        new_loop.close()
+
+
+def _build_counter_client(db=None):
+    """构造反证层 LLM 客户端: 优先 db 场景绑定(intraday_monitor/chat), 回落
+    Settings/env(AI_BASE_URL/AI_API_KEY/AI_MODEL)。最简可靠路径。"""
+    from src.core.ai_client import AIClient
+
+    if db is not None:
+        try:
+            from src.core.ai_client import get_model_for_scene
+            from src.web.models import AIService
+
+            m = get_model_for_scene(db, "intraday_monitor") or get_model_for_scene(db, "chat")
+            if m is not None:
+                s = db.query(AIService).filter(AIService.id == m.service_id).first()
+                if s is not None and s.base_url and s.api_key:
+                    return AIClient(base_url=s.base_url, api_key=s.api_key, model=m.model)
+        except Exception as e:
+            logger.debug(f"反证层场景绑定不可用(回落 Settings/env): {e}")
+    from src.config import Settings
+
+    settings = Settings()
+    return AIClient(
+        base_url=settings.ai_base_url,
+        api_key=settings.ai_api_key,
+        model=settings.ai_model,
+    )
+
+
+async def _ai_counter_llm_chat(dark_feat: str, events_summary: str, db=None) -> str:
+    """单次 LLM 调用(8s 超时, wait_for 保证)。独立函数便于测试 monkeypatch
+    AIClient.chat。客户端在协程内构造, 避免跨事件循环复用 httpx client。"""
+    import asyncio
+
+    client = _build_counter_client(db)
+    user_content = (
+        f"算法结论:\n{dark_feat}\n\n当日个股事件:\n{events_summary}\n\n请输出 JSON 评级。"
+    )
+    return await asyncio.wait_for(
+        client.chat(_AI_COUNTER_SYSTEM_PROMPT, user_content, temperature=0.2),
+        timeout=_AI_LLM_TIMEOUT,
+    )
+
+
+def _fetch_today_events(symbol: str) -> list[str]:
+    """当日个股公告/新闻摘要(东财公告单源, 最多3条, 每条≤80字)。
+
+    失败(网络/解析/无事件)一律返回空列表 → prompt 明示"无当日事件",
+    严禁让 LLM 编造事件。"""
+    try:
+        from marketdata import Symbol as MDSymbol
+        from marketdata.vendors.events import EventsVendor
+
+        mdsym = MDSymbol.parse(symbol, "CN")
+        items = EventsVendor().fetch([mdsym], {"since_days": 1})
+        today = datetime.now().date()
+        items = [ev for ev in items if getattr(ev, "publish_time", None)
+                 and ev.publish_time.date() == today]
+        items.sort(key=lambda ev: getattr(ev, "importance", 0) or 0, reverse=True)
+        out: list[str] = []
+        for ev in items[:3]:
+            title = (getattr(ev, "title", "") or "").strip()
+            if not title:
+                continue
+            if len(title) > 80:
+                title = title[:80] + "…"
+            out.append(title)
+        return out
+    except Exception as e:
+        logger.debug(f"当日事件获取失败(降级为空): {symbol}: {e}")
+        return []
+
+
+def _derive_direction(dark: dict) -> str:
+    """由 dark 字段推导算法方向(与 _main_intent_structured 内联 v14 判据完全一致,
+    供反证层复用, 避免两处逻辑漂移)。"""
+    main_net = dark.get("main_net", 0) or 0
+    intensity = dark.get("main_intensity")
+    if intensity is None:
+        intensity = dark.get("participation")
+    buy_ratio = dark.get("main_buy_ratio")
+    if buy_ratio is None:
+        buy_ratio = dark.get("buy_ratio")
+    if dark.get("data_status") == "insufficient":
+        return "neutral"
+    strong_absorb = (intensity or 0) >= 35 and (buy_ratio or 0) >= 48
+    if main_net > 500e4:
+        return "buy"
+    if main_net < -500e4:
+        return "wash" if strong_absorb else "sell"
+    return "absorb" if strong_absorb else "neutral"
+
+
+def _ai_counter_check(symbol: str, dark: dict, db=None) -> dict | None:
+    """AI 反证层(算法5): 算法结论 + 当日事件 → LLM 综合评级 + 置信度。
+
+    防止纯算法被对倒/拆单骗: 算法方向与当日事件矛盾时(如算法说吸筹但当日有
+    减持/利空公告), LLM 必须给"算法存疑"或"算法结论错误"。
+
+    Args:
+        symbol: 6位A股代码
+        dark: compute_dark_flow 的原始结果 dict(或同构 dict)
+        db: 可选 db session(用于场景模型绑定; None 回落 Settings/env)
+
+    Returns:
+        {"verdict": "支持算法结论"|"算法存疑"|"算法结论错误",
+         "confidence": "高"|"中"|"低",
+         "reason": "一句话理由(≤60字)"}
+        或 None —— LLM 失败/超时/输出非法 JSON/字段校验不过, 静默降级,
+        不影响算法结论(前端遇 None 不展示)。
+    """
+    try:
+        # ---- 算法特征摘要 ----
+        main_net = dark.get("main_net", 0) or 0
+        big_net = dark.get("big_net", 0) or 0
+        mid_net = dark.get("mid_net", 0) or 0
+        intensity = dark.get("main_intensity")
+        if intensity is None:
+            intensity = dark.get("participation")
+        buy_ratio = dark.get("main_buy_ratio")
+        if buy_ratio is None:
+            buy_ratio = dark.get("buy_ratio")
+        feat = [
+            f"方向={_derive_direction(dark)}",
+            f"主力净额={main_net / 1e4:+.0f}万(超大单{big_net / 1e4:+.0f}万/"
+            f"大单{mid_net / 1e4:+.0f}万)",
+        ]
+        if intensity is not None:
+            feat.append(f"参与度={intensity:.0f}%")
+        if buy_ratio is not None:
+            feat.append(f"买占比={buy_ratio:.0f}%")
+        if dark.get("phase"):
+            feat.append(f"5日阶段={str(dark['phase'])[:40]}")
+        if dark.get("signal"):
+            feat.append(f"综合信号={str(dark['signal'])[:60]}")
+        dark_feat = "\n".join(feat)
+
+        # ---- 当日事件(最多3条; 失败 → 无事件, 严禁编造) ----
+        events = _fetch_today_events(symbol)
+        events_summary = "\n".join(f"- {e}" for e in events) if events else "无当日事件"
+
+        # ---- 单次 LLM 调用(超时/异常由外层兜住) ----
+        raw = _run_coro(_ai_counter_llm_chat(dark_feat, events_summary, db))
+        if not raw or not raw.strip():
+            return None
+
+        # ---- 解析 JSON(容忍 ```json 围栏) ----
+        text = raw.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            return None
+        verdict = str(data.get("verdict") or "").strip()
+        confidence = str(data.get("confidence") or "").strip()
+        reason = str(data.get("reason") or "").strip()
+        if verdict not in {"支持算法结论", "算法存疑", "算法结论错误"}:
+            return None
+        if confidence not in {"高", "中", "低"}:
+            return None
+        if len(reason) > 60:
+            reason = reason[:60] + "…"
+        return {"verdict": verdict, "confidence": confidence, "reason": reason}
+    except Exception as e:
+        logger.debug(f"AI 反证层失败(静默降级, 不影响算法结论): {symbol}: {e}")
+        return None
+
+
+def _board_snapshot(symbol: str):
+    """板块异动快照(算法5集成): src.core.board_snapshot 模块缺失/调用失败
+    一律返回 None(容错, 前端不展示)。code 格式: sh/sz + 6位代码。"""
+    try:
+        from src.core.board_snapshot import get_board_manipulation
+
+        code = f"{'sh' if symbol.startswith('6') else 'sz'}{symbol}"
+        return get_board_manipulation(code)
+    except Exception as e:
+        logger.debug(f"板块快照获取失败(降级 None): {symbol}: {e}")
         return None
 
 
