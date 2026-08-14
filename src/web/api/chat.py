@@ -1047,6 +1047,92 @@ def _summarize_old_messages(msgs: list) -> str:
     return "【早期对话摘要】(以下为较早对话的结论要点, 已压缩保留):\n" + "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# 重复提问守卫(借鉴 deepseek-harness 的 loop-hygiene guard)
+# ---------------------------------------------------------------------------
+# 检测最近用户消息中"同一股票 + 同一意图"的重复提问, 达到阈值时注入一条温和提醒。
+# 只提醒、不阻断(veto); 用户新问题(不同股票/不同意图)即打断重置。
+# 阈值 3 次起步, 可后续调大。
+_REPEAT_QUESTION_THRESHOLD = 3  # 同股同意图连续出现次数阈值
+
+# 常见问句意图词(按命中优先级排序: 长词/复合词在前, 避免被短词抢先截胡, 如"主力意图"先于"主力")
+_REPEAT_QUESTION_INTENTS = (
+    "主力意图", "资金流向", "龙虎榜", "基本面", "怎么看", "目标价",
+    "分析", "预测", "主力", "资金", "持仓", "机会", "风险", "竞价",
+    "形态", "公告", "新闻", "业绩", "估值", "支撑", "压力", "仓位",
+    "买卖", "买", "卖", "涨", "跌", "点评", "诊断",
+)
+
+# 意图词别名归并: 复合词与词干语义相同, 归一为同一意图, 避免"主力意图"与"主力"被误判为不同意图
+_REPEAT_QUESTION_INTENT_ALIASES = {
+    "主力意图": "主力",
+    "资金流向": "资金",
+}
+
+
+def _extract_repeat_stock_code(text: str) -> str | None:
+    """从用户消息中提取 A 股 6 位股票代码(仅用于重复检测, 不校验存在性)。
+
+    只认 0/3/4/6/8/9 开头的 6 位数字(沪深主板/创业板/科创板/北交所);
+    前后不接数字, 排除日期(2026xxxx)、金额等常见误报;
+    用 (?<!\d)(?!\d) 而非 \\b, 保证中文与代码紧邻("分析一下600519")也能提取。
+    """
+    m = re.search(r"(?<!\d)([036489]\d{5})(?!\d)", text)
+    return m.group(1) if m else None
+
+
+def _extract_repeat_intent(text: str) -> str | None:
+    """从用户消息中提取问句意图词并归并别名(规范化用)。未命中任何意图词返回 None。"""
+    for kw in _REPEAT_QUESTION_INTENTS:
+        if kw in text:
+            return _REPEAT_QUESTION_INTENT_ALIASES.get(kw, kw)
+    return None
+
+
+def _detect_repeat_question(history: list, threshold: int = 3) -> str | None:
+    """检测"同股同意图"的重复提问, 命中返回温和提醒文案, 否则 None。
+
+    借鉴 dsh loop-hygiene guard: 参数规范化后检测重复模式, 阈值渐次提醒、
+    只提醒不阻断、用户新问题打断即重置。
+
+    规则:
+    - 输入: 最近用户消息列表(建议只传最近 ≤10 条 user 消息)
+    - 规范化: 提取 6 位股票代码 + 意图词, 以 (代码, 意图) 为 key
+    - 最近 threshold 条内, 当前消息的 key 累计出现 ≥threshold 次 → 返回提醒
+    - 不同股票不算重复; 不同意图不算重复(分析→资金→形态属正常深化)
+    - 零开销快速路径: 消息不足 threshold 条直接返回 None
+    """
+    # 快速路径: 样本不足阈值, 无需检测
+    if len(history) < threshold:
+        return None
+
+    # 只看最近 threshold 条, 统计各 (股票, 意图) key 出现次数
+    counts: dict[tuple[str, str], int] = {}
+    last_key: tuple[str, str] | None = None
+    for msg in history[-threshold:]:
+        text = msg.get("content", "") if isinstance(msg, dict) else getattr(msg, "content", "")
+        if not text:
+            continue
+        stock = _extract_repeat_stock_code(text)
+        intent = _extract_repeat_intent(text)
+        if not stock or not intent:
+            continue
+        key = (stock, intent)
+        counts[key] = counts.get(key, 0) + 1
+        last_key = key
+
+    # 以当前(最后一条)消息的 key 为准: 只有用户仍在问同类问题才提醒,
+    # 用户换话题/换股票/换角度时自然不命中(打断即重置)
+    if not last_key or counts.get(last_key, 0) < threshold:
+        return None
+
+    stock, intent = last_key
+    return (
+        f"【系统提示】你已连续 {threshold} 次询问 {stock} 的同类问题({intent}), "
+        "是否已获得想要的答案? 如需新角度, 可以问: 主力意图/资金流向/技术形态/风险提示 等。"
+    )
+
+
 async def _build_ai_messages(db: Session, conv: ChatConversation, user: User) -> list[dict]:
     """构建发送给 AI 的消息列表(system + 历史 + 数据上下文)。
 
@@ -1088,6 +1174,16 @@ async def _build_ai_messages(db: Session, conv: ChatConversation, user: User) ->
     for m in recent:
         if m.role in ("user", "assistant"):
             messages_for_ai.append({"role": m.role, "content": m.content})
+
+    # 重复提问守卫(借鉴 dsh loop-hygiene): 最近用户消息中同股同意图 ≥阈值 次时,
+    # 注入一条温和提醒(只提醒不阻断)。仅追加到给模型的 messages_for_ai,
+    # 不写 DB、不污染历史落库; send_message / send_message_stream 共用本函数, 一处修改两入口生效。
+    repeat_hint = _detect_repeat_question(
+        [m for m in recent if m.role in ("user",)][-10:], _REPEAT_QUESTION_THRESHOLD
+    )
+    if repeat_hint:
+        logger.info("重复提问守卫触发: %s", repeat_hint.splitlines()[0][:60])
+        messages_for_ai.append({"role": "user", "content": repeat_hint})
 
     # 注入基础上下文（持仓 + 绑定股票的行情/建议）
     context_parts: list[str] = []
