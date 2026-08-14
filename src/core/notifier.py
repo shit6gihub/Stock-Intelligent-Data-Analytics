@@ -99,7 +99,7 @@ CHANNEL_TYPES = {
     "openclaw": {
         "label": "个人微信(iLink)",
         "fields": ["webhook_url", "secret"],
-        "hint": "个人微信直通(腾讯官方 iLink 通道)。设置页扫码绑定即可, 无需手填。",
+        "hint": "个人微信直通(腾讯官方 iLink 通道, 推送以「数智分析BOT」自称)。设置页扫码绑定即可, 无需手填。",
     },
     "lark": {
         "label": "飞书机器人",
@@ -552,7 +552,8 @@ class NotifierManager:
         from src.core import wechat_ilink
 
         account = {"token": token, "base_url": base_url or None}
-        text = f"{title}\n{content}" if title else content
+        # 消息以「数智分析BOT」自称(iLink bot 微信列表名由腾讯侧固定, 无法修改)
+        text = f"【数智分析BOT】{title}\n{content}" if title else f"【数智分析BOT】{content}"
 
         try:
             resp = await wechat_ilink.send_text(
