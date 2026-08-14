@@ -80,8 +80,8 @@ export default function LoginPage() {
           <div className="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center mb-4">
             <TrendingUp className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-foreground">盯盘侠</h1>
-          <p className="text-sm text-muted-foreground mt-1">数智分析</p>
+          <h1 className="text-2xl font-bold text-foreground">数智分析 SIDA</h1>
+          <p className="text-sm text-muted-foreground mt-1">A股智能分析 · AI 全链路打通</p>
         </div>
 
         {/* Form */}
