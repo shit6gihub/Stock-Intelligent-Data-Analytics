@@ -130,7 +130,13 @@ COPY prompts/ ./prompts/
 COPY strategies/ ./strategies/
 
 # 写入版本号，并确保构建异常时不会产出空版本文件
-RUN test -n "${VERSION}" && printf '%s\n' "${VERSION}" > VERSION && test -s VERSION
+# ACR 无 build-arg 时读仓库 VERSION 文件兜底(与前端阶段一致, 2026-08-14)
+COPY VERSION ./
+RUN VERSION_VAL="${VERSION}"; \
+    if [ "${VERSION}" = "dev" ] && [ -f VERSION ] && [ -s VERSION ]; then \
+      VERSION_VAL="$(cat VERSION | tr -d '[:space:]')"; \
+    fi; \
+    printf '%s\n' "${VERSION_VAL}" > VERSION && test -s VERSION
 
 # 从前端构建阶段复制静态文件
 COPY --from=frontend-builder /app/frontend/dist ./static/
