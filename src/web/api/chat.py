@@ -1299,32 +1299,42 @@ def _detect_repeat_question(history: list, threshold: int = 3) -> str | None:
 
 
 async def _describe_image(image_data: str) -> str:
-    """视觉代理: 用 agnes-2.5-flash(支持视觉)看图生成文字描述。
+    """视觉代理: 用「vision 场景」绑定的多模态模型看图生成文字描述。
 
-    主对话模型(deepseek)无视觉能力, 图片先由 agnes 描述成文本,
-    再拼进对话内容由主模型分析。失败返回空串(调用方自行降级)。
+    主对话模型(deepseek)无视觉能力, 图片先由视觉模型描述成文本,
+    再拼进对话内容由主模型分析。视觉模型可在设置页「场景分配」随时更换。
+    失败返回空串(调用方自行降级)。
     """
     try:
+        from src.core.ai_client import get_model_for_scene
         from src.web.database import SessionLocal
         from src.web.models import AIService
 
         db = SessionLocal()
         try:
-            svc = (
-                db.query(AIService)
-                .filter(AIService.name.like("%Agnes%"))
-                .first()
-            )
-            if not svc:
-                return ""
-            base_url, api_key = svc.base_url, svc.api_key
+            # 1) vision 场景绑定优先(设置页可换)
+            base_url, api_key, model_name = None, None, None
+            try:
+                model_obj = get_model_for_scene(db, "vision")
+                if model_obj is not None:
+                    svc = db.query(AIService).filter(AIService.id == model_obj.service_id).first()
+                    if svc:
+                        base_url, api_key, model_name = svc.base_url, svc.api_key, model_obj.model
+            except Exception:
+                pass
+            # 2) 兜底: Agnes 服务 + agnes-2.5-flash(已知支持视觉)
+            if not (base_url and api_key and model_name):
+                svc = db.query(AIService).filter(AIService.name.like("%Agnes%")).first()
+                if not svc:
+                    return ""
+                base_url, api_key, model_name = svc.base_url, svc.api_key, "agnes-2.5-flash"
         finally:
             db.close()
 
         import httpx
 
         payload = {
-            "model": "agnes-2.5-flash",
+            "model": model_name,
             "messages": [
                 {
                     "role": "user",
@@ -1348,7 +1358,7 @@ async def _describe_image(image_data: str) -> str:
             r.raise_for_status()
             return str(r.json()["choices"][0]["message"]["content"] or "").strip()
     except Exception as exc:
-        logger.warning(f"视觉代理(agnes 看图)失败: {exc}")
+        logger.warning(f"视觉代理(看图)失败: {exc}")
         return ""
 
 

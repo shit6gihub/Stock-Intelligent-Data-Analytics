@@ -18,6 +18,7 @@ SCENES = {
     "referee": {"name": "AI 裁判", "desc": "多模型结果裁决 / 交叉验证"},
     "selfcheck": {"name": "自检", "desc": "AI 自检 / 质量检查"},
     "insights": {"name": "机会评分", "desc": "投资机会评分 / 洞察"},
+    "vision": {"name": "视觉代理(图片识别)", "desc": "图片内容理解(需支持视觉的多模态模型, 对话/微信发图时自动调用)"},
 }
 
 
