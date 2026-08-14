@@ -144,4 +144,15 @@ export const chatApi = {
     fetchAPI<{ questions: string[] }>(
       `/chat/suggested-questions?symbol=${encodeURIComponent(symbol)}&market=${encodeURIComponent(market)}`
     ),
+
+  /** 2026-08-14 附件上传/解析: multipart form-data, 返回 {text, filename, error?} */
+  uploadAttachment: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return fetchAPI<{ text: string; filename: string; error?: string }>('/chat/upload', {
+      method: 'POST',
+      body: form,
+      timeoutMs: 120000,
+    })
+  },
 }

@@ -1,11 +1,13 @@
 """AI 对话 API 端点。"""
 
 import asyncio
+import html.parser
 import json
 import logging
 import os
 import re
 import sqlite3
+import urllib.parse
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -51,7 +53,8 @@ SYSTEM_PROMPT = """你是数智分析BOT,是 SIDA(Stock-Intelligent-Data-Analyti
 - 保持简洁，避免冗余
 - 用户问「新闻 / 资讯 / 热点 / 今天有什么消息」类问题时，必须调用 get_market_news 工具获取实时资讯热榜与每日简报，再基于返回内容回答；严禁在不调用工具的情况下凭记忆编造新闻、题材或资金流向。若工具返回为空，如实说明「暂无实时资讯数据」并建议盘后重试。
 - 工具选择指引(2026-08-11): 用户问「主力意图/主力在吸筹还是派发/主力想干什么」时, 必须调用 get_main_intent(逐笔口径,含筹码/参与度);「资金流向/主力净流入多少/超大单大单」时调用 get_capital_flow(东财四档口径)。两工具口径不同, 主力意图判断一律以 get_main_intent 为准, get_capital_flow 仅作资金面参考; 若两者方向冲突, 说明口径差异(逐笔vs东财)并优先采信 get_main_intent。严禁用 get_capital_flow 的数据直接下「主力派发/吸筹」结论。
-- 口径标注规则(2026-08-13): 工具返回文本开头自带数据源口径标注(get_main_intent 为「腾讯逐笔·主力意图口径」, get_capital_flow 为「东财四档·资金流向口径」)。回答涉及「主力净流入/净流出」等具体数字时, 必须说明所用口径(逐笔 or 东财四档), 不得省略; 若两个口径数字不同, 要指出差异原因(统计方式不同: 逐笔主动买卖盘 vs 按大中小单四档归类), 再给结论。"""
+- 口径标注规则(2026-08-13): 工具返回文本开头自带数据源口径标注(get_main_intent 为「腾讯逐笔·主力意图口径」, get_capital_flow 为「东财四档·资金流向口径」)。回答涉及「主力净流入/净流出」等具体数字时, 必须说明所用口径(逐笔 or 东财四档), 不得省略; 若两个口径数字不同, 要指出差异原因(统计方式不同: 逐笔主动买卖盘 vs 按大中小单四档归类), 再给结论。
+- 网页链接处理(2026-08-14): 用户发送网页链接(如 mp.weixin.qq.com 微信公众号文章、新闻/研报网页)或要求分析某链接内容时, 必须先调用 get_web_content 工具抓取链接正文, 再基于抓取内容回答; 严禁不抓取就凭空猜测或编造链接内容。若抓取失败(链接非法/超时/非网页/网络错误), 如实告知用户无法获取链接内容及原因, 不得伪造抓取结果。"""
 
 MAX_HISTORY_MESSAGES = 20
 MAX_TOOL_ROUNDS = 5
@@ -66,6 +69,7 @@ _TOOL_STAGE_LABELS = {
     "get_stock_suggestions": "正在读取历史建议...",
     "get_watchlist": "正在读取自选股...",
     "get_capital_flow": "正在查询主力资金流向...",
+    "get_web_content": "正在抓取网页链接内容...",
     "tdx_wenda": "正在查询市场数据...",
     "get_market_news": "正在获取市场资讯...",
     "get_kline_patterns": "正在识别K线形态...",
@@ -406,6 +410,20 @@ CHAT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_web_content",
+            "description": "抓取网页链接正文(支持 http/https, 含微信公众号文章 mp.weixin.qq.com)。用于回答「帮我看看这个链接/这篇文章讲了什么/分析一下这个网页内容」等需要分析用户发来链接的问题。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "要抓取的网页完整链接, 如 https://mp.weixin.qq.com/s/xxx 或 https://example.com/article"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
 ]
 
 
@@ -688,6 +706,144 @@ def _format_fundamentals_text(symbol: str, market: str, data: dict) -> str:
         lines.append(f"- [{ts}] {r.get('title') or '—'} ({src})")
 
     return "\n".join(lines)
+
+
+# ──────────────── 网页链接抓取工具(2026-08-14): get_web_content ────────────────
+# 用户可能在对话中发来网页链接(微信公众号文章/新闻/研报等), AI 通过该工具抓取正文再回答。
+# 轻量实现: httpx GET(15s 超时 + 常见浏览器 UA, 微信文章需要 UA) + html.parser 标准库提取正文,
+# 不引入 BeautifulSoup 等重型依赖。
+
+_WEB_CONTENT_MAX_CHARS = 3000              # 返回给 LLM 的正文截断上限
+_WEB_CONTENT_MAX_BYTES = 2 * 1024 * 1024   # 响应体读取上限, 防异常大页面拖垮
+_WEB_FETCH_TIMEOUT = 15                    # 秒
+_WEB_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+
+# 块级/换行标签: 提取文本时在标签边界补换行, 避免正文挤成一行
+_WEB_BLOCK_TAGS = frozenset({
+    "p", "div", "br", "li", "h1", "h2", "h3", "h4", "h5", "h6",
+    "tr", "section", "article", "blockquote", "pre", "ul", "ol", "table", "hr",
+})
+# 跳过标签: 内部文本不参与提取(脚本/样式/头部/导航/页脚/内联框架/表单等噪音)
+_WEB_SKIP_TAGS = frozenset({
+    "script", "style", "noscript", "head", "title", "meta", "link",
+    "iframe", "svg", "nav", "footer", "header", "form", "button",
+    "template", "video", "audio", "canvas", "aside",
+})
+# HTML 空元素(void): 没有闭合标签, 深度计数必须跳过, 否则 head 内的 <link>/<meta>
+# 会把 _skip_depth 永久抬高, 导致 body 正文被误判为噪音而全部丢弃
+_HTML_VOID_TAGS = frozenset({
+    "area", "base", "br", "col", "embed", "hr", "img", "input",
+    "link", "meta", "param", "source", "track", "wbr",
+})
+
+
+class _WebTextExtractor(html.parser.HTMLParser):
+    """轻量 HTML 正文提取器: 跳过 script/style 等噪音标签, 块级标签边界补换行。"""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self._skip_depth = 0
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in _WEB_SKIP_TAGS and tag not in _HTML_VOID_TAGS:
+            self._skip_depth += 1
+        if self._skip_depth == 0 and tag in _WEB_BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in _WEB_SKIP_TAGS and tag not in _HTML_VOID_TAGS:
+            if self._skip_depth > 0:
+                self._skip_depth -= 1
+        elif self._skip_depth == 0 and tag in _WEB_BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if self._skip_depth == 0:
+            self.parts.append(data)
+
+
+def _extract_web_text(html_text: str) -> str:
+    """从 HTML 提取正文文本: 去噪音标签 → 折叠空白 → 去空行。解析异常不致命, 用已收集部分。"""
+    parser = _WebTextExtractor()
+    try:
+        parser.feed(html_text)
+        parser.close()
+    except Exception:
+        pass
+    lines = []
+    for ln in re.split(r"\n+", "".join(parser.parts)):
+        ln = re.sub(r"[ \t\u00a0]+", " ", ln).strip()
+        if ln:
+            lines.append(ln)
+    return "\n".join(lines)
+
+
+def get_web_content(url: str) -> str:
+    """抓取网页链接正文文本, 供 AI 分析用户发来的链接(含微信公众号文章 mp.weixin.qq.com)。
+
+    安全/健壮性: 仅允许 http/https; 15s 超时; 常见浏览器 UA; 响应体上限 2MB;
+    正文截断到 3000 字符返回; 任何失败均返回友好错误文本, 不抛异常。
+    """
+    url = (url or "").strip()
+    if not url:
+        return "抓取失败: 链接为空, 请提供有效的 http/https 网址。"
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError:
+        return "抓取失败: 链接格式非法, 仅支持 http/https 网址。"
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return "抓取失败: 仅支持 http/https 链接, 请检查链接格式。"
+
+    try:
+        import httpx
+    except ImportError:
+        return "抓取失败: 当前环境缺少 httpx 依赖, 无法发起网络请求。"
+
+    try:
+        headers = {
+            "User-Agent": _WEB_USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        }
+        raw = b""
+        encoding = "utf-8"
+        with httpx.Client(timeout=_WEB_FETCH_TIMEOUT, follow_redirects=True, headers=headers) as client:
+            with client.stream("GET", url) as resp:
+                resp.raise_for_status()
+                ctype = (resp.headers.get("content-type") or "").lower()
+                if ctype and not any(k in ctype for k in ("text/", "html", "xhtml", "xml", "json")):
+                    return (
+                        "抓取失败: 目标链接返回的不是网页内容"
+                        f"(Content-Type: {ctype.split(';')[0].strip()}), 无法提取正文。"
+                    )
+                for chunk in resp.iter_bytes():
+                    raw += chunk
+                    if len(raw) > _WEB_CONTENT_MAX_BYTES:
+                        return "抓取失败: 页面超过 2MB 读取上限, 已放弃抓取(可能为异常大页面)。"
+                encoding = resp.encoding or "utf-8"
+        try:
+            html_text = raw.decode(encoding, errors="replace")
+        except (LookupError, UnicodeDecodeError):
+            html_text = raw.decode("utf-8", errors="replace")
+        text = _extract_web_text(html_text)
+        if not text:
+            return f"抓取失败: 页面未提取到正文文本({url})。"
+        if len(text) > _WEB_CONTENT_MAX_CHARS:
+            text = text[:_WEB_CONTENT_MAX_CHARS] + "…[已截断]"
+        return f"【网页内容】{url}\n{text}"
+    except httpx.HTTPStatusError as e:
+        return f"抓取失败: 目标链接返回 HTTP {e.response.status_code}。"
+    except httpx.TimeoutException:
+        return "抓取失败: 请求超时(15s), 链接可能不可达或响应过慢。"
+    except httpx.RequestError as e:
+        return f"抓取失败: 网络请求错误({e.__class__.__name__}: {str(e)[:120]})。"
+    except Exception as e:
+        logger.warning(f"get_web_content 抓取失败 [{url}]: {e}")
+        return f"抓取失败: {str(e)[:120]}。"
 
 
 async def _execute_tool(db: Session, name: str, args: dict) -> str:
@@ -1008,6 +1164,15 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
             except Exception as e:
                 logger.warning(f"get_hot_stocks 工具失败: {e}")
                 return f"同花顺热榜查询失败: {e}"
+        elif name == "get_web_content":
+            url = (args.get("url") or "").strip()
+            if not url:
+                return "请提供要抓取的网页链接(url)。"
+            # 局部 import asyncio: 函数内 get_market_news 分支有 `import asyncio`,
+            # 使 asyncio 成为整个函数作用域的局部名, 必须在本分支内重新 import 才能使用
+            import asyncio
+            # 同步网络抓取放线程池, 不阻塞事件循环(与 2026-08-14 热修风格一致)
+            return await asyncio.to_thread(get_web_content, url)
         else:
             return f"未知工具: {name}"
     except Exception as e:

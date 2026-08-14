@@ -43,3 +43,10 @@ python-multipart>=0.0.9
 
 # TA-Lib: 61 种标准 K 线形态识别(2026-08-10 接入,技术指标+AI助手)
 ta-lib==0.7.1
+
+# 微信媒体消息接收: 图片/文件下载解密(AES-128-ECB)+ OCR 文本化 + PDF/Excel 解析
+# (容器内已装好对应系统库 tesseract-ocr-chi-sim; pandas 已在上面声明)
+cryptography>=42.0
+pytesseract>=0.3.10
+pypdf>=4.0
+Pillow>=10.0

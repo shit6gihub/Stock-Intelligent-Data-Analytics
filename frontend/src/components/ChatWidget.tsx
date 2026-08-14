@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { MessageCircle, X, Plus, Trash2, Send, ChevronLeft, XCircle, Settings2, Check, GripHorizontal, Newspaper } from 'lucide-react'
+import { MessageCircle, X, Plus, Trash2, Send, ChevronLeft, XCircle, Settings2, Check, GripHorizontal, Newspaper, Paperclip, Loader2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { chatApi, fetchAPI, type ChatConversation, type ChatMessage } from '@panwatch/api'
+import { useToast } from '@panwatch/base-ui/components/ui/toast'
 
 interface StockContext {
   symbol: string
@@ -40,6 +41,11 @@ const CHAT_SIZE_STORAGE_KEY = 'panwatch_chat_desktop_size'
 const CHAT_POSITION_STORAGE_KEY = 'panwatch_chat_desktop_position'
 const CHAT_FREE_POSITION_STORAGE_KEY = 'panwatch_chat_desktop_free_position'
 const CHAT_VIEWPORT_MARGIN = 12
+
+/** 附件上传大小上限(与后端 /api/chat/upload 一致) */
+const MAX_ATTACHMENT_SIZE = 20 * 1024 * 1024
+/** 附件上传允许的类型(与后端解析能力对齐) */
+const ATTACHMENT_ACCEPT = 'image/png,image/jpeg,image/webp,.pdf,.xlsx,.xls,.csv,.txt,.md'
 
 const DESKTOP_SIZE_OPTIONS: Array<{ value: DesktopChatSize; label: string; detail: string }> = [
   { value: 'compact', label: '紧凑', detail: '360 × 480' },
@@ -129,6 +135,7 @@ export default function ChatWidget() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [streamStage, setStreamStage] = useState<string | null>(null)
   const [view, setView] = useState<'list' | 'chat'>('list')
   const [stockContext, setStockContext] = useState<StockContext | null>(null)
@@ -146,6 +153,8 @@ export default function ChatWidget() {
   const settingsRef = useRef<HTMLDivElement>(null)
   const chatWindowRef = useRef<HTMLDivElement>(null)
   const dragStateRef = useRef<DesktopChatDragState | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const { toast } = useToast()
 
   const loadConversations = useCallback(async () => {
     try {
@@ -407,7 +416,7 @@ export default function ChatWidget() {
 
   const handleSend = useCallback(async (overrideContent?: string) => {
     const content = (overrideContent || input).trim()
-    if (!content || sending) return
+    if (!content || sending || uploading) return
 
     let convId = activeConvId
     if (!convId) {
@@ -485,7 +494,42 @@ export default function ChatWidget() {
       setSending(false)
       setStreamStage(null)
     }
-  }, [input, sending, activeConvId, stockContext])
+  }, [input, sending, uploading, activeConvId, stockContext])
+
+  /**
+   * 选择附件: 先 POST /api/chat/upload 解析(multipart form-data), 拿到 text 后
+   * 组装成「用户原话 + [附件: 文件名] + 解析文本/错误提示」作为消息发送。
+   */
+  const handleAttachmentSelect = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = '' // 允许重复选择同一文件
+    if (!file) return
+
+    if (file.size > MAX_ATTACHMENT_SIZE) {
+      toast(`附件超过 20MB 限制: ${file.name}`, 'error')
+      return
+    }
+
+    setUploading(true)
+    try {
+      const res = await chatApi.uploadAttachment(file)
+      const filename = res.filename || file.name
+      const parsedText = (res.text || '').trim()
+      const parts: string[] = []
+      const userWords = input.trim()
+      if (userWords) parts.push(userWords)
+      parts.push(`[附件: ${filename}]`)
+      parts.push(parsedText ? parsedText : (res.error ? `附件解析失败: ${res.error}` : '附件未解析出内容'))
+      setInput('')
+      setUploading(false) // 解析阶段结束, 放行 handleSend(其内部以 sending 防重入)
+      await handleSend(parts.join('\n\n'))
+    } catch (e) {
+      const message = e instanceof Error ? e.message : '未知错误'
+      toast(`附件上传失败: ${message}`, 'error')
+    } finally {
+      setUploading(false)
+    }
+  }, [input, handleSend, toast])
 
   // 点击今日要闻: 把该条内容作为用户消息自动提问, 并收起横条; 顺手标记已读避免下次重复出现
   const handleNewsClick = useCallback((item: ChatNewsItem) => {
@@ -802,9 +846,26 @@ export default function ChatWidget() {
           {/* Input */}
           <div className="flex items-center gap-2 px-4 py-3 border-t border-border/40">
             <input
+              ref={fileInputRef}
+              type="file"
+              accept={ATTACHMENT_ACCEPT}
+              onChange={handleAttachmentSelect}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={sending || uploading}
+              className="h-9 w-9 shrink-0 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors disabled:opacity-40 flex items-center justify-center"
+              title="上传图片/文件(图片OCR / Excel / PDF / txt)"
+              aria-label="上传图片或文件"
+            >
+              {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
+            </button>
+            <input
               type="text"
               className="flex-1 h-9 px-3 rounded-lg bg-accent/40 text-[13px] text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/30"
-              placeholder="输入问题..."
+              placeholder={uploading ? '正在解析附件...' : '输入问题...'}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
@@ -813,12 +874,18 @@ export default function ChatWidget() {
                   handleSend()
                 }
               }}
-              disabled={sending}
+              disabled={sending || uploading}
             />
+            {uploading && (
+              <span className="shrink-0 text-[11px] text-muted-foreground flex items-center gap-1 whitespace-nowrap">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                解析中...
+              </span>
+            )}
             <button
               className="h-9 w-9 rounded-lg bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 transition-colors disabled:opacity-50"
               onClick={() => handleSend()}
-              disabled={sending || !input.trim()}
+              disabled={sending || uploading || !input.trim()}
             >
               <Send className="w-4 h-4" />
             </button>

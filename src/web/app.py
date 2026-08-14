@@ -39,6 +39,7 @@ from src.web.api import (
     shadow,
     ths,
     darkflow,
+    chat_upload,
 )
 from src.web.api import factors
 from src.web.api import notifications
@@ -223,6 +224,13 @@ app.include_router(
     chat.router,
     prefix="/api/chat",
     tags=["chat"],
+    dependencies=protected,
+)
+# 对话助手附件上传/解析(2026-08-14): 图片 OCR / Excel / PDF / txt,md
+app.include_router(
+    chat_upload.router,
+    prefix="/api/chat",
+    tags=["chat-upload"],
     dependencies=protected,
 )
 app.include_router(

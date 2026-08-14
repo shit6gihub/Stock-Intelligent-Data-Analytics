@@ -164,7 +164,7 @@ async def _account_loop(state: _AccountState):
                 if ctx:
                     state.cfg["context_token"] = ctx
 
-                text = _extract_text(msg)
+                text = await _extract_text(msg, account)
                 if not text:
                     continue
                 if not state.initialized:
@@ -211,7 +211,7 @@ async def _account_loop(state: _AccountState):
             await asyncio.sleep(POLL_INTERVAL)
 
 
-def _extract_text(msg: dict) -> str:
+def _extract_text_sync(msg: dict) -> str:
     """从 iLink 消息里提取文本(支持 text_item 与直接文本字段)。"""
     items = msg.get("item_list") or []
     texts = []
@@ -220,6 +220,57 @@ def _extract_text(msg: dict) -> str:
             t = it.get("text_item") or {}
             if isinstance(t, dict) and t.get("text"):
                 texts.append(str(t["text"]))
+    if texts:
+        return "\n".join(texts)
+    return str(msg.get("text") or "").strip()
+
+
+async def _extract_text(msg: dict, account: dict) -> str:
+    """从 iLink 消息提取可读文本(供 AI 理解)。
+
+    支持:
+      - type=1 文本: text_item.text
+      - type=2 图片: 下载解密 → OCR 文本化 → "[图片内容] <识别文字>"
+      - type=4 文件: 下载解密 → 按扩展名解析 → "[文件: <文件名>] 内容摘要"
+      - type=3 语音: 暂不支持, 拼提示让 AI 回复用户改用文字
+    任一媒体处理失败不影响其余 item(失败项降级为提示文本)。
+    """
+    from src.core import media_utils
+
+    items = msg.get("item_list") or []
+    texts = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        item_type = it.get("type")
+        if item_type == wechat_ilink.ITEM_TEXT:
+            t = it.get("text_item") or {}
+            if isinstance(t, dict) and t.get("text"):
+                texts.append(str(t["text"]))
+        elif item_type == wechat_ilink.ITEM_IMAGE:
+            try:
+                data = await wechat_ilink.download_media(account, it)
+                ocr_text, _saved = media_utils.image_to_text(data)
+                texts.append(f"[图片内容] {ocr_text}" if ocr_text else "[图片内容] (未能识别出文字)")
+            except Exception as exc:
+                logger.warning(f"图片消息处理失败: {exc}")
+                texts.append("[图片内容] (下载/识别失败)")
+        elif item_type == wechat_ilink.ITEM_FILE:
+            file_name = str((it.get("file_item") or {}).get("file_name") or "文件")
+            try:
+                data = await wechat_ilink.download_media(account, it)
+                saved = media_utils.save_bytes(data, file_name)
+                summary = media_utils.file_to_text(saved)
+                if summary:
+                    texts.append(f"[文件: {file_name}] 内容摘要:\n{summary}")
+                else:
+                    texts.append(f"[文件: {file_name}] (无法解析内容, 仅收到文件名)")
+            except Exception as exc:
+                logger.warning(f"文件消息处理失败: {exc}")
+                texts.append(f"[文件: {file_name}] (下载失败)")
+        elif item_type == wechat_ilink.ITEM_VOICE:
+            texts.append("[语音消息] 暂不支持语音消息, 请改用文字或图片。")
+        # type=5 视频等其他类型暂忽略
     if texts:
         return "\n".join(texts)
     return str(msg.get("text") or "").strip()
