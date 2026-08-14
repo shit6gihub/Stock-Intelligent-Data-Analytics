@@ -1298,7 +1298,63 @@ def _detect_repeat_question(history: list, threshold: int = 3) -> str | None:
     )
 
 
-async def _build_ai_messages(db: Session, conv: ChatConversation, user: User) -> list[dict]:
+async def _describe_image(image_data: str) -> str:
+    """视觉代理: 用 agnes-2.5-flash(支持视觉)看图生成文字描述。
+
+    主对话模型(deepseek)无视觉能力, 图片先由 agnes 描述成文本,
+    再拼进对话内容由主模型分析。失败返回空串(调用方自行降级)。
+    """
+    try:
+        from src.web.database import SessionLocal
+        from src.web.models import AIService
+
+        db = SessionLocal()
+        try:
+            svc = (
+                db.query(AIService)
+                .filter(AIService.name.like("%Agnes%"))
+                .first()
+            )
+            if not svc:
+                return ""
+            base_url, api_key = svc.base_url, svc.api_key
+        finally:
+            db.close()
+
+        import httpx
+
+        payload = {
+            "model": "agnes-2.5-flash",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "请用中文简要描述这张图片: 包含内容、颜色、形状、文字、图表类型等, 50字以内。",
+                        },
+                        {"type": "image_url", "image_url": {"url": image_data}},
+                    ],
+                }
+            ],
+            "max_tokens": 200,
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                f"{base_url.rstrip('/')}/chat/completions",
+                json=payload,
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            r.raise_for_status()
+            return str(r.json()["choices"][0]["message"]["content"] or "").strip()
+    except Exception as exc:
+        logger.warning(f"视觉代理(agnes 看图)失败: {exc}")
+        return ""
+
+
+async def _build_ai_messages(
+    db: Session, conv: ChatConversation, user: User, image_data: str | None = None
+) -> list[dict]:
     """构建发送给 AI 的消息列表(system + 历史 + 数据上下文)。
 
     send_message(非流式)与 send_message_stream(流式)共用, 保证两条链路逻辑一致。
@@ -1378,6 +1434,16 @@ async def _build_ai_messages(db: Session, conv: ChatConversation, user: User) ->
     if summary_block:
         messages_for_ai[0]["content"] += "\n\n" + summary_block
 
+    # 多模态: 若本次消息带图片(base64 data URL), 把最后一条 user 消息替换为 content_parts(文本+图片)
+    if image_data and messages_for_ai and messages_for_ai[-1].get("role") == "user":
+        last_text = str(messages_for_ai[-1].get("content") or "")
+        messages_for_ai[-1] = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": last_text},
+                {"type": "image_url", "image_url": {"url": image_data}},
+            ],
+        }
     return messages_for_ai
 
 
@@ -1461,6 +1527,7 @@ class CreateConversationBody(BaseModel):
 
 class SendMessageBody(BaseModel):
     content: str
+    image_data: str | None = None  # 可选: 图片 base64 data URL(多模态, 模型看图)
 
 
 def _client_from_scene_cfg(db: Session, cfg) -> AIClient | None:
@@ -2035,6 +2102,13 @@ async def send_message(
         if not conv:
             raise HTTPException(404, "对话不存在")
 
+        # 多模态: 图片先由 agnes 视觉代理转成文字描述(在保存前处理, 保证 DB 历史连贯)
+        if body.image_data:
+            desc = await _describe_image(body.image_data)
+            if desc:
+                body.content = f"[用户附图内容] {desc}\n\n{body.content}"
+                body.image_data = None  # 主模型用文本, 不传图片
+
         # 保存用户消息
         user_msg = ChatMessage(
             conversation_id=conversation_id,
@@ -2051,7 +2125,7 @@ async def send_message(
         db.refresh(user_msg)
 
         # 构建消息列表 + 调用 AI（带 tool use，用于按需获取更多数据）
-        messages_for_ai = await _build_ai_messages(db, conv, user)
+        messages_for_ai = await _build_ai_messages(db, conv, user, image_data=body.image_data)
         ai_client = _get_ai_client(db, conv.ai_model_id)
         ai_response = ""
         async for _kind, payload in _run_tool_loop(ai_client, messages_for_ai, db):
@@ -2106,6 +2180,13 @@ async def send_message_stream(
                 yield _sse_event("error", {"message": "对话不存在"})
                 return
 
+            # 多模态: 图片先由 agnes 视觉代理转成文字描述(在保存前处理, 保证 DB 历史连贯)
+            if body.image_data:
+                desc = await _describe_image(body.image_data)
+                if desc:
+                    body.content = f"[用户附图内容] {desc}\n\n{body.content}"
+                    body.image_data = None
+
             # 保存用户消息
             user_msg = ChatMessage(
                 conversation_id=conversation_id,
@@ -2123,7 +2204,13 @@ async def send_message_stream(
 
             # 构建消息列表(与 send_message 共用逻辑)
             yield _sse_event("stage", {"message": "正在准备上下文..."})
-            messages_for_ai = await _build_ai_messages(db, conv, user)
+            # 多模态: 图片先由 agnes 视觉代理转成文字描述, 再交给主对话模型
+            if body.image_data:
+                desc = await _describe_image(body.image_data)
+                if desc:
+                    body.content = f"[用户附图内容] {desc}\n\n{body.content}"
+                    body.image_data = None
+            messages_for_ai = await _build_ai_messages(db, conv, user, image_data=body.image_data)
             ai_client = _get_ai_client(db, conv.ai_model_id)
 
             # 多轮 tool use: 每轮 tool 执行前推送阶段提示

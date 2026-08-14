@@ -109,6 +109,19 @@ def _parse_pdf(path: Path) -> tuple[str, str | None]:
         return "", f"PDF 解析失败: {exc}"
 
 
+def _to_data_url(path: Path) -> str | None:
+    """图片 → base64 data URL(多模态直连模型看图)。"""
+    try:
+        import base64 as _b64
+        import mimetypes
+
+        raw = path.read_bytes()
+        mime = mimetypes.guess_type(path.name)[0] or "image/png"
+        return f"data:{mime};base64,{_b64.b64encode(raw).decode('ascii')}"
+    except Exception:
+        return None
+
+
 @router.post("/upload")
 def upload_attachment(
     file: UploadFile = File(...),
@@ -147,10 +160,14 @@ def upload_attachment(
     try:
         if suffix in _IMAGE_SUFFIXES:
             text, error = _parse_image(dest)
+            # 多模态直连: 图片同时返回 base64 data URL, 供模型直接看图(OCR 文本作为兜底说明)
+            image_data = _to_data_url(dest)
         elif suffix in _EXCEL_SUFFIXES:
             text, error = _parse_excel(dest, suffix)
+            image_data = None
         elif suffix in _PDF_SUFFIXES:
             text, error = _parse_pdf(dest)
+            image_data = None
         else:
             try:
                 text = _read_text_with_fallback(dest)
@@ -162,11 +179,14 @@ def upload_attachment(
                         text = text[:_MAX_TEXT_CHARS] + "\n\n[内容过长, 已截断]"
             except Exception as exc:  # noqa: BLE001
                 text, error = "", f"文本读取失败: {exc}"
+            image_data = None
     finally:
         # 解析完成即清理, 附件内容已随 text 返回, 无需长期留存
         dest.unlink(missing_ok=True)
 
     result: dict = {"text": text, "filename": filename}
+    if image_data:
+        result["image_data"] = image_data
     if error:
         result["error"] = error
     return result

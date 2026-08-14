@@ -77,10 +77,10 @@ export const chatApi = {
       method: 'DELETE',
     }),
 
-  sendMessage: (conversationId: number, content: string) =>
+  sendMessage: (conversationId: number, content: string, imageData?: string) =>
     fetchAPI<ChatMessage>(`/chat/conversations/${conversationId}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, image_data: imageData || undefined }),
       timeoutMs: 120000,
     }),
 
@@ -90,6 +90,7 @@ export const chatApi = {
     content: string,
     handlers: ChatStreamHandlers,
     signal?: AbortSignal,
+    imageData?: string,
   ): Promise<void> =>
     new Promise<void>((resolve, reject) => {
       fetch(`${API_BASE}/chat/conversations/${conversationId}/messages/stream`, {
@@ -98,7 +99,7 @@ export const chatApi = {
           'Content-Type': 'application/json',
           ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
         },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, image_data: imageData || undefined }),
         signal,
       })
         .then(async (res) => {
@@ -145,14 +146,17 @@ export const chatApi = {
       `/chat/suggested-questions?symbol=${encodeURIComponent(symbol)}&market=${encodeURIComponent(market)}`
     ),
 
-  /** 2026-08-14 附件上传/解析: multipart form-data, 返回 {text, filename, error?} */
+  /** 2026-08-14 附件上传/解析: multipart form-data, 返回 {text, filename, image_data?, error?} */
   uploadAttachment: (file: File) => {
     const form = new FormData()
     form.append('file', file)
-    return fetchAPI<{ text: string; filename: string; error?: string }>('/chat/upload', {
-      method: 'POST',
-      body: form,
-      timeoutMs: 120000,
-    })
+    return fetchAPI<{ text: string; filename: string; image_data?: string; error?: string }>(
+      '/chat/upload',
+      {
+        method: 'POST',
+        body: form,
+        timeoutMs: 120000,
+      },
+    )
   },
 }

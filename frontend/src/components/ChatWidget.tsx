@@ -414,7 +414,7 @@ export default function ChatWidget() {
     }
   }, [activeConvId])
 
-  const handleSend = useCallback(async (overrideContent?: string) => {
+  const handleSend = useCallback(async (overrideContent?: string, imageData?: string) => {
     const content = (overrideContent || input).trim()
     if (!content || sending || uploading) return
 
@@ -479,7 +479,9 @@ export default function ChatWidget() {
               prev.map((m) => (m.id === tempAssistantId ? { ...m, content: errMsg } : m))
             )
           },
-        }
+        },
+        undefined,
+        imageData
       )
       setConversations((prev) =>
         prev.map((c) => c.id === convId ? { ...c, title: c.title || content.slice(0, 20) } : c)
@@ -522,7 +524,7 @@ export default function ChatWidget() {
       parts.push(parsedText ? parsedText : (res.error ? `附件解析失败: ${res.error}` : '附件未解析出内容'))
       setInput('')
       setUploading(false) // 解析阶段结束, 放行 handleSend(其内部以 sending 防重入)
-      await handleSend(parts.join('\n\n'))
+      await handleSend(parts.join('\n\n'), res.image_data || undefined)
     } catch (e) {
       const message = e instanceof Error ? e.message : '未知错误'
       toast(`附件上传失败: ${message}`, 'error')

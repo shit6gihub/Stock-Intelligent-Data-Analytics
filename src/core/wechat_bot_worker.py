@@ -40,8 +40,13 @@ class _AccountState:
         self.initialized = False  # 首轮只建游标不回复(避免回复历史消息)
 
 
-async def _ask_ai(user_text: str, conv_id: str | None, user_id: str) -> tuple[str, str]:
-    """调 SIDA 对话助手(容器内自产服务 token), 返回 (回复文本, conversation_id)。"""
+async def _ask_ai(
+    user_text: str, conv_id: str | None, user_id: str, image_data: str | None = None
+) -> tuple[str, str]:
+    """调 SIDA 对话助手(容器内自产服务 token), 返回 (回复文本, conversation_id)。
+
+    image_data: 可选图片 base64 data URL(多模态, 模型直接看图)。
+    """
     from src.web.api.auth import create_token
     from src.web.database import SessionLocal
     from src.web.models import User
@@ -56,6 +61,9 @@ async def _ask_ai(user_text: str, conv_id: str | None, user_id: str) -> tuple[st
         db.close()
 
     headers = {"Authorization": f"Bearer {token}"}
+    payload: dict = {"content": user_text}
+    if image_data:
+        payload["image_data"] = image_data
     async with httpx.AsyncClient(timeout=REPLY_TIMEOUT) as client:
         if not conv_id:
             r = await client.post(f"{PANWATCH_URL}/api/chat/conversations", json={}, headers=headers)
@@ -66,7 +74,7 @@ async def _ask_ai(user_text: str, conv_id: str | None, user_id: str) -> tuple[st
             raise RuntimeError("对话会话创建失败")
         r = await client.post(
             f"{PANWATCH_URL}/api/chat/conversations/{conv_id}/messages",
-            json={"content": user_text},
+            json=payload,
             headers=headers,
         )
         r.raise_for_status()
@@ -164,7 +172,7 @@ async def _account_loop(state: _AccountState):
                 if ctx:
                     state.cfg["context_token"] = ctx
 
-                text = await _extract_text(msg, account)
+                text, img_data = await _extract_text(msg, account)
                 if not text:
                     continue
                 if not state.initialized:
@@ -184,7 +192,7 @@ async def _account_loop(state: _AccountState):
                     logger.debug(f"typing 状态发送失败(可忽略): {exc}")
                 try:
                     reply, state.conversation_id = await _ask_ai(
-                        text, state.conversation_id, state.user_id
+                        text, state.conversation_id, state.user_id, img_data
                     )
                 except Exception as exc:
                     logger.warning(f"AI 回复失败: {exc}")
@@ -225,20 +233,22 @@ def _extract_text_sync(msg: dict) -> str:
     return str(msg.get("text") or "").strip()
 
 
-async def _extract_text(msg: dict, account: dict) -> str:
-    """从 iLink 消息提取可读文本(供 AI 理解)。
+async def _extract_text(msg: dict, account: dict) -> tuple[str, str | None]:
+    """从 iLink 消息提取可读文本 + 图片 data URL(多模态)。
 
     支持:
       - type=1 文本: text_item.text
-      - type=2 图片: 下载解密 → OCR 文本化 → "[图片内容] <识别文字>"
+      - type=2 图片: 下载解密 → OCR 文本化 + 返回图片 base64 data URL(模型直接看图)
       - type=4 文件: 下载解密 → 按扩展名解析 → "[文件: <文件名>] 内容摘要"
       - type=3 语音: 暂不支持, 拼提示让 AI 回复用户改用文字
     任一媒体处理失败不影响其余 item(失败项降级为提示文本)。
+    返回 (text, image_data_url|None)。
     """
     from src.core import media_utils
 
     items = msg.get("item_list") or []
     texts = []
+    image_data: str | None = None
     for it in items:
         if not isinstance(it, dict):
             continue
@@ -251,6 +261,14 @@ async def _extract_text(msg: dict, account: dict) -> str:
             try:
                 data = await wechat_ilink.download_media(account, it)
                 ocr_text, _saved = media_utils.image_to_text(data)
+                # 多模态: 原始图片转 data URL 给模型看图(OCR 文本兜底)
+                if image_data is None:
+                    try:
+                        import base64 as _b64
+
+                        image_data = f"data:image/png;base64,{_b64.b64encode(data).decode('ascii')}"
+                    except Exception:
+                        image_data = None
                 texts.append(f"[图片内容] {ocr_text}" if ocr_text else "[图片内容] (未能识别出文字)")
             except Exception as exc:
                 logger.warning(f"图片消息处理失败: {exc}")
@@ -272,8 +290,8 @@ async def _extract_text(msg: dict, account: dict) -> str:
             texts.append("[语音消息] 暂不支持语音消息, 请改用文字或图片。")
         # type=5 视频等其他类型暂忽略
     if texts:
-        return "\n".join(texts)
-    return str(msg.get("text") or "").strip()
+        return "\n".join(texts), image_data
+    return str(msg.get("text") or "").strip(), image_data
 
 
 async def wechat_bot_worker():
