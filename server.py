@@ -3,6 +3,7 @@
 import logging
 import os
 import time
+import asyncio
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -1720,6 +1721,15 @@ async def lifespan(app):
         logger.info("上下文维护调度器已启动")
     except Exception as e:
         logger.error(f"上下文维护调度器启动失败: {e}")
+
+    # 微信数智分析BOT worker: 长轮询 getupdates, 微信消息 → AI 回复 → 回微信
+    try:
+        from src.core.wechat_bot_worker import wechat_bot_worker
+
+        app.state.wechat_bot_task = asyncio.create_task(wechat_bot_worker(), name="wechat-bot-worker")
+        logger.info("微信数智分析BOT worker 已启动")
+    except Exception as e:
+        logger.error(f"微信数智分析BOT worker 启动失败: {e}")
     yield
     if scheduler:
         scheduler.shutdown()
