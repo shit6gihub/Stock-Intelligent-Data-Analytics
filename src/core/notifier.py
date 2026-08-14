@@ -218,6 +218,17 @@ def build_apprise_url(channel_type: str, config: dict) -> str | None:
         raise ValueError(f"不支持的 Apprise 渠道类型: {channel_type}")
 
 
+def _extract_context_token(updates: dict, user_id: str) -> str | None:
+    """从 iLink getupdates 响应中提取指定用户的最新 context_token(最新优先)。"""
+    msgs = updates.get("msgs") or []
+    for m in reversed(msgs):
+        if str(m.get("from_user_id") or "") == user_id:
+            ctx = str(m.get("context_token") or "").strip()
+            if ctx:
+                return ctx
+    return None
+
+
 class NotifierManager:
     """通知管理器: Apprise 渠道 + 自定义渠道"""
 
@@ -527,26 +538,73 @@ class NotifierManager:
     async def _send_openclaw(self, config: dict, title: str, content: str):
         """个人微信 iLink 直连发送(零 OpenClaw 依赖)。
 
-        config 由扫码绑定写入: token/base_url/user_id。
+        config 由扫码绑定写入: token/base_url/user_id/context_token。
         调 src.core.wechat_ilink.send_text -> 腾讯官方 iLink sendmessage。
+        context_token 过期时自动 getupdates 刷新并重试一次。
         """
         token = str(config.get("token") or "").strip()
         base_url = str(config.get("base_url") or "").strip()
         wechat_user_id = str(config.get("user_id") or "").strip()
+        context_token = str(config.get("context_token") or "").strip() or None
         if not token or not wechat_user_id:
             raise ValueError("微信渠道需要 token/user_id(请重新扫码绑定)")
 
+        from src.core import wechat_ilink
+
         account = {"token": token, "base_url": base_url or None}
         text = f"{title}\n{content}" if title else content
-        try:
-            from src.core import wechat_ilink
 
-            resp = await wechat_ilink.send_text(account, wechat_user_id, text)
+        try:
+            resp = await wechat_ilink.send_text(
+                account, wechat_user_id, text, context_token=context_token
+            )
         except Exception as exc:
-            raise RuntimeError(f"微信 iLink 发送失败: {exc}")
+            # 会话 token 过期/失效 → getupdates 拉最新 context_token 重试一次
+            logger.warning(f"微信 iLink 首次发送失败({exc}), 刷新 context_token 重试")
+            try:
+                updates = await wechat_ilink.get_updates(account)
+                new_ctx = _extract_context_token(updates, wechat_user_id)
+                if not new_ctx:
+                    raise RuntimeError(f"未能获取会话 token: {exc}")
+                resp = await wechat_ilink.send_text(
+                    account, wechat_user_id, text, context_token=new_ctx
+                )
+                self._persist_context_token(config, new_ctx)
+            except Exception as exc2:
+                raise RuntimeError(f"微信 iLink 发送失败: {exc2}")
         message_id = str(resp.get("message_id") or "")[:128] if isinstance(resp, dict) else ""
         logger.info(f"OpenClaw 微信通知发送成功: {title}")
         return {"ok": True, "message_id": message_id}
+
+    def _persist_context_token(self, config: dict, new_ctx: str):
+        """把刷新后的 context_token 写回 DB(notify_channels.config)。"""
+        try:
+            from src.web.database import SessionLocal
+            from src.web.models import NotifyChannel
+
+            db = SessionLocal()
+            try:
+                channel_id = config.get("channel_id") or config.get("id")
+                if channel_id:
+                    row = db.query(NotifyChannel).filter(NotifyChannel.id == channel_id).first()
+                else:
+                    row = (
+                        db.query(NotifyChannel)
+                        .filter(
+                            NotifyChannel.type == "openclaw",
+                            NotifyChannel.config["user_id"].astext == config.get("user_id", ""),
+                        )
+                        .first()
+                    )
+                if row:
+                    cfg = dict(row.config or {})
+                    cfg["context_token"] = new_ctx
+                    row.config = cfg
+                    db.commit()
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning(f"context_token 持久化失败: {exc}")
 
     async def _send_serverchan(self, config: dict, title: str, content: str):
         sendkey = config.get("sendkey", "")

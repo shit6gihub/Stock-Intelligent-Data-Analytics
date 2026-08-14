@@ -23,6 +23,7 @@ ILINK_APP_CLIENT_VERSION = (2 << 16) | (2 << 8) | 0
 EP_GET_BOT_QR = "ilink/bot/get_bot_qrcode"
 EP_GET_QR_STATUS = "ilink/bot/get_qrcode_status"
 EP_SEND_MESSAGE = "ilink/bot/sendmessage"
+EP_GET_UPDATES = "ilink/bot/getupdates"
 
 ITEM_TEXT = 1
 MSG_TYPE_BOT = 2
@@ -90,11 +91,12 @@ async def poll_qr(qrcode: str) -> dict:
     return {"status": status}
 
 
-async def send_text(account: dict, to: str, text: str) -> dict:
+async def send_text(account: dict, to: str, text: str, context_token: str | None = None) -> dict:
     """向指定微信用户推送文本消息。
 
     account: {token, base_url, user_id}
     to: 接收方 peer id(形如 xxx@im.wechat), 必须与 bot 建立过会话
+    context_token: iLink 会话 token(来自 getupdates, 外发必须回显最新值)
     """
     if not text or not text.strip():
         raise ValueError("send_text: 消息内容不能为空")
@@ -106,6 +108,8 @@ async def send_text(account: dict, to: str, text: str) -> dict:
         "message_state": MSG_STATE_FINISH,
         "item_list": [{"type": ITEM_TEXT, "text_item": {"text": text}}],
     }
+    if context_token:
+        message["context_token"] = context_token
     body = json.dumps(
         {"msg": message, "base_info": {"channel_version": CHANNEL_VERSION}},
         ensure_ascii=False,
@@ -114,6 +118,27 @@ async def send_text(account: dict, to: str, text: str) -> dict:
     async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
         resp = await client.post(
             f"{base_url}/{EP_SEND_MESSAGE}",
+            content=body,
+            headers=_headers(account.get("token"), body),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def get_updates(account: dict, sync_buf: str = "") -> dict:
+    """拉取入站消息(iLink getupdates)。
+
+    返回原始响应: {ret, msgs: [...], get_updates_buf, longpolling_timeout_ms}
+    每条 msg 含 from_user_id / context_token 等 —— context_token 是外发推送的必需参数。
+    """
+    body = json.dumps(
+        {"get_updates_buf": sync_buf or "", "base_info": {"channel_version": CHANNEL_VERSION}},
+        ensure_ascii=False,
+    )
+    base_url = (account.get("base_url") or ILINK_BASE_URL).rstrip("/")
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        resp = await client.post(
+            f"{base_url}/{EP_GET_UPDATES}",
             content=body,
             headers=_headers(account.get("token"), body),
         )
