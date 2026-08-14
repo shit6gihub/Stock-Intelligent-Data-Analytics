@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-14 (v0.2.36)
+
+### fix(darkflow) — 跨日残留洗白 + AI 反证层 db 自建(生产热修, 已 docker cp 生效)
+
+- 跨日残留: 昨收后接口异常只拉到少量残留时, 增量续拉"无新增"分支把残留 day 刷新成今天, 跨日 stale 判断被绕过, 主力意图永远拿残留(实测 tick=2)。修复: 无新增时校验旧数据新鲜度(未来时间/早于开盘且笔数<30 → 全量重拉), 生产 tick 2→2392
+- AI 反证层: 生产容器 env 无 AI_* 配置且调用不传 db → 回落空配置永远 None。修复: db=None 时内部自建 SessionLocal 读场景绑定, 生产实测输出正常
+
+### build(docker) — 国内 ACR 代码源构建适配
+
+- 基础镜像: docker.io 超时/阿里云 library 需登录 → DaoCloud 公开镜像(docker.m.daocloud.io, 免登录实测可用)
+- pip → 阿里云 pypi 镜像; pnpm → npmmirror
+- VERSION: ACR 个人版无构建参数功能({{.Tag}} 不支持), Dockerfile 兜底读仓库根 VERSION 文件
+- 验证: ACR 构建 v0.2.36 成功, 国内 docker pull 正常
+
 ## 2026-08-14 (v0.2.35)
 
 ### feat(darkflow) — 主力意图算法增强五件套

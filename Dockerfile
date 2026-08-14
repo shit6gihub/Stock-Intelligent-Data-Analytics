@@ -11,6 +11,8 @@ ARG PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.11-slim
 FROM ${NODE_IMAGE} AS frontend-builder
 
 # 版本号（构建时传入,注入 sw.js 缓存名,发版后浏览器自动清旧缓存防白屏）
+# 优先级: build-arg VERSION(ghcr 发布显式传) > 仓库根 VERSION 文件(ACR 国内构建
+# 无构建参数功能, 2026-08-14 实测, 兜底读文件) > dev
 ARG VERSION=dev
 
 WORKDIR /app/frontend
@@ -29,8 +31,15 @@ RUN pnpm install --frozen-lockfile
 
 # 复制源码并构建(直接 vite build, 跳过 tsc 严格类型检查以兼容 fork 源码既有 TS 警告)
 # 先注入 sw.js 缓存版本号 → 发版后 SW 字节变化, 浏览器自动更新并清旧缓存
+# ACR 构建无 build-arg 时读仓库根 VERSION 文件兜底(2026-08-14: 个人版无构建参数功能)
 COPY frontend/ ./
-RUN sed -i "s/__SW_VERSION__/${VERSION}/g" public/sw.js && npx vite build
+COPY VERSION ./
+RUN VERSION_VAL="${VERSION}"; \
+    if [ "${VERSION}" = "dev" ] && [ -f VERSION ] && [ -s VERSION ]; then \
+      VERSION_VAL="$(cat VERSION | tr -d '[:space:]')"; \
+    fi; \
+    echo "SW version: ${VERSION_VAL}"; \
+    sed -i "s/__SW_VERSION__/${VERSION_VAL}/g" public/sw.js && npx vite build
 
 
 # ===== Stage 2: Python 运行环境 =====
