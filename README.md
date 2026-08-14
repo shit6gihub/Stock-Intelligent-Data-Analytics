@@ -1,4 +1,4 @@
-# 数智分析 (Stock-Intelligent-Data-Analytics)
+# 数智分析 (SIDA · Stock-Intelligent-Data-Analytics)
 
 **自托管 AI 盯盘助手 · 集成 [TradingAgents](https://github.com/TauricResearch/TradingAgents) 多 Agent 投资决策** — A 股 / 港股 / 美股实时监控、持仓管理、智能分析、策略库、报告中心、消息通知、全渠道推送
 

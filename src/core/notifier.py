@@ -427,7 +427,7 @@ class NotifierManager:
             if link_m:
                 notice = f"\n\n…内容过长已截断,完整报告 👉 {link_m.group(1)}"
             else:
-                notice = "\n\n…内容过长已截断,完整报告请在 PanWatch 查看"
+                notice = "\n\n…内容过长已截断,完整报告请在 SIDA 查看"
             text = text[: 3900 - len(notice)].rstrip() + notice
         payload = {
             "chat_id": chat_id,
@@ -493,7 +493,7 @@ class NotifierManager:
         if not url:
             raise ValueError("Hermes 中转需要 webhook_url")
 
-        payload = {"title": title or "PanWatch 通知", "body": content or ""}
+        payload = {"title": title or "SIDA 通知", "body": content or ""}
         raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
         headers = {"Content-Type": "application/json"}

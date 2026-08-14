@@ -813,7 +813,7 @@ export default function SettingsPage() {
       setBrowserPushEnabled(true)
       await showBrowserNotification({
         id: Date.now(),
-        title: 'PanWatch 电脑推送已开启',
+        title: 'SIDA 电脑推送已开启',
         body: '页面打开或在后台运行时，新消息会直接显示为电脑系统通知。',
         link: '/settings',
       })
@@ -830,7 +830,7 @@ export default function SettingsPage() {
     try {
       const shown = await showBrowserNotification({
         id: Date.now(),
-        title: 'PanWatch 电脑推送测试',
+        title: 'SIDA 电脑推送测试',
         body: '如果你看到这条系统通知，说明 Web 推送已正常工作。',
         link: '/settings',
       })
