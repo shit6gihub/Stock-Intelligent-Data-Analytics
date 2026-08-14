@@ -1,4 +1,4 @@
-"""SIDA 个人微信 iLink 直连客户端(纯 Python, 零 OpenClaw 依赖)。
+"""SIDA 个人微信 iLink 直连客户端(纯 Python, 腾讯官方通道)。
 
 参考实现: Hermes weixin.py(腾讯官方 iLink Bot API)。
 能力:
@@ -14,7 +14,7 @@ import uuid
 
 import httpx
 
-# ---- iLink 常量(与微信官方 ClawBot/OpenClaw 同协议) ----
+# ---- iLink 常量(腾讯官方 iLink 协议) ----
 ILINK_BASE_URL = "https://ilinkai.weixin.qq.com"
 ILINK_APP_ID = "bot"
 CHANNEL_VERSION = "2.2.0"

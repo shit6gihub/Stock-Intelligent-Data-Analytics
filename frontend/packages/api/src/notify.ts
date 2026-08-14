@@ -1,6 +1,6 @@
 import { fetchAPI } from './client'
 
-// ── 扫码绑定个人微信(iLink 直连, 零 OpenClaw 依赖) ──
+// ── 扫码绑定个人微信(腾讯官方 iLink 直连) ──
 // 后端端点:
 //   POST   /notify/wechat-bind/start   → { qrcode, qrcode_url }
 //   GET    /notify/wechat-bind/status?qrcode=<qrcode> → { status: 'waiting'|'success', ... }

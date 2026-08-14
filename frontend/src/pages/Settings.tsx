@@ -137,7 +137,7 @@ const CHANNEL_TYPE_FIELDS: Record<string, { label: string; fields: ChannelFieldD
     ],
   },
   openclaw: {
-    label: 'OpenClaw 个人微信',
+    label: '个人微信(iLink 直连)',
     fields: [
       { key: 'webhook_url', label: 'Webhook 地址', placeholder: 'http://<hermes地址>:8644/webhooks/<订阅名>', required: true },
       { key: 'secret', label: 'HMAC 密钥', placeholder: '订阅创建时返回的 Secret', secret: true, required: true },
@@ -224,7 +224,7 @@ export default function SettingsPage() {
   const [browserPushEnabled, setBrowserPushEnabled] = useState(browserNotificationsEnabled)
   const [browserPushTesting, setBrowserPushTesting] = useState(false)
 
-  // 扫码绑定个人微信(OpenClaw 渠道)
+  // 扫码绑定个人微信(iLink 渠道)
   const [wechatBindInfo, setWechatBindInfo] = useState<WechatBindInfo | null>(null)
   const [wechatBindStarting, setWechatBindStarting] = useState(false)
   const [wechatUnbinding, setWechatUnbinding] = useState(false)
@@ -810,7 +810,7 @@ export default function SettingsPage() {
     }
   }
 
-  // ── 扫码绑定个人微信(OpenClaw 渠道) ──
+  // ── 扫码绑定个人微信(iLink 渠道) ──
   const loadWechatBind = async () => {
     try {
       const info = await wechatBindGet()
@@ -1226,13 +1226,13 @@ export default function SettingsPage() {
               </Button>
             )}
           </div>
-          {/* OpenClaw 个人微信: 扫码绑定 */}
+          {/* 个人微信(iLink): 扫码绑定 */}
           <div className="mb-3 rounded-xl border border-border/50 bg-accent/20 p-3.5">
             <div className="flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-start gap-2.5">
                 <QrCode className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
                 <div className="min-w-0">
-                  <div className="text-[12px] font-medium text-foreground">OpenClaw 个人微信</div>
+                  <div className="text-[12px] font-medium text-foreground">个人微信(iLink)</div>
                   {wechatBindInfo?.account_id ? (
                     <p className="mt-0.5 text-[10.5px] text-muted-foreground">
                       已绑定：
@@ -1240,7 +1240,7 @@ export default function SettingsPage() {
                       {wechatBindInfo.nickname ? `（${wechatBindInfo.nickname}）` : ''}
                     </p>
                   ) : (
-                    <p className="mt-0.5 text-[10.5px] text-muted-foreground">扫码绑定个人微信，绑定成功后自动创建 OpenClaw 通知渠道</p>
+                    <p className="mt-0.5 text-[10.5px] text-muted-foreground">扫码绑定个人微信，绑定成功后自动创建通知渠道</p>
                   )}
                 </div>
               </div>
@@ -1950,7 +1950,7 @@ export default function SettingsPage() {
                   <div>
                     <div className="text-[12px] font-medium text-foreground">扫码绑定个人微信</div>
                     <p className="mt-0.5 text-[10.5px] text-muted-foreground">
-                      无需填写 Webhook 地址与密钥。点击下方按钮，用微信扫码确认后自动创建「OpenClaw 个人微信」渠道。
+                      无需填写地址与密钥。点击下方按钮，用微信扫码确认后自动创建「个人微信」渠道。
                     </p>
                   </div>
                 </div>

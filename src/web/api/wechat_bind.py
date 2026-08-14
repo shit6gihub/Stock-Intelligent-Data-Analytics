@@ -1,4 +1,4 @@
-"""SIDA 扫码绑定个人微信(直接 iLink, 零 OpenClaw 依赖) API。
+"""SIDA 扫码绑定个人微信(腾讯官方 iLink 直连) API。
 
 链路: 设置页扫码 -> fetch_qr() 出二维码 -> 微信扫码确认 -> poll_qr() 轮询
       -> 凭证(token/base_url/user_id)存 notify_channels(type=openclaw) -> 推送走 _send_openclaw

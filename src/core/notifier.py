@@ -97,9 +97,9 @@ CHANNEL_TYPES = {
         "fields": ["webhook_url", "secret"],
     },
     "openclaw": {
-        "label": "OpenClaw 个人微信",
+        "label": "个人微信(iLink)",
         "fields": ["webhook_url", "secret"],
-        "hint": "个人微信直通(ClawBot)。webhook_url 填 Hermes 的订阅地址, secret 填对应 HMAC 密钥。",
+        "hint": "个人微信直通(腾讯官方 iLink 通道)。设置页扫码绑定即可, 无需手填。",
     },
     "lark": {
         "label": "飞书机器人",
@@ -536,7 +536,7 @@ class NotifierManager:
             logger.info(f"Hermes 中转通知发送成功: {title}")
 
     async def _send_openclaw(self, config: dict, title: str, content: str):
-        """个人微信 iLink 直连发送(零 OpenClaw 依赖)。
+        """个人微信 iLink 直连发送(腾讯官方通道)。
 
         config 由扫码绑定写入: token/base_url/user_id/context_token。
         调 src.core.wechat_ilink.send_text -> 腾讯官方 iLink sendmessage。
@@ -573,7 +573,7 @@ class NotifierManager:
             except Exception as exc2:
                 raise RuntimeError(f"微信 iLink 发送失败: {exc2}")
         message_id = str(resp.get("message_id") or "")[:128] if isinstance(resp, dict) else ""
-        logger.info(f"OpenClaw 微信通知发送成功: {title}")
+        logger.info(f"个人微信(iLink)通知发送成功: {title}")
         return {"ok": True, "message_id": message_id}
 
     def _persist_context_token(self, config: dict, new_ctx: str):
