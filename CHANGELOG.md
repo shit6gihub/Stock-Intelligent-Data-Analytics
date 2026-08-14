@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-08-14 (v0.2.37)
+
+### feat(wechat) — 个人微信 iLink 直连全链路(零 OpenClaw 依赖)
+
+- 扫码绑定: 设置页扫码 → 腾讯官方 iLink 授权(纯 Python 直连 ilinkai.weixin.qq.com, 参考 Hermes weixin.py 架构)
+- 双向对话: 微信里直接和「数智分析BOT」对话(长轮询 getupdates → AI 回复 → sendmessage)
+- 回复状态: 微信显示「正在输入」(getconfig typing_ticket + sendtyping)
+- 媒体消息: 微信发图片/文件/链接 → iLink 媒体下载(AES-128-ECB 解密)→ OCR/解析 → AI 分析
+- 多模态: 图片由视觉代理(agnes-2.5-flash)看图描述 → deepseek 分析(自称保持数智分析BOT)
+- 推送自称: 所有微信推送以【数智分析BOT】开头
+- 会话自愈: context_token 自动刷新(推送失败 → getupdates 拉新重试)
+
+### feat(chat) — 对话助手多模态 + 链接抓取
+
+- 网页上传图片/文件: POST /api/chat/upload(20MB, 图片 OCR / Excel / PDF / txt 解析)
+- 链接抓取: get_web_content 工具(html.parser 正文提取, 3000 字截断, SSRF 防护)
+- 视觉代理场景化: 设置页「场景分配」新增 vision(视觉代理/图片识别), 可随时更换多模态模型
+
+### feat(reports) — SIDA 内置报告生成器(不再依赖 Hermes cron 同步)
+
+- 盘前(8:30)/盘后(15:30)交易日自动生成: 数据收集(指数/资金流/涨停/持仓/信号)+ LLM 生成
+- 直接归集报告中心(数据卷持久化), 数据获取失败显式标注, LLM 失败模板降级(不编造)
+- 去掉 Obsidian 依赖(后端/前端/部署配置全清, 其他用户零安装)
+
+### feat(branding) — 改名 + 文档
+
+- 对话机器人 → 数智分析BOT; 登录页/引导弹窗 → 数智分析 SIDA(旧名盯盘侠全库清零)
+- README 完全重写(突出 AI 全链路 + 截图打码入档)
+- 仓库改 PRIVATE(商业分版: 入门版开源 / 专业版闭源)
+
+### compliance — 合规加固
+
+- 免责声明全链路: 对话 SYSTEM_PROMPT(买卖倾向必须附「仅供参考, 不构成投资建议」)/ 登录页 / 预测页 / 报告
+- 移除 GPL 依赖 backtrader(TradingAgents 间接安装但未使用, 商业镜像不再含 GPL 代码)
+
 ## 2026-08-14 (v0.2.36)
 
 ### fix(darkflow) — 跨日残留洗白 + AI 反证层 db 自建(生产热修, 已 docker cp 生效)
