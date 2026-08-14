@@ -1,8 +1,10 @@
 # PanWatch Dockerfile
 # 多阶段构建，减小最终镜像大小
-
-ARG NODE_IMAGE=node:20-alpine
-ARG PYTHON_IMAGE=python:3.11-slim
+# 基础镜像源: 默认用阿里云 library(国内 ACR 构建环境访问 docker.io 受限,
+# 2026-08-14 实测卡在拉取 metadata)。海外自建/ghcr 发布可 build-arg 覆盖回官方:
+#   --build-arg NODE_IMAGE=node:20-alpine --build-arg PYTHON_IMAGE=python:3.11-slim
+ARG NODE_IMAGE=registry.cn-hangzhou.aliyuncs.com/library/node:20-alpine
+ARG PYTHON_IMAGE=registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim
 
 # ===== Stage 1: 前端构建 =====
 FROM ${NODE_IMAGE} AS frontend-builder
@@ -104,8 +106,8 @@ COPY requirements.txt ./
 # 复制本仓内本地包(requirements.txt 里 -e ./packages/marketdata 需要它先在)
 COPY packages/ ./packages/
 
-# 安装 Python 依赖
-RUN pip install --no-cache-dir --timeout 300 --retries 8 -r requirements.txt && \
+# 安装 Python 依赖(阿里云 pypi 镜像, 国内 ACR 构建加速; 海外亦可达)
+RUN pip install --no-cache-dir --timeout 300 --retries 8 -i https://mirrors.aliyun.com/pypi/simple/ -r requirements.txt && \
     python -c "from sqlalchemy import create_engine; from marketdata.vendors.tencent_panel import fetch_price_distribution; assert create_engine and fetch_price_distribution"
 
 # 注意: Playwright 浏览器将在首次启动时自动安装到 data 目录
