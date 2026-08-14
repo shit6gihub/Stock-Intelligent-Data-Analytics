@@ -410,15 +410,18 @@ def _ai_counter_check(symbol: str, dark: dict, db=None) -> dict | None:
     Args:
         symbol: 6位A股代码
         dark: compute_dark_flow 的原始结果 dict(或同构 dict)
-        db: 可选 db session(用于场景模型绑定; None 回落 Settings/env)
-
-    Returns:
-        {"verdict": "支持算法结论"|"算法存疑"|"算法结论错误",
-         "confidence": "高"|"中"|"低",
-         "reason": "一句话理由(≤60字)"}
-        或 None —— LLM 失败/超时/输出非法 JSON/字段校验不过, 静默降级,
-        不影响算法结论(前端遇 None 不展示)。
+        db: 可选 db session(用于场景模型绑定; None 回落 Settings/env)。
+            2026-08-14 热修: None 时内部自建 SessionLocal —— 否则生产容器
+            env 无 AI_* 配置, 反证层永远走空配置 → 永远 None。
     """
+    _close_db = False
+    if db is None:
+        try:
+            from src.web.database import SessionLocal
+            db = SessionLocal()
+            _close_db = True
+        except Exception:
+            db = None
     try:
         # ---- 算法特征摘要 ----
         main_net = dark.get("main_net", 0) or 0
@@ -474,6 +477,12 @@ def _ai_counter_check(symbol: str, dark: dict, db=None) -> dict | None:
     except Exception as e:
         logger.debug(f"AI 反证层失败(静默降级, 不影响算法结论): {symbol}: {e}")
         return None
+    finally:
+        if _close_db and db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
 
 
 def _board_snapshot(symbol: str):

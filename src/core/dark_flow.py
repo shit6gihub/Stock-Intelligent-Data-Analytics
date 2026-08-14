@@ -255,9 +255,30 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
             _TICKS_CACHE.pop(code, None)
         else:
             # 无新增(可能盘前/刚开盘): 刷新缓存时间, 保留旧数据
-            _cache_put(code, now, old_ticks, old_last_page, old_last_seq)
-            _ticks_persist()  # 2026-08-12: 快照落盘
-            return old_ticks
+            # ⚠️ 2026-08-14 热修: 防跨日残留被"无新增"洗白 —— 昨天接口异常时可能只
+            # 拉到少量残留(如 15:18 收盘后 2 笔)且 last_page 是昨天页码, 今天增量续拉
+            # 从旧页码拉空页 → 走本分支 → 无条件刷新 day=今天 → 残留洗白成今天的缓存,
+            # 之后 stale 判断永远放行, 主力意图永远拿到昨天残留(实测 tick=2)。
+            # 残留特征: 最后一笔时间是"未来时间"(今天还没到, 如昨天 15:18)或
+            # 当前已开盘(≥09:25)但最后一笔早于 09:25, 且笔数少(<30 不足以判断意图)。
+            import datetime as _dt
+            _stale_data = True
+            if old_ticks:
+                _last_t = old_ticks[-1].get("t", "")
+                _now_t = _dt.datetime.now().strftime("%H:%M:%S")
+                if _last_t:
+                    if _now_t >= "09:25:00" and _last_t < "09:25:00":
+                        _stale_data = True          # 已开盘但数据停在开盘前(残留)
+                    elif _last_t > _now_t and _last_t > "15:00:00":
+                        _stale_data = True          # 未来时间(昨天收盘后残留)
+                    else:
+                        _stale_data = False
+            if _stale_data and len(old_ticks) < 30:
+                _TICKS_CACHE.pop(code, None)        # 残留 → 全量重拉
+            else:
+                _cache_put(code, now, old_ticks, old_last_page, old_last_seq)
+                _ticks_persist()  # 2026-08-12: 快照落盘
+                return old_ticks
 
     # ---- 全量拉取(无缓存 / 序号断裂后) ----
     # 阶段1: 串行探前 6 页(确定页数 + 拿首批数据; 盘中数据少时 6 页内就到尾)
