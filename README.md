@@ -46,6 +46,8 @@ SIDA 把 A 股行情数据、AI 深度分析、多模型预测、双向对话和
 
 ![预测页](docs/screenshots/forecast.png)
 ![对话助手](docs/screenshots/chat.png)
+![持仓页](docs/screenshots/portfolio.png)
+![个股详情](docs/screenshots/stock-detail.png)
 ![报告中心](docs/screenshots/reports.png)
 
 ---
