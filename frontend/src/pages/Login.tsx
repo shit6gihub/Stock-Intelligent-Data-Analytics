@@ -163,7 +163,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-xs text-muted-foreground mt-6">
-          AI 驱动的股票监控助手
+          AI 驱动的股票数据分析助手 · 分析结果仅供参考，不构成投资建议
         </p>
       </div>
     </div>
