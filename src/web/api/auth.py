@@ -377,6 +377,12 @@ async def change_password(
     user.password_hash = hash_password(data.new_password)
     user.token_version += 1  # 踢掉旧 token
     db.commit()
+    # 审计(2026-08-15 评审 B 补覆盖)
+    try:
+        from src.web.api.audit import log_audit
+        log_audit(db, user, "update_password", detail="修改密码", ip="")
+    except Exception:
+        pass
 
     return {"message": "密码已更新"}
 

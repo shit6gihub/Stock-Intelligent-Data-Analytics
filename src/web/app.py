@@ -333,7 +333,7 @@ app.include_router(
 )
 app.include_router(
     export_data.router,
-    prefix="/api/export",
+    prefix="/api",
     tags=["export"],
     dependencies=protected,
 )

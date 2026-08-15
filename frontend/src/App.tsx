@@ -57,7 +57,7 @@ const navItems = [
 const desktopNavGroups = [
   { key: 'market', items: navItems.filter(n => ['/', '/portfolio', '/opportunities', '/forecast'].includes(n.to)) },
   { key: 'trading', items: navItems.filter(n => ['/paper-trading', '/alerts', '/shadow'].includes(n.to)) },
-  { key: 'system', items: navItems.filter(n => ['/agents', '/reports', '/strategies', '/history', '/datasources', '/settings'].includes(n.to)) },
+  { key: 'system', items: navItems.filter(n => ['/agents', '/reports', '/strategies', '/history', '/datasources', '/settings', '/help', '/audit'].includes(n.to)) },
 ]
 // 移动端底部 5 槽位按 to 路径挑选: 首页/持仓/机会/预测/提醒(2026-08-13, 模拟盘移入"更多"下拉,
 // 不再用 slice(0,5) 依赖 navItems 顺序); navItems 数组顺序保持不动, 桌面端平铺分组完全不变
@@ -398,7 +398,7 @@ function App() {
             <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/help" element={<HelpPage />} />
-            <Route path="/audit" element={<AuditPage />} />
+            <Route path="/audit" element={getJwtRole() === 'owner' ? <AuditPage /> : <Navigate to="/" replace />} />
             <Route path="/datasources" element={<DataSourcesPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/analysis/:symbol/:date" element={<AnalysisDetailPage />} />

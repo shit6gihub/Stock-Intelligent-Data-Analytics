@@ -49,13 +49,22 @@ def _fmt(value, nd: int = 2) -> str:
     return f"{num:.{nd}f}"
 
 
+def _csv_safe(value) -> str:
+    """CSV 公式注入防护(2026-08-15 评审 B): 以 = + - @ 开头的字段前置单引号,
+    防止 Excel/WPS 打开时执行公式。"""
+    s = "" if value is None else str(value)
+    if s and s[0] in ("=", "+", "-", "@"):
+        return "'" + s
+    return s
+
+
 def _csv_response(filename: str, headers: list[str], rows: list[list]) -> Response:
     """构造带 BOM 的 CSV 下载响应(空 rows 也输出表头, 不报错)。"""
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(headers)
     for row in rows:
-        writer.writerow(row)
+        writer.writerow([_csv_safe(c) for c in row])
     content = (_BOM + buf.getvalue()).encode("utf-8")
     return Response(
         content=content,
@@ -75,6 +84,12 @@ def export_portfolio(
     user: User = Depends(get_current_user),
 ):
     """当前用户持仓 CSV: 代码/名称/数量/成本价/现价/市值/盈亏(市值/盈亏折人民币)。"""
+    # 审计(2026-08-15 评审 B 补覆盖)
+    try:
+        from src.web.api.audit import log_audit
+        log_audit(db, user, "export", detail="导出持仓", ip="")
+    except Exception:
+        pass
     positions = (
         db.query(Position)
         .filter(or_(Position.user_id == user.id, Position.user_id.is_(None)))
@@ -160,6 +175,12 @@ def export_predictions(
     user: User = Depends(get_current_user),
 ):
     """预测记录 CSV: 代码/方向/目标价/日期/结果(hit/miss/pending)。"""
+    # 审计(2026-08-15 评审 B 补覆盖)
+    try:
+        from src.web.api.audit import log_audit
+        log_audit(db, user, "export", detail="导出预测", ip="")
+    except Exception:
+        pass
     records = (
         db.query(AgentPredictionOutcome)
         .order_by(
@@ -191,6 +212,12 @@ def export_opportunities(
     user: User = Depends(get_current_user),
 ):
     """机会候选 CSV(entry_candidates 表): 代码/名称/日期/评分/方向/信号/理由/来源/目标价/止损。"""
+    # 审计(2026-08-15 评审 B 补覆盖)
+    try:
+        from src.web.api.audit import log_audit
+        log_audit(db, user, "export", detail="导出机会", ip="")
+    except Exception:
+        pass
     candidates = (
         db.query(EntryCandidate)
         .order_by(EntryCandidate.snapshot_date.desc(), EntryCandidate.score.desc())

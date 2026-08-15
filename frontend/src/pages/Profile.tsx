@@ -138,8 +138,8 @@ export function Profile() {
       toast('请粘贴图片 data URL(data:image/... 开头)', 'error')
       return
     }
-    if (v.length > 300_000) {
-      toast('图片过大, 请压缩到 200KB 以内', 'error')
+    if (v.length > 100_000) {
+      toast('图片过大, 请压缩到 75KB 以内', 'error')
       return
     }
     setAvatarDraft(v)
@@ -167,6 +167,10 @@ export function Profile() {
       setNicknameDraft(updated.nickname || '')
       setAvatarDraft(updated.avatar || '')
       setAvatarChanged(false)
+      // 广播头像变更(2026-08-15 评审 A): 右上角 AccountMenu 头像本会话内同步刷新
+      if (avatarChanged) {
+        window.dispatchEvent(new CustomEvent('panwatch:avatar-changed'))
+      }
       toast('资料已保存', 'success')
     } catch (e) {
       toast(e instanceof Error ? e.message : '保存失败', 'error')

@@ -182,6 +182,18 @@ def update_profile(
 
     db.commit()
     db.refresh(user)
+    # 审计(2026-08-15 评审 B 补覆盖)
+    try:
+        from src.web.api.audit import log_audit
+        parts = []
+        if data.nickname is not None:
+            parts.append("昵称")
+        if data.avatar is not None:
+            parts.append("头像")
+        if parts:
+            log_audit(db, user, "update_profile", detail="更新" + "/".join(parts), ip="")
+    except Exception:
+        pass
     return _profile_to_dict(user)
 
 
