@@ -144,10 +144,16 @@ COPY --from=frontend-builder /app/frontend/dist ./static/
 # 创建数据目录
 RUN mkdir -p /app/data
 
+# 瘦身: 清理镜像内 __pycache__ 与 pip 本体(运行时不需要 pip 安装)
+RUN find /usr/local/lib/python3.11/site-packages /app -name "__pycache__" -type d -prune -exec rm -rf {} + 2>/dev/null || true; \
+    rm -rf /usr/local/lib/python3.11/site-packages/pip /usr/local/lib/python3.11/site-packages/pip-* 2>/dev/null || true
+
 # 环境变量
 ENV PYTHONUNBUFFERED=1
 ENV DATA_DIR=/app/data
 ENV DOCKER=1
+# 运行时不写 __pycache__(减小镜像体积,避免容器内落盘)
+ENV PYTHONDONTWRITEBYTECODE=1
 
 # 默认时区（可在 docker run 时用 -e TZ=... 覆盖）
 ENV TZ=Asia/Shanghai
