@@ -125,7 +125,7 @@ jobs:
             org.opencontainers.image.title=数智分析 SIDA
             org.opencontainers.image.description=数智分析 · 自托管 AI 盯盘助手
             org.opencontainers.image.source=https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics
-            org.opencontainers.image.licenses=GPL-3.0
+            org.opencontainers.image.licenses=AGPL-3.0
 
       - name: Debug failure
         if: failure()
