@@ -117,79 +117,8 @@ class UserUpdateRequest(BaseModel):
     is_active: Optional[bool] = None
 
 
-@router.get("/users")
-def list_users(owner: User = Depends(require_owner), db: Session = Depends(get_db)):
-    """用户列表(仅 owner)。"""
-    users = db.query(User).order_by(User.created_at).all()
-    return {"users": [user_to_dict(u) for u in users]}
-
-
-@router.post("/users")
-def create_user_api(
-    data: UserCreateRequest,
-    owner: User = Depends(require_owner),
-    db: Session = Depends(get_db),
-):
-    """创建子账号(仅 owner)。"""
-    if len(data.username.strip()) < 2:
-        raise HTTPException(400, "用户名长度至少 2 位")
-    if len(data.password) < 8:
-        raise HTTPException(400, "密码长度至少 8 位")
-    if data.role not in ("owner", "member"):
-        raise HTTPException(400, "角色必须是 owner 或 member")
-    if get_user_by_username(db, data.username.strip()):
-        raise HTTPException(400, "用户名已存在")
-    user = create_user(db, data.username.strip(), data.password, data.role)
-    return {"user": user_to_dict(user)}
-
-
-@router.patch("/users/{user_id}")
-def update_user_api(
-    user_id: str,
-    data: UserUpdateRequest,
-    owner: User = Depends(require_owner),
-    db: Session = Depends(get_db),
-):
-    """修改用户(仅 owner): 改密/改角色/禁用。"""
-    target = get_user_by_id(db, user_id)
-    if not target:
-        raise HTTPException(404, "用户不存在")
-    if target.id == owner.id and data.is_active is False:
-        raise HTTPException(400, "不能禁用自己")
-    if data.password:
-        if len(data.password) < 8:
-            raise HTTPException(400, "密码长度至少 8 位")
-        from src.web.api.auth import hash_password
-        target.password_hash = hash_password(data.password)
-        target.token_version += 1  # 踢掉该用户旧 token
-    if data.role and data.role in ("owner", "member"):
-        target.role = data.role
-    if data.is_active is not None:
-        target.is_active = data.is_active
-    db.commit()
-    return {"user": user_to_dict(target)}
-
-
-@router.delete("/users/{user_id}")
-def delete_user_api(
-    user_id: str,
-    owner: User = Depends(require_owner),
-    db: Session = Depends(get_db),
-):
-    """删除用户(仅 owner)。不能删自己。"""
-    target = get_user_by_id(db, user_id)
-    if not target:
-        raise HTTPException(404, "用户不存在")
-    if target.id == owner.id:
-        raise HTTPException(400, "不能删除自己")
-    if target.role == "owner":
-        raise HTTPException(400, "不能删除其他管理员")
-    db.delete(target)
-    db.commit()
-    return {"message": "用户已删除"}
-
-
 # ── 模型授权(权限体系管理端) ──────────────────────────────────────────
+# 注: 用户 CRUD 在 auth.py(/api/auth/users), 本文件只负责 model-access
 
 class ModelAccessUpdate(BaseModel):
     mode: str
@@ -197,7 +126,7 @@ class ModelAccessUpdate(BaseModel):
     model_ids: Optional[list[int]] = None
 
 
-@router.get("/users/{uid}/model-access")
+@router.get("/{uid}/model-access")
 def get_user_model_access(
     uid: str,
     owner: User = Depends(require_owner),
@@ -217,7 +146,7 @@ def get_user_model_access(
     }
 
 
-@router.put("/users/{uid}/model-access")
+@router.put("/{uid}/model-access")
 def update_user_model_access(
     uid: str,
     data: ModelAccessUpdate,
