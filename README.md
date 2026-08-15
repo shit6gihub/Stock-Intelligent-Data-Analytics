@@ -1,142 +1,129 @@
-# 数智分析 SIDA · Stock-Intelligent-Data-Analytics
+<div align="center">
 
-**多用户 A 股智能分析系统 —— 数据、AI 分析、预测、对话、推送全链路打通**
+# SIDA · Stock-Intelligent-Data-Analytics
 
-SIDA 把 A 股行情数据、AI 深度分析、多模型预测、双向对话和个人微信推送整合成一条完整的智能链路：**数据进来 → AI 看懂 → 模型预测 → 与你对话 → 推到你手机**。
+**Open-source AI investment terminal for China A-shares** — market data → AI analysis → 4-model prediction → verification loop → WeChat push, all in one self-hosted system.
 
-![首页](docs/screenshots/home.png)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+![Version](https://img.shields.io/badge/version-v0.2.41-green)
+[![Docker](https://img.shields.io/badge/Docker-ghcr.io-blue?logo=docker)](https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics/pkgs/container/stock-intelligent-data-analytics)
 
-> 首页：今日报告 / 指数 / 大盘资金流 / 异动池 / 热榜 一屏总览
+*Language: [English](README.md) · [中文](README.zh-CN.md)*
 
----
+![SIDA demo](docs/screenshots/demo.gif)
 
-## ✨ 核心亮点
-
-### 1. AI 全链路打通
-行情 → 主力意图/技术面/资金流分析 → 4 模型预测 → AI 裁判裁决 → 对话助手解读 → 微信推送，**全链路 AI 参与，每个环节可追溯**。
-
-### 2. 微信双向对话（个人微信 iLink 直连）
-扫码绑定个人微信（腾讯官方 iLink 协议），**在微信里直接和「数智分析BOT」对话**：问个股、发图片（K线截图/交割单）、发文件（Excel/PDF）、发链接，AI 都能处理并回复。
-
-### 3. 内置报告生成
-交易日自动生成**盘前（8:30）/ 盘后（15:30）报告**：真实市场数据 + AI 解读，直接归集报告中心。无需任何外部依赖。
-
-### 4. 多智能体分析
-- **TradingAgents 深度分析**：分析师辩论 + PM 决策
-- **主力意图五件套**：超大单背离 / 量价背离 / 时段节奏 / 托压单识别 / AI 反证
-- **AI 裁判层**：LLM 裁决 4 模型预测方向
-
-### 5. 多用户隔离 + 统一 AI 配置
-持仓/自选/通知按用户隔离；**统一 LLM 配置中心**：服务商 + 模型池 + 7 场景绑定（对话/报告/裁判/自检/评分/深度分析/视觉代理）。
+</div>
 
 ---
 
-## 📊 功能总览
+## Why SIDA?
 
-| 模块 | 能力 |
-|---|---|
-| **行情数据** | 腾讯/东财/同花顺/新浪多源接入：实时行情、K线、分时、资金流、主力意图（逐笔）、集合竞价、涨停复盘、热榜、异动池 |
-| **AI 对话助手** | 19+ 数据工具（主力意图/资金流/技术面/K线形态/竞价/热点/互动易），流式输出，图片/文件/链接多模态 |
-| **微信推送 & 对话** | 个人微信 iLink 直连：机会/信号/提醒推送 + 双向对话（文字/图片/文件） |
-| **预测引擎** | Kronos + Chronos-Bolt + XGBoost + 线性回归加权（权重按命中率动态调）+ AI 裁判 |
-| **报告中心** | 盘前/盘后报告自动生成归集，30s 刷新，历史存档 |
-| **机会发现** | 7 大策略信号、异动池、热榜、题材启动识别 |
-| **持仓 & 影子账户** | 交割单解析（Excel/PDF）、交易行为画像、模拟盘 |
-| **通知渠道** | 微信(iLink)/企业微信/PushPlus/Server酱/邮件 |
+Most A-share tools show you **data**. SIDA closes the loop: it **reads the market, thinks about it, predicts it, verifies its own predictions, and talks to you on WeChat** — a full AI pipeline where every step is traceable.
 
-![预测页](docs/screenshots/forecast.png)
-![对话助手](docs/screenshots/chat.png)
-![持仓页](docs/screenshots/portfolio.png)
-![个股详情](docs/screenshots/stock-detail.png)
-![K线主力意图](docs/screenshots/kline-mainintent.png)
-![报告中心](docs/screenshots/reports.png)
+- 🔍 **Main-force intent analysis** (主力意图) — tick-level order flow: accumulation/distribution detection, order splitting, support/resistance game
+- 🔮 **4-model prediction with verification loop** — Kronos + Chronos-Bolt + XGBoost + linear regression weighted voting, **weights dynamically adjusted by historical hit rate**, every prediction auto-checked against reality when it expires (hit/miss with actual returns)
+- 🤖 **AI assistant with 19+ data tools** — streaming chat, image/file/link multimodal, official Q&A (互动易), hot lists, anomaly pool, auction data
+- 📱 **WeChat two-way dialog** — bind your personal WeChat via official iLink protocol, ask about any stock right from your phone, receive push reports
+- 📊 **Auto reports** — pre-market (8:30) / post-market (15:30) reports with real data + AI commentary, generated daily by cron
+- 🏆 **Event-driven opportunity discovery** — 7 strategy signals, anomaly pool, hot boards, theme-launch detection — find themes *before* they take off
 
----
+## Screenshots
 
-## 🚀 快速开始
+| Dashboard | Forecast & verification | Opportunities |
+|---|---|---|
+| ![home](docs/screenshots/home.png) | ![forecast](docs/screenshots/forecast.png) | ![opportunities](docs/screenshots/opportunities.png) |
 
-### 生产部署（Docker）
+*Live demo (read-only): [https://www.sida.example.com](https://www.sida.example.com) — contact us for demo access*
 
-镜像源二选一（GitHub 源全球可用，阿里云 ACR 国内加速）：
+## Quick Start
+
+### Docker (recommended)
 
 ```bash
-# 方式一：GitHub 源（ghcr.io）
+# GitHub Container Registry (global) or Aliyun ACR (fast in China)
 docker pull ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest
+# or: docker pull crpi-mte80ai8o78b1429.cn-shanghai.personal.cr.aliyuncs.com/xiaozexwz/xzxwz:v0.2.41
 
-# 方式二：阿里云 ACR（国内加速）
-docker pull crpi-mte80ai8o78b1429.cn-shanghai.personal.cr.aliyuncs.com/xiaozexwz/xzxwz:v0.2.37
-
-# 运行（数据卷持久化，将 IMAGE 替换为上面拉取的镜像）
 docker run -d --name sida -p 8000:8000 --restart unless-stopped \
   -v sida_data:/app/data \
   -e AUTH_USERNAME=admin \
-  -e AUTH_PASSWORD=<你的密码> \
+  -e AUTH_PASSWORD=your_password \
   -e TZ=Asia/Shanghai \
-  -e DATA_DIR=/app/data \
-  IMAGE
+  ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest
 ```
 
-### 开发环境
+Open http://localhost:8000 — that's it.
+
+### Development
 
 ```bash
-# 后端
+# Backend
 pip install -r requirements.txt
 python server.py
 
-# 前端
+# Frontend
 cd frontend && pnpm install && pnpm dev
 ```
 
----
-
-## 🏗️ 技术架构
-
-| 层 | 技术 |
-|---|---|
-| 后端 | Python FastAPI + SQLAlchemy + SQLite(WAL) + APScheduler |
-| 前端 | React 18 + Vite + Tailwind + ECharts |
-| 预测引擎 | Kronos / Chronos-Bolt（时序基础模型）+ XGBoost + 线性回归 |
-| 微信通道 | 腾讯官方 iLink Bot API（纯 Python 直连，扫码绑定） |
-| AI 配置 | 统一 LLM 配置中心（多服务商 + 场景绑定） |
+## Architecture
 
 ```
 ┌─────────────┐   ┌──────────────┐   ┌──────────────┐   ┌────────────┐
-│  行情数据源   │ → │ AI 分析层     │ → │  预测引擎     │ → │  报告中心   │
-│ 腾讯/东财/   │   │ 主力意图/技术面│   │ 4模型+AI裁判 │   │ 盘前/盘后   │
-│ 同花顺/竞价  │   │ 多智能体辩论   │   │ 权重动态调整  │   │ 自动生成     │
+│ Market data │ → │  AI analysis │ → │   Prediction │ → │  Reports   │
+│ Tencent/EM/ │   │ main-force   │   │ 4 models +   │   │ pre/post   │
+│ THS/auction │   │ technical    │   │ AI adjudicator│   │ auto-gen   │
 └─────────────┘   └──────────────┘   └──────────────┘   └────────────┘
-        │                 │                  │                  │
-        └───────── AI 对话助手「数智分析BOT」 ←┘                  │
-                        │ 图片/文件/链接多模态                     │
-                        ▼                                        │
-                ┌─────────────┐                                 │
-                │ 微信推送/对话 │ ←────────────────────────────────┘
-                │ iLink 直连   │
-                └─────────────┘
+      │                  │                 │                  │
+      └────── AI assistant (SIDA Bot) ←────┘                  │
+                     │ image/file/link multimodal              │
+                     ▼                                        │
+             ┌─────────────┐                                  │
+             │ WeChat push │ ←────────────────────────────────┘
+             │  iLink P2P  │
+             └─────────────┘
 ```
 
+| Layer | Tech |
+|---|---|
+| Backend | Python FastAPI + SQLAlchemy + SQLite(WAL) + APScheduler |
+| Frontend | React 18 + Vite + Tailwind + ECharts |
+| Prediction | Kronos / Chronos-Bolt (time-series foundation models) + XGBoost + Linear Regression |
+| WeChat | Tencent official iLink Bot API (pure Python, QR-code binding) |
+| AI config | Unified LLM config center (multi-provider + scene binding) |
+
+## Open-source vs Pro
+
+| | Open-source (this repo) | Pro (paid) |
+|---|---|---|
+| License | AGPL-3.0 | Closed source |
+| Core: data, analysis, prediction, chat | ✅ | ✅ |
+| Full feature set / premium models | Partial | Full |
+| Managed cloud / priority support | — | ✅ |
+
+The open-source edition is fully self-hostable and free. The Pro edition unlocks the complete feature set — built for users who want zero-maintenance operation.
+
+## Multi-user & AI config
+
+- **Account isolation**: positions, watchlists, notification channels, WeChat bindings are per-user
+- **Unified LLM config center**: providers (OpenAI-compatible), model pools, 7 scene bindings (chat/reports/adjudicator/QA/scoring/deep-analysis/vision)
+- **Notification channels**: WeChat (iLink) / WeCom / PushPlus / ServerChan / Email
+
+## Data sources
+
+Tencent / Eastmoney / THS / Sina / TDX (问小达) / Cninfo (互动易) — quotes, K-lines, minute data, capital flow, tick-level trades, auctions, limit-up pools, hot boards, anomaly pool, dragon-tiger lists, margin trading, shareholders, dividends.
+
+## Disclaimer
+
+This project is for technical research and learning only. All AI-generated analysis, predictions, and reports are for reference only and **do not constitute investment advice**. Markets are risky; invest with caution.
+
 ---
 
-## 🔐 多用户与配置
+## Sponsor
 
-- **账号隔离**：持仓、自选、通知渠道、微信绑定均按用户独立
-- **统一 LLM 配置中心**：设置页管理服务商（OpenAI 兼容）、模型池、7 场景绑定（含视觉代理——图片识别模型可随时更换）
-- **通知渠道**：个人微信（iLink 扫码绑定）/ 企业微信 / PushPlus / Server酱 / 邮件
+If SIDA helps you, consider buying the author a coffee ☕ — your support keeps this project alive!
 
----
-
-## ⚠️ 免责声明
-
-本项目仅供技术研究和学习使用，所有 AI 生成的分析、预测、报告仅供参考，不构成任何投资建议。股市有风险，投资需谨慎。
-
----
-
-## 赞助 Sponsor
-
-如果数智分析对你有帮助，欢迎请作者喝杯咖啡 ☕ 你的支持是持续维护的动力！
-
-| 方式 | 入口 |
+| Method | Entry |
 |:---:|:---:|
-| **微信赞赏** | <img src="./assets/sponsor-wechat.png" width="200" alt="微信赞赏码" /> |
+| **WeChat Reward** | <img src="./assets/sponsor-wechat.png" width="200" alt="WeChat reward QR" /> |
 
-> 提示：也可点右上角 ⭐ Star 支持项目。
+> Tip: click ⭐ **Star** on the top-right to support the project.
