@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class AIClient:
     """OpenAI 协议兼容的 AI 客户端"""
 
-    def __init__(self, base_url: str, api_key: str, model: str = "", proxy: str = ""):
+    def __init__(self, base_url: str, api_key: str, model: str = "", proxy: str = "", scene: str = "other"):
         kwargs = {
             "base_url": base_url,
             "api_key": api_key,
@@ -24,7 +24,32 @@ class AIClient:
         self.base_url = base_url
         self.api_key = api_key
         self.model = model
+        self.scene = scene
         self.total_tokens_used = 0
+
+    # ── LLM 调用日志(2026-08-15): 轻量记录 token/耗时/场景, 失败静默 ──
+    def _log_usage(self, scene: str | None, model_name: str, usage, latency_ms: int) -> None:
+        try:
+            from src.web.models import LLMUsage
+            from src.web.database import SessionLocal
+            prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+            completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+            if prompt_tokens == 0 and completion_tokens == 0:
+                return  # 无用量信息不记
+            db = SessionLocal()
+            try:
+                db.add(LLMUsage(
+                    scene=(scene or self.scene or "other"),
+                    model_name=model_name or self.model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    latency_ms=int(latency_ms),
+                ))
+                db.commit()
+            finally:
+                db.close()
+        except Exception as e:  # 记录失败绝不阻塞主流程
+            logger.debug(f"LLM usage 记录失败(忽略): {e}")
 
     async def chat(
         self,
@@ -61,10 +86,13 @@ class AIClient:
             messages.append({"role": "user", "content": user_content})
 
         try:
+            import time as _t
+            _t0 = _t.perf_counter()
             create_kwargs = {"model": self.model, "messages": messages}
             if temperature is not None:
                 create_kwargs["temperature"] = temperature
             response = await self.client.chat.completions.create(**create_kwargs)
+            _latency_ms = (_t.perf_counter() - _t0) * 1000
             # 记录 token 用量
             if response.usage:
                 self.total_tokens_used += response.usage.total_tokens
@@ -72,6 +100,7 @@ class AIClient:
                     f"Token usage: {response.usage.prompt_tokens} + "
                     f"{response.usage.completion_tokens} = {response.usage.total_tokens}"
                 )
+                self._log_usage(None, self.model, response.usage, int(_latency_ms))
 
             return response.choices[0].message.content or ""
 
@@ -116,14 +145,18 @@ class AIClient:
     ):
         """带 tool use 的对话调用，返回原始 message 对象。"""
         try:
+            import time as _t
+            _t0 = _t.perf_counter()
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
                 tools=tools,
                 temperature=temperature,
             )
+            _latency_ms = (_t.perf_counter() - _t0) * 1000
             if response.usage:
                 self.total_tokens_used += response.usage.total_tokens
+                self._log_usage(None, self.model, response.usage, int(_latency_ms))
             return response.choices[0].message
         except Exception as e:
             logger.error(f"AI tool use 调用失败: {e}")

@@ -1672,6 +1672,7 @@ def _get_ai_client(db: Session, model_id: int | None = None) -> AIClient:
             base_url=service.base_url,
             api_key=service.api_key,
             model=model.model,
+            scene="chat",
         )
 
     settings = Settings()
@@ -1679,6 +1680,7 @@ def _get_ai_client(db: Session, model_id: int | None = None) -> AIClient:
         base_url=settings.ai_base_url,
         api_key=settings.ai_api_key,
         model=settings.ai_model,
+        scene="chat",
     )
 
 

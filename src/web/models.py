@@ -1213,3 +1213,23 @@ class Notification(Base):
     push_channels = Column(JSON, default=list)
     read_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
+
+
+class LLMUsage(Base):
+    """LLM 调用日志(2026-08-15): 每次 AI 调用的 token 用量/耗时/场景, 用于成本统计。
+
+    轻量设计: 不存 prompt/回复原文, 只存计数。一个月几千行, 无性能压力。
+    记录失败静默(不影响主流程)。
+    """
+
+    __tablename__ = "llm_usage"
+    __table_args__ = (Index("ix_llm_usage_created", "created_at"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    # 场景: chat(对话助手) / premarket(盘前报告) / postmarket(盘后报告) / referee(AI裁判) / selfcheck / insights / other
+    scene = Column(String, nullable=False, default="other", index=True)
+    model_name = Column(String, default="")
+    prompt_tokens = Column(Integer, default=0)
+    completion_tokens = Column(Integer, default=0)
+    latency_ms = Column(Integer, default=0)
+    created_at = Column(DateTime, server_default=func.now())

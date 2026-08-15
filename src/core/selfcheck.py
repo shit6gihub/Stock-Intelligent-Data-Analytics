@@ -110,7 +110,7 @@ async def probe_ai_model(model, service, db=None) -> dict:
         model_name = resolve_scene_model(db, "selfcheck", model_name) or model_name
     t0 = time.monotonic()
     try:
-        client = AIClient(base_url=service.base_url, api_key=service.api_key, model=model_name)
+        client = AIClient(base_url=service.base_url, api_key=service.api_key, model=model_name, scene="selfcheck")
         await client.chat(system_prompt="You are a helpful assistant.",
                           user_content="Say 'OK'.", temperature=0)
         latency = int((time.monotonic() - t0) * 1000)

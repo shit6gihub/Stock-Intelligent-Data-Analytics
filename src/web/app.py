@@ -43,6 +43,7 @@ from src.web.api import (
     chat_upload,
     my_ai_services,
     users,
+    llm_usage,
 )
 from src.web.api import factors
 from src.web.api import notifications
@@ -313,6 +314,12 @@ app.include_router(
     users.router,
     prefix="/api/users",
     tags=["users"],
+    dependencies=protected,
+)
+app.include_router(
+    llm_usage.router,
+    prefix="/api",
+    tags=["llm-usage"],
     dependencies=protected,
 )
 app.include_router(
