@@ -19,6 +19,7 @@ import remarkGfm from 'remark-gfm'
 import { fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import SkeletonRows from '@/components/SkeletonRows'
+import { parseServerTime } from '@/lib/utils'
 
 interface NotificationItem {
   id: number
@@ -107,7 +108,7 @@ function channelSummary(item: NotificationItem): string {
 
 function formatDateTime(iso: string): string {
   if (!iso) return '时间未知'
-  const value = new Date(iso)
+  const value = parseServerTime(iso)
   if (Number.isNaN(value.getTime())) return iso
   return value.toLocaleString('zh-CN', {
     year: 'numeric', month: '2-digit', day: '2-digit',

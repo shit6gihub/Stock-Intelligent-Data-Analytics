@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Label } from '@panwatch/base-ui/components/ui/label'
 import { Input } from '@panwatch/base-ui/components/ui/input'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
+import { parseServerTime } from '@/lib/utils'
 
 interface AgentConfig {
   id: number
@@ -184,7 +185,7 @@ export default function AgentsPage() {
 
   const formatPreviewTime = (iso: string, tz?: string): string => {
     try {
-      const d = new Date(iso)
+      const d = parseServerTime(iso)
       if (isNaN(d.getTime())) return iso
       return d.toLocaleString('zh-CN', {
         timeZone: tz || undefined,

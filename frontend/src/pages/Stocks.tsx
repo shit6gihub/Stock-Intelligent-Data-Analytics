@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Plus, Trash2, Pencil, Search, X, TrendingUp, Bot, Play, RefreshCw, Wallet, PiggyBank, ArrowUpRight, ArrowDownRight, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink, BarChart3, Brain, Activity } from 'lucide-react'
 import { fetchAPI, getToken, stocksApi, type AIService, type NotifyChannel } from '@panwatch/api'
-import { useLocalStorage } from '@/lib/utils'
+import { useLocalStorage, parseServerTime } from '@/lib/utils'
 import { SuggestionBadge, type SuggestionInfo, type KlineSummary } from '@panwatch/biz-ui/components/suggestion-badge'
 import { buildKlineSuggestion } from '@/lib/kline-scorer'
 import { KlineSummaryDialog } from '@panwatch/biz-ui/components/kline-summary-dialog'
@@ -960,7 +960,7 @@ export default function StocksPage() {
 
   const formatPreviewTime = (iso: string, tz?: string): string => {
     try {
-      const d = new Date(iso)
+      const d = parseServerTime(iso)
       if (isNaN(d.getTime())) return iso
       return d.toLocaleString('zh-CN', {
         timeZone: tz || undefined,

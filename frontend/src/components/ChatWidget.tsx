@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { chatApi, fetchAPI, type ChatConversation, type ChatMessage } from '@panwatch/api'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
+import { parseServerTime } from '@/lib/utils'
 
 interface StockContext {
   symbol: string
@@ -742,7 +743,7 @@ export default function ChatWidget() {
                   </div>
                   <div className="text-[11px] text-muted-foreground mt-0.5">
                     {conv.stock_symbol ? `${conv.stock_market}:${conv.stock_symbol} · ` : ''}
-                    {new Date(conv.created_at).toLocaleDateString()}
+                    {parseServerTime(conv.created_at).toLocaleDateString()}
                   </div>
                 </div>
                 <button

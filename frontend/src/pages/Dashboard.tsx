@@ -42,6 +42,7 @@ import BenchmarkShareCard from '@/components/BenchmarkShareCard'
 import DiagnosticsShareCard from '@/components/DiagnosticsShareCard'
 import DigestShareCard from '@/components/DigestShareCard'
 import StockContextMenu, { type StockContextMenuState, type StockContextTarget } from '@/components/StockContextMenu'
+import { parseServerTime } from '@/lib/utils'
 
 function pct(v?: number | null, digits = 2): string {
   if (v == null || !isFinite(v)) return '--'
@@ -95,7 +96,7 @@ function formatHeaderTime(d: Date): string {
 /** 报告相对时间:1分钟内→"刚刚";1小时内→"N分钟前";当天→"今天 HH:MM";昨天→"昨天 HH:MM";更早→"M月D日 HH:MM" */
 function formatReportTime(iso: string): string {
   if (!iso) return ''
-  const d = new Date(iso)
+  const d = parseServerTime(iso)
   if (isNaN(d.getTime())) return iso.replace('T', ' ').slice(0, 16)
   const now = new Date()
   const diffMin = Math.floor((now.getTime() - d.getTime()) / 60000)

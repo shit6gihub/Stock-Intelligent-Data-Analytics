@@ -5,7 +5,7 @@ import { Input } from '@panwatch/base-ui/components/ui/input'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { fetchAPI } from '@panwatch/api'
 import { mapLoggerName, loggerOptions } from '@/lib/logger-map'
-import { useLocalStorage } from '@/lib/utils'
+import { useLocalStorage, parseServerTime } from '@/lib/utils'
 
 interface LogEntry {
   id: number
@@ -212,7 +212,7 @@ export default function LogsModal({ open, onOpenChange }: { open: boolean, onOpe
 
   const formatTime = (iso: string) => {
     if (!iso) return ''
-    const d = new Date(iso)
+    const d = parseServerTime(iso)
     return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
   }
 
