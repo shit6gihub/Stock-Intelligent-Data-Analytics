@@ -367,7 +367,7 @@ export default function UserManagement({ currentUser }: Props) {
                     <input
                       type="radio"
                       name="model-access-mode"
-                      className="mt-0.5 h-3.5 w-3.5 accent-[hsl(240_60%_50%)]"
+                      className="mt-0.5 h-3.5 w-3.5 accent-primary"
                       checked={accessMode === opt.value}
                       onChange={() => setAccessMode(opt.value)}
                     />
@@ -402,7 +402,7 @@ export default function UserManagement({ currentUser }: Props) {
                       >
                         <input
                           type="checkbox"
-                          className="h-3.5 w-3.5 accent-[hsl(240_60%_50%)]"
+                          className="h-3.5 w-3.5 accent-primary"
                           checked={checkedIds.includes(m.id)}
                           onChange={() => toggleModel(m.id)}
                         />
@@ -464,7 +464,7 @@ export default function UserManagement({ currentUser }: Props) {
                         >
                           <input
                             type="checkbox"
-                            className="accent-[hsl(240_60%_50%)]"
+                            className="accent-primary"
                             checked={permGranted.includes(p.key)}
                             onChange={() => togglePerm(p.key)}
                           />

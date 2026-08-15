@@ -1321,8 +1321,8 @@ export default function SettingsPage() {
                     </span>
                     <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${
                       svc.api_key
-                        ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-400'
-                        : 'border-amber-500/25 bg-amber-500/10 text-amber-400'
+                        ? 'border-emerald-700/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                        : 'border-amber-700/25 bg-amber-500/10 text-amber-700 dark:text-amber-400'
                     }`}>
                       {svc.api_key ? '已启用' : '未配置 Key'}
                     </span>
@@ -1389,63 +1389,6 @@ export default function SettingsPage() {
               </div>
             )}
           </div>
-        </section>
-
-        {/* 我的服务商(BYOK): 用户自定义 LLM 服务商, 用自己的 API Key(2026-08-15) */}
-        <section id="sec-my-services" className="card p-4 md:p-6 lg:col-span-12">
-          <div className="flex items-start justify-between mb-4 md:mb-5 gap-3">
-            <div>
-              <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">我的服务商 (BYOK)</h3>
-              <p className="text-[11px] text-muted-foreground mt-1">
-                配置你自己的模型服务商，使用你自己的 API Key 调用（不影响平台配置）。demo 账号不可用。
-              </p>
-            </div>
-            {!isDemo && (
-              <Button size="sm" className="h-8" onClick={() => openMySvcDialog()}>
-                <Plus className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">添加我的服务商</span>
-              </Button>
-            )}
-          </div>
-
-          {isDemo ? (
-            <div className="rounded-xl border border-border/50 bg-accent/20 p-3.5 text-[12px] text-muted-foreground">
-              演示账号为只读浏览模式，不可配置自己的服务商。
-            </div>
-          ) : myServicesLoading ? (
-            <p className="text-[13px] text-muted-foreground text-center py-6">加载中...</p>
-          ) : myServices.length === 0 ? (
-            <p className="text-[13px] text-muted-foreground text-center py-6">暂无我的服务商，点击"添加我的服务商"创建</p>
-          ) : (
-            <div className="space-y-2">
-              {myServices.map(svc => (
-                <div key={svc.id} className="flex items-center justify-between gap-3 rounded-lg bg-accent/30 px-3 py-2.5 hover:bg-accent/50 transition-colors">
-                  <div className="min-w-0 flex items-center gap-2.5">
-                    <Cpu className="w-3.5 h-3.5 text-primary flex-shrink-0" />
-                    <div className="min-w-0">
-                      <span className="text-[12px] font-medium text-foreground">{svc.name}</span>
-                      <p className="text-[10px] text-muted-foreground truncate font-mono">{svc.base_url}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
-                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${
-                      svc.api_key
-                        ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-400'
-                        : 'border-amber-500/25 bg-amber-500/10 text-amber-400'
-                    }`}>
-                      {svc.api_key ? '********' : '未配置 Key'}
-                    </span>
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openMySvcDialog(svc)} title="编辑我的服务商">
-                      <Pencil className="w-3.5 h-3.5" />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-destructive" onClick={() => deleteMySvc(svc.id)} title="删除我的服务商">
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </section>
 
         {/* Notify Channel Section */}
@@ -1575,6 +1518,63 @@ export default function SettingsPage() {
           )}
         </section>
 
+        {/* 我的服务商(BYOK): 用户自定义 LLM 服务商, 用自己的 API Key(2026-08-15) */}
+        <section id="sec-my-services" className="card p-4 md:p-6 lg:col-span-12">
+          <div className="flex items-start justify-between mb-4 md:mb-5 gap-3">
+            <div>
+              <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">我的服务商 (BYOK)</h3>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                配置你自己的模型服务商，使用你自己的 API Key 调用（不影响平台配置）。demo 账号不可用。
+              </p>
+            </div>
+            {!isDemo && (
+              <Button size="sm" className="h-8" onClick={() => openMySvcDialog()}>
+                <Plus className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">添加我的服务商</span>
+              </Button>
+            )}
+          </div>
+
+          {isDemo ? (
+            <div className="rounded-xl border border-border/50 bg-accent/20 p-3.5 text-[12px] text-muted-foreground">
+              演示账号为只读浏览模式，不可配置自己的服务商。
+            </div>
+          ) : myServicesLoading ? (
+            <p className="text-[13px] text-muted-foreground text-center py-6">加载中...</p>
+          ) : myServices.length === 0 ? (
+            <p className="text-[13px] text-muted-foreground text-center py-6">暂无我的服务商，点击"添加我的服务商"创建</p>
+          ) : (
+            <div className="space-y-2">
+              {myServices.map(svc => (
+                <div key={svc.id} className="flex items-center justify-between gap-3 rounded-lg bg-accent/30 px-3 py-2.5 hover:bg-accent/50 transition-colors">
+                  <div className="min-w-0 flex items-center gap-2.5">
+                    <Cpu className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                    <div className="min-w-0">
+                      <span className="text-[12px] font-medium text-foreground">{svc.name}</span>
+                      <p className="text-[10px] text-muted-foreground truncate font-mono">{svc.base_url}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${
+                      svc.api_key
+                        ? 'border-emerald-700/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                        : 'border-amber-700/25 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+                    }`}>
+                      {svc.api_key ? '********' : '未配置 Key'}
+                    </span>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openMySvcDialog(svc)} title="编辑我的服务商">
+                      <Pencil className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-destructive" onClick={() => deleteMySvc(svc.id)} title="删除我的服务商">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
         {/* 多用户: 定时报告订阅 + 用户管理(2026-08-10 阶段5) */}
         <section id="sec-subscriptions" className="card p-4 md:p-6 lg:col-span-12">
           <div className="mb-3 flex items-center gap-2">
@@ -1655,8 +1655,8 @@ export default function SettingsPage() {
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${
                         configured
-                          ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-400'
-                          : 'border-amber-500/25 bg-amber-500/10 text-amber-400'
+                          ? 'border-emerald-700/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                          : 'border-amber-700/25 bg-amber-500/10 text-amber-700 dark:text-amber-400'
                       }`}>
                         {configured ? '已配置' : '未配置'}
                       </span>
@@ -1744,7 +1744,7 @@ export default function SettingsPage() {
                       <p className="text-[10px] text-muted-foreground truncate font-mono">{summary}</p>
                     </div>
                     <div className="flex items-center gap-1.5 flex-shrink-0">
-                      {isChanged && <span className="text-[10px] text-amber-400">未保存</span>}
+                      {isChanged && <span className="text-[10px] text-amber-700 dark:text-amber-400">未保存</span>}
                       <Button size="sm" variant="secondary" className="h-7 px-2 text-[11px]" onClick={() => openSysDialog(setting)}>
                         <Pencil className="w-3 h-3" /> 编辑
                       </Button>
@@ -2597,22 +2597,24 @@ function LlmUsageSection() {
 
       {/* 区间 + 场景筛选(分组标签) */}
       <div className="flex flex-wrap items-center gap-1.5 mb-3">
-        <span className="text-[10px] text-muted-foreground/70 mr-0.5">时间范围</span>
+        <span className="text-[10px] text-muted-foreground mr-0.5">时间范围</span>
         {(['day', '7d', '30d'] as const).map(r => (
           <button
             key={r}
             onClick={() => setRange(r)}
-            className={`rounded-md px-2 py-1 text-[11px] transition-colors ${
+            aria-pressed={range === r}
+            className={`rounded-md px-2.5 py-1.5 text-[11px] transition-colors ${
               range === r ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent'
             }`}
           >
             {r === 'day' ? '今日' : r === '7d' ? '近7天' : '近30天'}
           </button>
         ))}
-        <span className="text-[10px] text-muted-foreground/70 ml-3 mr-0.5">场景</span>
+        <span className="text-[10px] text-muted-foreground ml-3 mr-0.5">场景</span>
         <button
           onClick={() => setScene('')}
-          className={`rounded-md px-2 py-1 text-[11px] transition-colors ${
+          aria-pressed={scene === ''}
+          className={`rounded-md px-2.5 py-1.5 text-[11px] transition-colors ${
             scene === '' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent'
           }`}
         >
@@ -2622,7 +2624,8 @@ function LlmUsageSection() {
           <button
             key={s.key}
             onClick={() => setScene(s.key)}
-            className={`rounded-md px-2 py-1 text-[11px] transition-colors ${
+            aria-pressed={scene === s.key}
+            className={`rounded-md px-2.5 py-1.5 text-[11px] transition-colors ${
               scene === s.key ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent'
             }`}
           >
@@ -2699,11 +2702,19 @@ function LlmUsageSection() {
           )}
 
           {data.note && (
-            <p className="mt-2 text-[10px] text-muted-foreground/70">{data.note}</p>
+            <p className="mt-2 text-[10px] text-muted-foreground">{data.note}</p>
           )}
         </>
       ) : (
-        <div className="py-4 text-[12px] text-muted-foreground">加载失败</div>
+        <div className="py-4 flex items-center justify-center gap-2">
+          <span className="text-[12px] text-muted-foreground">加载失败</span>
+          <button
+            onClick={() => void load(range, scene)}
+            className="rounded-md px-2 py-1 text-[11px] text-primary hover:bg-accent"
+          >
+            重试
+          </button>
+        </div>
       )}
     </section>
   )
