@@ -183,9 +183,9 @@ function ModelDivergenceChart({ result }: { result: PredictResult }) {
 }
 
 export default function ForecastPage() {
-  const [symbol, setSymbol] = useState('002361')
+  const [symbol, setSymbol] = useState('')
   const [days] = useState(5)
-  const [searchText, setSearchText] = useState('神剑股份')
+  const [searchText, setSearchText] = useState('')
   const [searchResults, setSearchResults] = useState<{ symbol: string; name: string }[]>([])
   const [stockName, setStockName] = useState('')
   const [targetDate, setTargetDate] = useState('')
