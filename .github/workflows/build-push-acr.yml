@@ -6,6 +6,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -47,3 +48,6 @@ jobs:
             crpi-mte80ai8o78b1429.cn-shanghai.personal.cr.aliyuncs.com/xiaozexwz/xzxwz:latest
           build-args: |
             VERSION=${{ steps.ver.outputs.version }}
+          # 个人版 ACR 不支持 OCI attestation 清单(unknown manifest class for empty.v1+json)
+          provenance: false
+          sbom: false
