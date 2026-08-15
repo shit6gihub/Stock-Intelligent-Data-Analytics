@@ -315,7 +315,7 @@ class DataSource(Base):
     name = Column(String, nullable=False)  # "雪球资讯"
     type = Column(
         String, nullable=False
-    )  # "news" / "chart" / "quote" / "kline" / "capital_flow"
+    )  # "news" / "quote" / "kline" / "capital_flow"
     provider = Column(String, nullable=False)  # "xueqiu" / "eastmoney" / "tencent"
     config = Column(JSON, default={})  # 配置参数
     enabled = Column(Boolean, default=True)

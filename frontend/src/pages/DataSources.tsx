@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Pencil, Play, Database, Newspaper, LineChart, TrendingUp, DollarSign, Image, Layers, Zap, Check, X, Clock, Trash2, ChevronUp, ChevronDown, ChevronRight, Eye, EyeOff, RotateCcw, AlertTriangle, BarChart3, Trophy, Landmark, Users, Gift, ArrowLeftRight } from 'lucide-react'
+import { Pencil, Play, Database, Newspaper, LineChart, TrendingUp, DollarSign, Layers, Zap, Check, X, Clock, Trash2, ChevronUp, ChevronDown, ChevronRight, Eye, EyeOff, RotateCcw, AlertTriangle, BarChart3, Trophy, Landmark, Users, Gift, ArrowLeftRight } from 'lucide-react'
 import { fetchAPI, resetDataSourcesToSeed, type DataSource } from '@panwatch/api'
 import { Input } from '@panwatch/base-ui/components/ui/input'
 import { Label } from '@panwatch/base-ui/components/ui/label'
@@ -30,7 +30,7 @@ interface TestResult {
   count: number
   duration_ms: number
   error?: string
-  items?: unknown[] | { image?: string }  // array for most types, object for chart
+  items?: unknown[]
   logs: TestLogItem[]
 }
 
@@ -50,7 +50,6 @@ const DATASOURCE_TYPES = {
   capital_flow: { label: '资金流向', icon: DollarSign, color: 'text-yellow-500' },
   quote: { label: '实时行情', icon: TrendingUp, color: 'text-emerald-500' },
   events: { label: '事件日历', icon: Layers, color: 'text-violet-500' },
-  chart: { label: 'K线截图', icon: Image, color: 'text-purple-500' },
   flash_news: { label: '快讯', icon: Zap, color: 'text-amber-500' },
   fundamentals: { label: '基本面', icon: BarChart3, color: 'text-indigo-500' },
   dragon_tiger: { label: '龙虎榜', icon: Trophy, color: 'text-red-500' },
@@ -68,7 +67,6 @@ const DATASOURCE_CATEGORIES: { key: string; label: string; types: string[] }[] =
   { key: 'news', label: '资讯 & 快讯', types: ['news', 'flash_news', 'events'] },
   { key: 'fundamentals', label: '基本面 & 财务', types: ['fundamentals'] },
   { key: 'capital', label: '资金 & 市场面', types: ['capital_flow', 'board_capital_flow', 'market_capital_flow', 'dragon_tiger', 'margin', 'shareholders', 'northbound', 'dividend'] },
-  { key: 'chart', label: '图表', types: ['chart'] },
 ]
 
 // 兜底:未被以上分类覆盖的 type 归入"其他"(防止将来新增 type 时漏显示)
@@ -558,18 +556,8 @@ export default function DataSourcesPage() {
             )}
 
             {/* Data Preview */}
-            {/* Chart type - show image outside scrollable area */}
-            {testResult?.test_passed && testResult.source_type === 'chart' && (testResult.items as {image?: string})?.image && (
-              <div>
-                <div className="text-[12px] font-medium text-foreground mb-2">数据预览</div>
-                <div className="rounded-lg overflow-hidden border">
-                  <img src={(testResult.items as {image: string}).image} alt="K线图截图" className="w-full" />
-                </div>
-              </div>
-            )}
-
             {/* Other data types - in scrollable container */}
-            {testResult?.test_passed && testResult.items && testResult.source_type !== 'chart' && Array.isArray(testResult.items) && testResult.items.length > 0 && (
+            {testResult?.test_passed && testResult.items && Array.isArray(testResult.items) && testResult.items.length > 0 && (
               <div>
                 <div className="text-[12px] font-medium text-foreground mb-2">数据预览</div>
                 <div className="space-y-1.5 max-h-60 overflow-y-auto">

@@ -20,7 +20,6 @@ TYPE_LABELS = {
     "capital_flow": "资金流向",
     "quote": "实时行情",
     "events": "事件日历",
-    "chart": "K线截图",
     "flash_news": "快讯",
     "fundamentals": "基本面",
     "dragon_tiger": "龙虎榜",
