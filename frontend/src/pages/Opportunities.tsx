@@ -772,9 +772,9 @@ export default function OpportunitiesPage() {
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-        <div className="card p-3">
-          <div className="text-[11px] text-muted-foreground">当前候选(全局)</div>
-          <div className="text-[18px] font-bold mt-1">{globalCoverage?.total_signals ?? '--'}</div>
+        <div className="card relative overflow-hidden p-3 border-l-2 border-l-primary">
+          <div className="text-[11px] font-semibold text-foreground/80">当前候选(全局)</div>
+          <div className="text-[24px] font-bold mt-1 font-num tabular-nums">{globalCoverage?.total_signals ?? '--'}</div>
           <div className="text-[10px] text-muted-foreground mt-1">
             可执行: {globalCoverage?.active_signals ?? '--'}，观察: {(globalCoverage?.total_signals != null && globalCoverage?.active_signals != null) ? Math.max(0, globalCoverage.total_signals - globalCoverage.active_signals) : '--'}
           </div>

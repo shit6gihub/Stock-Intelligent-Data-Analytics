@@ -177,7 +177,7 @@ export default function IndexDetailPage() {
               {(marketFlow.inflow_boards?.length || marketFlow.outflow_boards?.length) ? (
                 <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3">
                   {marketFlow.inflow_boards?.length ? (
-                    <div>
+                    <div className="card-subtle p-2.5">
                       <div className="text-[11px] font-semibold text-red-600 mb-1 flex items-center gap-1"><Flame className="w-3 h-3" />资金流入板块</div>
                       <div className="space-y-0.5">
                         {marketFlow.inflow_boards.map(b => (
@@ -190,7 +190,7 @@ export default function IndexDetailPage() {
                     </div>
                   ) : null}
                   {marketFlow.outflow_boards?.length ? (
-                    <div>
+                    <div className="card-subtle p-2.5">
                       <div className="text-[11px] font-semibold text-green-700 mb-1 flex items-center gap-1"><Droplets className="w-3 h-3" />资金流出板块</div>
                       <div className="space-y-0.5">
                         {marketFlow.outflow_boards.map(b => (
