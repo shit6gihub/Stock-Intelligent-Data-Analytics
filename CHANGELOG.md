@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-08-15 (v0.2.38)
+
+### feat(settings) — 设置页第二窗口改造(对齐 AI 服务商模式)
+
+- 接口 Key 区块 → 合集卡片(悟道/智兔/通达信一行一卡 + 已配置/未配置徽标)+「管理」第二窗口编辑(密码框/眼睛切换)
+- 系统区块 → 合集行(描述+当前值摘要)+「编辑」第二窗口编辑
+- 未修改时保存按钮禁用,防掩码覆盖真实 token
+
+### fix(settings) — 敏感 key 掩码脏写(生产卡死根因)
+
+- list_settings 掩码改为返回新对象,不再修改 ORM 对象 → 消除 autoflush 把字面 `********` 写回 DB 的隐患
+- 该 bug 曾导致 SQLite 锁竞争 → 事件循环阻塞 → 生产 7 小时无响应(已热修+本版固化)
+
+### ci — GitHub 源镜像自动构建修复
+
+- GHCR Actions: npm → pnpm(workspace 依赖 echarts 等装不上导致 v0.2.36/37 构建全失败)
+- 补传 VERSION build-arg;tag 保留 v 前缀;labels 更新(SIDA/AGPL-3.0)
+
+### license / docs
+
+- 许可证 GPL-3.0 → **AGPL-3.0**(防 SaaS 白嫖,网络服务必须开源改动)
+- README: 赞助区恢复(微信赞赏码不打码)/ K线主力意图截图 / 生产部署双镜像源(ghcr+ACR)/ 删除开源许可描述
+- 对话助手截图更新
+
+### test
+
+- marketdata registry 漂移校准(同花顺 ths/ths_f10 vendor 后加未同步测试)
+- get_market_news 断言兼容 to_thread 写法
+
+# Changelog
+
 ## 2026-08-14 (v0.2.37)
 
 ### feat(wechat) — 个人微信 iLink 直连全链路(零 OpenClaw 依赖)
