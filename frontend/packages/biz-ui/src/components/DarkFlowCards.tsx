@@ -70,6 +70,7 @@ export default function DarkFlowCards({ symbol, market }: { symbol: string; mark
   const [data, setData] = useState<DarkFlowResp | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>('')
+  const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
   const mountedRef = useRef(true)
 
   const load = useCallback(async () => {
@@ -80,6 +81,7 @@ export default function DarkFlowCards({ symbol, market }: { symbol: string; mark
         cacheMode: 'reload', // 盘中实时, 跳过 GET 缓存
       })
       if (mountedRef.current) setData(res)
+      if (mountedRef.current) setUpdatedAt(new Date())
     } catch (e) {
       if (mountedRef.current) setError(e instanceof Error ? e.message : '加载失败')
     } finally {
@@ -141,7 +143,14 @@ export default function DarkFlowCards({ symbol, market }: { symbol: string; mark
       {/* ============ 卡片①: 主力意图 ============ */}
       <div className="rounded-xl border border-border/50 bg-card p-3">
         <div className="flex items-center justify-between gap-2 mb-2">
-          <div className="text-[13px] font-semibold text-foreground">🎯 主力意图</div>
+          <div className="flex items-center gap-2">
+            <div className="text-[13px] font-semibold text-foreground">🎯 主力意图</div>
+            {updatedAt && (
+              <span className="text-[10px] text-muted-foreground font-mono">
+                {updatedAt.toLocaleTimeString('zh-CN', { hour12: false })}
+              </span>
+            )}
+          </div>
           <button
             type="button"
             title="刷新"
@@ -199,7 +208,7 @@ export default function DarkFlowCards({ symbol, market }: { symbol: string; mark
               </div>
               <span className="text-emerald-700 dark:text-emerald-400 font-mono">内盘 {fmtPct(io.sell_pct)}</span>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px] mt-2">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-[11px] mt-2">
               <Stat label="量比" value={io.volume_ratio != null ? io.volume_ratio.toFixed(2) : '--'} />
               <Stat
                 label="涨跌"
@@ -211,6 +220,14 @@ export default function DarkFlowCards({ symbol, market }: { symbol: string; mark
                 value={typeof io.position === 'string' ? io.position : io.position != null ? String(io.position) : '--'}
               />
               <Stat label="外盘额" value={fmtWan(io.buy_amt)} valueClass={upColor(io.buy_amt)} />
+              <Stat
+                label="主动盘占比"
+                value={
+                  io.buy_pct != null && io.sell_pct != null
+                    ? `${(io.buy_pct + io.sell_pct).toFixed(1)}%`
+                    : '--'
+                }
+              />
             </div>
           </>
         ) : (
