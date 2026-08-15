@@ -112,6 +112,37 @@ class ServiceUpdate(BaseModel):
 CAPABILITY_TAGS = ("chat", "vision", "image", "video", "tools")
 
 
+def infer_capabilities(model_name: str, service_name: str = "") -> list[str]:
+    """按模型名/服务商名自动推断能力(2026-08-15): 未手动配置 capabilities 的
+    存量模型也能自动显示真实功能。保守规则, 命中关键词才标, 不猜。"""
+    n = f"{model_name} {service_name}".lower()
+    caps: set[str] = set()
+    # 视频生成
+    if any(k in n for k in ("video", "cinema", "animate", "mov", "video-gen")):
+        caps.add("video")
+    # 图像生成
+    if any(k in n for k in ("image", "img-", "img_", "dall-e", "sdxl", "flux", "draw", "t2i", "paint")):
+        caps.add("image")
+    # 视觉理解(多模态); 注意不能用 "see"(deepseek/seed 会误命中)
+    if any(k in n for k in ("vision", "vl", "4v", "omni", "multimodal", "visual", "caption", "vlm", "image-understanding")):
+        caps.add("vision")
+    # 已知多模态特例(实测): Agnes 2.5 Flash 支持 chat/vision/image/video/tools
+    # 注意: 只匹配模型名(服务商名 "Agnes 2.5 Flash" 会误命中全部模型)
+    mn = model_name.lower()
+    if "agnes-2.5" in mn or "agnes 2.5" in mn:
+        caps.update(("vision", "image", "video"))
+    # 工具调用(主流对话模型默认支持)
+    if any(k in n for k in ("deepseek", "glm", "doubao", "agnes", "sensenova", "qwen", "minimax", "gpt", "claude", "kimi", "moonshot", "yi", "ernie", "baichuan", "chat", "abab", "step", "hunyuan")):
+        caps.add("tools")
+    # chat 基础能力(对话/生成模型都有; 纯生成模型如 cinema-generate 不含)
+    if any(k in n for k in ("chat", "flash", "lite", "fast", "mini", "max", "pro", "turbo", "deepseek", "glm", "agnes", "doubao", "sensenova", "qwen", "minimax", "gpt", "claude")):
+        caps.add("chat")
+    if not caps:
+        caps.add("chat")  # 兜底: 未知模型至少可对话
+    order = ["chat", "vision", "image", "video", "tools"]
+    return [t for t in order if t in caps]
+
+
 def _parse_capabilities(raw) -> list[str]:
     """从存储串(逗号分隔)解析能力标签; 空串/None = 默认 chat(兼容存量模型)。"""
     if isinstance(raw, list):
@@ -172,7 +203,9 @@ def _service_to_response(service: AIService) -> dict:
                 "service_id": m.service_id,
                 "model": m.model,
                 "is_default": m.is_default,
-                "capabilities": _parse_capabilities(m.capabilities),
+                "capabilities": _parse_capabilities(m.capabilities)
+                if str(m.capabilities or "").strip()
+                else infer_capabilities(m.model, service.name),
             }
             for m in service.models
         ],
@@ -261,9 +294,12 @@ def create_model(body: ModelCreate, db: Session = Depends(get_db)):
     data = body.model_dump()
     if not data["name"]:
         data["name"] = data["model"]
-    # capabilities: list/None → 逗号分隔存储串(空=默认 chat, 兼容存量)
+    # capabilities: list/None → 逗号分隔存储串(空=自动推断标注, 兼容存量)
     caps = data.get("capabilities")
-    data["capabilities"] = ",".join(caps) if caps else ""
+    if caps:
+        data["capabilities"] = ",".join(caps)
+    else:
+        data["capabilities"] = ",".join(infer_capabilities(data["model"], service.name))
     model = AIModel(**data)
     db.add(model)
     db.commit()
