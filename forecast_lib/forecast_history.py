@@ -140,13 +140,15 @@ def _attach_outcome(r: dict) -> None:
     """给一条 forecast 记录附加到期对照: outcome_return_pct / outcome_status。
 
     status: hit(方向对) / miss(方向错) / pending(未到期) / no_data(取不到K线)。
-    用 KlineCollector 拉实际行情, 按 target_date 收盘 vs last_close 判方向。
-    失败/无数据 → no_data(不阻断列表)。
+    优先经 8000 /api/klines 取实际行情(与 UI 同源、key/配置实时),
+    失败兜底 baostock(预测引擎自带依赖, 不依赖 PanWatch src — 修复
+    预测进程 import src.collectors 失败导致 outcome 恒为 no_data 的问题)。
+    按 target_date 收盘 vs last_close 判方向。失败/无数据 → no_data(不阻断列表)。
     """
     r.setdefault("outcome_return_pct", None)
     r.setdefault("outcome_status", "pending")
     try:
-        from datetime import date, datetime
+        from datetime import date
         target_date = str(r.get("target_date") or "")[:10]
         last_close = r.get("last_close")
         direction = r.get("direction")
@@ -156,31 +158,82 @@ def _attach_outcome(r: dict) -> None:
         if target_date > date.today().isoformat():
             r["outcome_status"] = "pending"
             return
-        try:
-            from src.collectors.kline_collector import KlineCollector
-            from src.models.market import MarketCode
-            from src.core.context_store import _to_market  # noqa: F401 (兼容)
-        except Exception:
-            from src.collectors.kline_collector import KlineCollector
-            from src.models.market import MarketCode
-
         symbol = str(r.get("symbol") or "").split(".")[0]
-        market = MarketCode.CN
-        klines = KlineCollector(market).get_klines(symbol, days=60)
-        td = datetime.strptime(target_date, "%Y-%m-%d").date()
-        actual = None
-        for k in klines or []:
-            d = str(getattr(k, "date", ""))[:10]
-            if d and d <= target_date:
-                actual = float(getattr(k, "close", 0) or 0)
-        if actual is None or actual <= 0:
+        # 同源 K 线序列取基准价与到期价 → 相对涨跌, 避免复权口径(前复权价 vs 预测时绝对价)导致失真
+        pairs = _fetch_kline_pairs(symbol, target_date)
+        if not pairs:
             r["outcome_status"] = "no_data"
             return
-        r["outcome_return_pct"] = round((actual / float(last_close) - 1) * 100, 2)
-        actual_dir = "up" if actual > float(last_close) else "down" if actual < float(last_close) else "flat"
+        last_date = str(r.get("last_date") or "")[:10]
+        baseline = None
+        actual = None
+        for d, c in pairs:
+            if d <= last_date:
+                baseline = c
+            if d <= target_date:
+                actual = c
+        if baseline is None or actual is None or baseline <= 0 or actual <= 0:
+            r["outcome_status"] = "no_data"
+            return
+        r["outcome_return_pct"] = round((actual / baseline - 1) * 100, 2)
+        actual_dir = "up" if actual > baseline else "down" if actual < baseline else "flat"
         if actual_dir == "flat":
             r["outcome_status"] = "pending"  # 平盘视为未定
             return
         r["outcome_status"] = "hit" if actual_dir == direction else "miss"
     except Exception:
         r["outcome_status"] = "no_data"
+
+
+def _fetch_kline_pairs(symbol: str, end_date: str) -> list:
+    """取截至 end_date 的日K (date, close) 列表(升序)。同源用于相对涨跌计算。
+
+    1) 优先经 8000 /api/klines(与 UI 同源; 预测进程配置了 PANWATCH/AUTH
+       凭据即自动使用, 否则落 2)
+    2) 兜底 baostock(预测引擎自带依赖, 无需任何配置)
+    """
+    # 1) 8000 K线 API
+    try:
+        try:
+            from .panwatch_client import request_json
+        except ImportError:  # forecast_server.py 将 forecast_lib 直接加入 sys.path
+            from panwatch_client import request_json
+        resp = request_json(f"/api/klines/{symbol}?market=CN&days=90&interval=1d", timeout=15)
+        if resp is not None:
+            data = resp.get("data", resp) if isinstance(resp, dict) else resp
+            items = data.get("klines") if isinstance(data, dict) else data
+            if isinstance(items, list):
+                pairs = []
+                for k in items:
+                    d = str(k.get("date", ""))[:10]
+                    c = k.get("close")
+                    if d and c:
+                        pairs.append((d, float(c)))
+                if pairs:
+                    pairs.sort()
+                    return pairs
+    except Exception:
+        pass
+    # 2) baostock 兜底
+    try:
+        import baostock as bs
+        code = f"sh.{symbol}" if symbol.startswith(("6", "9")) else f"sz.{symbol}"
+        lg = bs.login()
+        try:
+            rs = bs.query_history_k_data_plus(
+                code, "date,close",
+                start_date="1990-01-01", end_date=end_date,
+                frequency="d", adjustflag="3",
+            )
+            pairs = []
+            while rs.error_code == "0" and rs.next():
+                row = rs.get_row_data()
+                if len(row) >= 2 and row[0] and row[1]:
+                    pairs.append((row[0], float(row[1])))
+            if pairs:
+                return pairs
+        finally:
+            bs.logout()
+    except Exception:
+        pass
+    return []
