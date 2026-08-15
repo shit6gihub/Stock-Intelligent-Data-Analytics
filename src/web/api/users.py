@@ -201,12 +201,16 @@ def get_user_permissions(
     owner: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
-    """获取某用户的模块权限白名单(仅 owner)。"""
+    """获取某用户的模块权限(仅 owner)。
+
+    granted: 白名单追加授权(可编辑); role_defaults: 角色自带权限(只读展示,
+    让 owner 一眼看到该用户已有哪些权限)。
+    """
     del owner
     target = get_user_by_id(db, uid)
     if not target:
         raise HTTPException(404, "用户不存在")
-    from src.core.permissions import PERMISSION_LABELS
+    from src.core.permissions import PERMISSION_LABELS, get_role_permissions
 
     all_permissions = [
         {"key": k, "label": v[0], "group": v[1]} for k, v in PERMISSION_LABELS.items()
@@ -215,6 +219,7 @@ def get_user_permissions(
         "username": target.username,
         "role": target.role,
         "granted": _read_permission_list(target.permissions),
+        "role_defaults": sorted(get_role_permissions(target.role)),
         "all_permissions": all_permissions,
     }
 

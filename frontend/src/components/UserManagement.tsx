@@ -68,6 +68,7 @@ export default function UserManagement({ currentUser }: Props) {
   const [permSaving, setPermSaving] = useState(false)
   const [permAll, setPermAll] = useState<PermissionItem[]>([])
   const [permGranted, setPermGranted] = useState<string[]>([])
+  const [permDefaults, setPermDefaults] = useState<string[]>([])
 
   const isOwner = currentUser?.role === 'owner'
 
@@ -142,9 +143,10 @@ export default function UserManagement({ currentUser }: Props) {
     setPermLoading(true)
     setPermSaving(false)
     try {
-      const data = await fetchAPI<{ granted: string[]; all_permissions: PermissionItem[] }>(`/users/${u.id}/permissions`, { cacheMode: 'reload' })
+      const data = await fetchAPI<{ granted: string[]; role_defaults: string[]; all_permissions: PermissionItem[] }>(`/users/${u.id}/permissions`, { cacheMode: 'reload' })
       setPermAll(data.all_permissions || [])
       setPermGranted(data.granted || [])
+      setPermDefaults(data.role_defaults || [])
     } catch (e) {
       toast(e instanceof Error ? e.message : '加载模块权限失败', 'error')
       setPermTarget(null)
@@ -453,24 +455,34 @@ export default function UserManagement({ currentUser }: Props) {
                   <div key={group}>
                     <div className="text-[11px] font-semibold text-muted-foreground mb-1.5">{group}模块</div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
-                      {items.map(p => (
+                      {items.map(p => {
+                        const isDefault = permDefaults.includes(p.key)
+                        const isGranted = permGranted.includes(p.key)
+                        return (
                         <label
                           key={p.key}
-                          className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[12px] cursor-pointer transition-colors ${
-                            permGranted.includes(p.key)
+                          className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[12px] transition-colors ${
+                            isDefault || isGranted
                               ? 'border-primary/40 bg-primary/5 text-foreground'
                               : 'border-border/50 text-muted-foreground hover:border-border'
-                          }`}
+                          } ${isDefault ? 'cursor-default' : 'cursor-pointer'}`}
                         >
                           <input
                             type="checkbox"
                             className="accent-primary"
-                            checked={permGranted.includes(p.key)}
+                            checked={isDefault || isGranted}
+                            disabled={isDefault}
                             onChange={() => togglePerm(p.key)}
                           />
-                          {p.label}
+                          <span className="flex-1 min-w-0 truncate">{p.label}</span>
+                          {isDefault && (
+                            <span className="flex-shrink-0 rounded-full border border-border/50 px-1.5 py-px text-[9px] text-muted-foreground">
+                              角色默认
+                            </span>
+                          )}
                         </label>
-                      ))}
+                        )
+                      })}
                     </div>
                   </div>
                 )
