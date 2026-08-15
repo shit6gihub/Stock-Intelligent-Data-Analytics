@@ -557,13 +557,13 @@ export default function DashboardPage() {
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px]">
               <span className="text-muted-foreground">主力净流入
-                <b className={`font-mono ${(marketFlow.total_main_flow ?? 0) >= 0 ? 'text-red-500' : 'text-green-500'}`}>
+                <b className={`font-mono ${(marketFlow.total_main_flow ?? 0) >= 0 ? 'text-red-600' : 'text-green-700'}`}>
                   {(marketFlow.total_main_flow ?? 0) >= 0 ? '+' : ''}{(marketFlow.total_main_flow ?? 0).toFixed(1)}亿
                 </b>
               </span>
               <span className="text-muted-foreground">成交额 <b className="font-mono">{(marketFlow.total_amount ?? 0).toFixed(0)}亿</b></span>
-              <span className="text-muted-foreground">涨 <b className="text-red-500 font-mono">{marketFlow.up_count ?? '--'}</b>
-                <span className="mx-1">/</span>跌 <b className="text-green-500 font-mono">{marketFlow.down_count ?? '--'}</b></span>
+              <span className="text-muted-foreground">涨 <b className="text-red-600 font-mono">{marketFlow.up_count ?? '--'}</b>
+                <span className="mx-1">/</span>跌 <b className="text-green-700 font-mono">{marketFlow.down_count ?? '--'}</b></span>
               <span className="text-muted-foreground">沪 <b className="font-mono">{(marketFlow.sh_flow ?? 0).toFixed(1)}亿</b>
                 <span className="mx-1">/</span>深 <b className="font-mono">{(marketFlow.sz_flow ?? 0).toFixed(1)}亿</b></span>
             </div>
@@ -573,12 +573,12 @@ export default function DashboardPage() {
             <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3">
               {marketFlow.inflow_boards?.length ? (
                 <div>
-                  <div className="mb-1 text-[11px] font-semibold text-red-500">资金流入板块</div>
+                  <div className="mb-1 text-[11px] font-semibold text-red-600">资金流入板块</div>
                   <div className="space-y-0.5">
                     {marketFlow.inflow_boards.map(b => (
                       <div key={b.name} className="flex justify-between text-[11px]">
                         <span className="text-muted-foreground truncate">{b.name}</span>
-                        <span className="font-mono text-red-500">+{b.net_inflow.toFixed(1)}亿</span>
+                        <span className="font-mono text-red-600">+{b.net_inflow.toFixed(1)}亿</span>
                       </div>
                     ))}
                   </div>
@@ -586,12 +586,12 @@ export default function DashboardPage() {
               ) : null}
               {marketFlow.outflow_boards?.length ? (
                 <div>
-                  <div className="mb-1 text-[11px] font-semibold text-green-500">资金流出板块</div>
+                  <div className="mb-1 text-[11px] font-semibold text-green-700">资金流出板块</div>
                   <div className="space-y-0.5">
                     {marketFlow.outflow_boards.map(b => (
                       <div key={b.name} className="flex justify-between text-[11px]">
                         <span className="text-muted-foreground truncate">{b.name}</span>
-                        <span className="font-mono text-green-500">{b.net_inflow.toFixed(1)}亿</span>
+                        <span className="font-mono text-green-700">{b.net_inflow.toFixed(1)}亿</span>
                       </div>
                     ))}
                   </div>

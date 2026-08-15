@@ -17,7 +17,7 @@
     --secondary: 215 15% 94%;
     --secondary-foreground: 215 15% 40%;
     --muted: 215 15% 94%;
-    --muted-foreground: 215 10% 50%;
+    --muted-foreground: 215 10% 48%; /* make-interfaces: 次级文字对比度余量(4.9:1) */
     --accent: 215 15% 92%;
     --accent-foreground: 215 20% 10%;
     --destructive: 0 72% 51%;
@@ -57,7 +57,7 @@
     --secondary: 215 15% 15%;
     --secondary-foreground: 215 15% 70%;
     --muted: 215 15% 15%;
-    --muted-foreground: 215 10% 50%;
+    --muted-foreground: 215 10% 58%; /* make-interfaces: 暗色次级文字对比度(≈5.6:1) */
     --accent: 215 15% 18%;
     --accent-foreground: 215 15% 90%;
     --destructive: 0 60% 45%;
