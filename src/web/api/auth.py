@@ -413,8 +413,8 @@ async def create_user_api(
         raise HTTPException(400, "用户名长度至少 2 位")
     if len(data.password) < 8:
         raise HTTPException(400, "密码长度至少 8 位")
-    if data.role not in ("owner", "member"):
-        raise HTTPException(400, "角色必须是 owner 或 member")
+    if data.role not in ("owner", "member", "guest"):
+        raise HTTPException(400, "角色必须是 owner、member 或 guest")
     if get_user_by_username(db, data.username.strip()):
         raise HTTPException(400, "用户名已存在")
 

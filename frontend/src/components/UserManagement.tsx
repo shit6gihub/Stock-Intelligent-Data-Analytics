@@ -51,7 +51,7 @@ export default function UserManagement({ currentUser }: Props) {
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState('')
   const [newPass, setNewPass] = useState('')
-  const [newRole, setNewRole] = useState<'owner' | 'member'>('member')
+  const [newRole, setNewRole] = useState<'owner' | 'member' | 'guest'>('member')
   // 改密对话框
   const [resetTarget, setResetTarget] = useState<UserInfo | null>(null)
   const [resetPass, setResetPass] = useState('')
@@ -253,13 +253,18 @@ export default function UserManagement({ currentUser }: Props) {
             value={newPass}
             onChange={e => setNewPass(e.target.value)}
           />
-          <div className="flex items-center gap-3 text-[12px]">
+          <div className="flex flex-wrap items-center gap-3 text-[12px]">
             <label className="flex items-center gap-1">
               <input type="radio" checked={newRole === 'member'} onChange={() => setNewRole('member')} /> 普通成员
             </label>
             <label className="flex items-center gap-1">
+              <input type="radio" checked={newRole === 'guest'} onChange={() => setNewRole('guest')} /> 访客(只读)
+            </label>
+            <label className="flex items-center gap-1">
               <input type="radio" checked={newRole === 'owner'} onChange={() => setNewRole('owner')} /> 管理员
             </label>
+            <div className="flex-1" />
+            <Button size="sm" variant="ghost" onClick={() => { setShowCreate(false); setNewName(''); setNewPass(''); setNewRole('member') }}>取消</Button>
             <Button size="sm" onClick={handleCreate}>创建</Button>
           </div>
         </div>
@@ -271,8 +276,8 @@ export default function UserManagement({ currentUser }: Props) {
             <div className="flex items-center gap-2">
               <span className={`inline-block h-2 w-2 rounded-full ${u.is_active ? 'bg-emerald-500' : 'bg-muted'}`} />
               <span className="font-medium">{u.username}</span>
-              <span className={`rounded px-1.5 py-0.5 text-[10px] ${u.role === 'owner' ? 'bg-amber-500/15 text-amber-600' : 'bg-sky-500/15 text-sky-600'}`}>
-                {u.role === 'owner' ? '管理员' : '成员'}
+              <span className={`rounded px-1.5 py-0.5 text-[10px] ${u.role === 'owner' ? 'bg-amber-500/15 text-amber-600' : u.role === 'guest' ? 'bg-violet-500/15 text-violet-600' : 'bg-sky-500/15 text-sky-600'}`}>
+                {u.role === 'owner' ? '管理员' : u.role === 'guest' ? '访客' : '成员'}
               </span>
             </div>
             <div className="flex items-center gap-1.5">
