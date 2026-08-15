@@ -2595,24 +2595,25 @@ function LlmUsageSection() {
         <span className="text-[11px] text-muted-foreground">LLM token 用量与费用估算</span>
       </div>
 
-      {/* 区间 + 场景筛选 */}
+      {/* 区间 + 场景筛选(分组标签) */}
       <div className="flex flex-wrap items-center gap-1.5 mb-3">
+        <span className="text-[10px] text-muted-foreground/70 mr-0.5">时间范围</span>
         {(['day', '7d', '30d'] as const).map(r => (
           <button
             key={r}
             onClick={() => setRange(r)}
             className={`rounded-md px-2 py-1 text-[11px] transition-colors ${
-              range === r ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent'
+              range === r ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent'
             }`}
           >
             {r === 'day' ? '今日' : r === '7d' ? '近7天' : '近30天'}
           </button>
         ))}
-        <div className="w-px h-4 bg-border/50 mx-1.5" aria-hidden="true" />
+        <span className="text-[10px] text-muted-foreground/70 ml-3 mr-0.5">场景</span>
         <button
           onClick={() => setScene('')}
           className={`rounded-md px-2 py-1 text-[11px] transition-colors ${
-            scene === '' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent'
+            scene === '' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent'
           }`}
         >
           全部
@@ -2622,7 +2623,7 @@ function LlmUsageSection() {
             key={s.key}
             onClick={() => setScene(s.key)}
             className={`rounded-md px-2 py-1 text-[11px] transition-colors ${
-              scene === s.key ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent'
+              scene === s.key ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent'
             }`}
           >
             {s.label}
@@ -2634,12 +2635,24 @@ function LlmUsageSection() {
         <div className="py-4 text-[12px] text-muted-foreground">加载中…</div>
       ) : data ? (
         <>
-          {/* 汇总格 */}
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
+          {/* 汇总格: 区间 3 + 本月 2 明确分组 */}
+          <div className="grid grid-cols-3 gap-2 mb-1.5">
             {[
               ['区间调用', fmtNum(data.summary.calls), '次'],
               ['区间 Token', fmtNum(data.summary.tokens), ''],
               ['区间费用', fmtCost(data.summary.cost), '估算'],
+            ].map(([label, val, suffix]) => (
+              <div key={label} className="rounded-lg border border-border/40 bg-accent/20 px-3 py-2.5">
+                <div className="text-[10px] text-muted-foreground">{label}</div>
+                <div className="font-mono text-[14px] font-semibold text-foreground tabular-nums">
+                  {val}
+                  {suffix && <span className="ml-1 text-[10px] font-normal text-muted-foreground">{suffix}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2 mb-3">
+            {[
               ['本月调用', fmtNum(data.summary.month_calls), '次'],
               ['本月费用', fmtCost(data.summary.month_cost), '估算'],
             ].map(([label, val, suffix]) => (
