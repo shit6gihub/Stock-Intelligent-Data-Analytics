@@ -403,12 +403,12 @@ export default function PaperTradingPage() {
       {/* Summary Cards */}
       {account && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <div className="card p-3">
+          <div className="card relative overflow-hidden p-3 border-l-2 border-l-primary">
             <div className="flex items-center gap-1.5 text-muted-foreground text-xs mb-1">
               <Wallet className="w-3.5 h-3.5" />
               总资产
             </div>
-            <div className="text-lg font-bold">{formatCurrency(account.total_equity)}</div>
+            <div className="text-xl font-bold font-num tabular-nums">{formatCurrency(account.total_equity)}</div>
           </div>
           <div className="card p-3">
             <div className="flex items-center gap-1.5 text-muted-foreground text-xs mb-1">
