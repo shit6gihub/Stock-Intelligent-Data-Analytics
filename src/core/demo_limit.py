@@ -48,7 +48,7 @@ def remaining(user_id: str) -> int:
 # 账号高频刷 GET 烧数据源配额(wudao 200次/天 / zhitu / tdx 等)。
 # 固定窗口(自然小时) + 内存计数; 仅作用于 demo 账号, 其他用户零影响。
 # ════════════════════════════════════════════════════════════════════
-_DEMO_GET_HOURLY_LIMIT = 5
+_DEMO_GET_HOURLY_LIMIT = 20
 # {user_id: {"hour": "2026-08-15T17", "count": int}}
 _get_state: dict[str, dict] = {}
 
