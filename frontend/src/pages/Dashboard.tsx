@@ -545,7 +545,7 @@ export default function DashboardPage() {
       <div className="mb-3 grid grid-cols-2 gap-2.5 md:grid-cols-3 lg:grid-cols-5">
         {loading && indices.length === 0
           ? Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="card-subtle p-2.5">
+              <div key={i} className="card p-2.5">
                 <Skeleton className="h-2.5 w-16" />
                 <Skeleton className="mt-1.5 h-4 w-14" />
                 <Skeleton className="mt-2 h-6 w-full" />
@@ -555,12 +555,12 @@ export default function DashboardPage() {
           <button
             key={`${ix.market}:${ix.symbol}`}
             onClick={() => navigate(`/index/${ix.symbol}`)}
-            className="card-subtle relative p-2.5 text-left hover:border-primary/40 transition-colors cursor-pointer"
+            className="card relative p-2.5 text-left hover:border-primary/40 transition-colors cursor-pointer"
           >
             <div className="flex items-start justify-between gap-1">
               <div className="min-w-0">
                 <div className="truncate text-[11px] text-muted-foreground">{ix.name}</div>
-                <div className="font-num text-[15px] text-foreground tabular-nums">
+                <div className="font-num text-[17px] font-semibold text-foreground tabular-nums">
                   {ix.current_price != null ? ix.current_price.toFixed(2) : '--'}
                 </div>
               </div>
@@ -587,7 +587,7 @@ export default function DashboardPage() {
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px]">
               <span className="text-muted-foreground">主力净流入
-                <b className={`font-mono ${(marketFlow.total_main_flow ?? 0) >= 0 ? 'text-red-600' : 'text-green-700'}`}>
+                <b className={`font-mono text-[15px] font-semibold ${(marketFlow.total_main_flow ?? 0) >= 0 ? 'text-red-600' : 'text-green-700'}`}>
                   {(marketFlow.total_main_flow ?? 0) >= 0 ? '+' : ''}{(marketFlow.total_main_flow ?? 0).toFixed(1)}亿
                 </b>
               </span>
