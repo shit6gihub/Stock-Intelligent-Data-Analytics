@@ -77,6 +77,26 @@ class AIService(Base):
     )
 
 
+class UserAIService(Base):
+    """用户 BYOK AI 服务(2026-08-15 SIDA 账号权限控制): 用户自配模型服务。
+
+    用户级 LLM 解析(get_model_for_scene ①)查此表: models_json 为 JSON 数组
+    [{"name","model","is_default","scene","capabilities"}], scene 匹配或
+    is_default 的模型优先于平台模型使用。
+    """
+
+    __tablename__ = "user_ai_services"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), index=True, nullable=False)  # users.id(UUID)
+    name = Column(String, nullable=False)  # 服务名, 如 "我的DeepSeek"
+    base_url = Column(String, nullable=False)
+    api_key = Column(String, default="")
+    # 模型列表 JSON 字符串: [{"name","model","is_default","scene","capabilities"}]
+    models_json = Column(Text, nullable=False, default="[]")
+    created_at = Column(DateTime, server_default=func.now())
+
+
 class AIModel(Base):
     """AI 模型（属于某个服务商）"""
 

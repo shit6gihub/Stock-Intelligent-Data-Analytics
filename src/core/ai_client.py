@@ -1,4 +1,5 @@
 import base64
+import json
 import logging
 from pathlib import Path
 
@@ -196,14 +197,60 @@ def _build_shadow_profile_block(profile_json) -> str:
     return "以下是用户交易风格画像(AI 参考, 用于给出更贴合的建议):\n" + "\n".join(parts)
 
 
-def get_model_for_scene(db, scene: str):
-    """按场景解析应使用的模型(统一 LLM 配置中心入口)。
+def get_model_for_scene(db, scene: str, user=None):
+    """按场景解析应使用的模型(统一 LLM 配置中心入口, 2026-08-15 加用户级授权)。
 
-    解析顺序: 场景绑定(ai_scene_bindings) → 默认模型(is_default) → 模型池第一个。
+    解析优先级(有 user 时):
+      ③ demo/guest 用户(username=="demo" 或 role=="guest"): 零授权, 直接 None;
+      ① 用户 BYOK: 查 user_ai_services(user_id=user.id), models_json 里 scene
+         匹配或 is_default 的模型 → 返回 dict {"name","model","base_url",
+         "api_key","is_default"};
+      ② 平台授权: users.permissions.model_access
+         {"mode": "inherit"|"granted"|"deny_all", "model_ids": [AIModel.id...]}:
+           - deny_all → None
+           - granted 且场景绑定模型不在 model_ids → None
+           - inherit / granted 命中 → 走全局解析逻辑
+    无 user(系统调用): 原全局解析逻辑不变(场景绑定 → 默认模型 → 模型池第一个)。
 
     Returns:
-        AIModel | None(模型池为空时返回 None)
+        dict(BYOK: {"name","model","base_url","api_key","is_default"})
+        | AIModel(平台模型) | None
     """
+    # ③ demo/guest 零授权(最先拦截, 即使配置了 BYOK/授权)
+    if user is not None:
+        username = getattr(user, "username", None)
+        role = getattr(user, "role", None)
+        if username == "demo" or role == "guest":
+            return None
+
+    # ① 用户 BYOK(自有服务优先于平台模型)
+    if user is not None:
+        byok = _resolve_user_byok(db, user, scene)
+        if byok is not None:
+            return byok
+
+        # ② 平台授权校验
+        model_access = _get_model_access(user)
+        if model_access is not None:
+            mode = model_access.get("mode", "inherit")
+            if mode == "deny_all":
+                return None
+            if mode == "granted":
+                model_ids = set(model_access.get("model_ids") or [])
+                model = _resolve_global_model(db, scene)
+                if model is None:
+                    return None
+                if model.id not in model_ids:
+                    return None
+                return model
+            # mode == "inherit": 继承平台默认, 落到全局解析(不校验)
+
+    # 无 user(系统调用) / inherit: 原全局解析逻辑
+    return _resolve_global_model(db, scene)
+
+
+def _resolve_global_model(db, scene: str):
+    """原全局解析逻辑: 场景绑定 → 默认模型(is_default) → 模型池第一个。"""
     from src.web.models import AISceneBinding, AIModel
 
     # 1. 场景显式绑定
@@ -232,6 +279,84 @@ def get_model_for_scene(db, scene: str):
 
     # 3. 模型池第一个(兜底)
     return db.query(AIModel).order_by(AIModel.id).first()
+
+
+def _get_model_access(user):
+    """从 users.permissions 提取 model_access 配置(dict 或 None)。
+
+    约定结构: {"mode": "inherit"|"granted"|"deny_all", "model_ids": [全局AIModel.id...]}
+    permissions 兼容旧 list 形态(权限点字符串数组, 无 model_access)。
+    """
+    if user is None:
+        return None
+    perms = getattr(user, "permissions", None)
+    if isinstance(perms, dict):
+        ma = perms.get("model_access")
+        if isinstance(ma, dict):
+            return ma
+    return None
+
+
+def _resolve_user_byok(db, user, scene: str) -> dict | None:
+    """用户 BYOK 解析: user_ai_services 里 scene 匹配或 is_default 的模型。
+
+    Returns:
+        {"name", "model", "base_url", "api_key", "is_default"} | None
+    """
+    if db is None or user is None:
+        return None
+    user_id = getattr(user, "id", None)
+    if not user_id:
+        return None
+    try:
+        from src.web.models import UserAIService
+
+        services = (
+            db.query(UserAIService)
+            .filter(UserAIService.user_id == user_id)
+            .all()
+        )
+    except Exception as e:
+        logger.debug(f"BYOK 查询失败 user={getattr(user, 'username', '?')}: {e}")
+        return None
+    if not services:
+        return None
+
+    for svc in services:
+        try:
+            raw = svc.models_json
+            if isinstance(raw, str):
+                models_json = json.loads(raw) if raw.strip() else []
+            elif isinstance(raw, (list, tuple)):
+                models_json = raw
+            else:
+                models_json = []
+        except Exception:
+            models_json = []
+        if not isinstance(models_json, list):
+            continue
+
+        matched = None
+        default_m = None
+        for m in models_json:
+            if not isinstance(m, dict):
+                continue
+            if m.get("scene") == scene:
+                matched = m
+                break
+            if m.get("is_default") and default_m is None:
+                default_m = m
+        m = matched or default_m
+        if not m:
+            continue
+        return {
+            "name": (m.get("name") or svc.name or "").strip(),
+            "model": (m.get("model") or "").strip(),
+            "base_url": (svc.base_url or "").strip(),
+            "api_key": svc.api_key or "",
+            "is_default": bool(m.get("is_default", False)),
+        }
+    return None
 
 
 def build_system_prompt(db, scene: str, base_prompt: str, user) -> str:

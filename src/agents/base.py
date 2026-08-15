@@ -38,11 +38,14 @@ def _scene_db(context) -> tuple[Any, bool]:
 
 
 def _coerce_bound_model(bound) -> str | None:
-    """get_model_for_scene 返回值可能是模型名字符串或 AIModel 对象 → 统一成字符串。"""
+    """get_model_for_scene 返回值可能是模型名字符串 / AIModel 对象 / BYOK dict → 统一成字符串。"""
     if bound is None:
         return None
     if isinstance(bound, str):
         return bound.strip() or None
+    if isinstance(bound, dict):  # BYOK 返回 {"name","model","base_url","api_key","is_default"}
+        m = bound.get("model")
+        return str(m).strip() if m else None
     m = getattr(bound, "model", None)
     return str(m).strip() if m else None
 
@@ -111,14 +114,18 @@ def apply_scene_binding(context, scene: str, system_prompt: str) -> str:
                 pass
 
 
-def resolve_scene_model(db, scene: str, default_model: str | None = None) -> str | None:
-    """按场景取绑定模型名(供不自带 system prompt 的调用点用); 无绑定回落 default_model。"""
+def resolve_scene_model(db, scene: str, default_model: str | None = None, user=None) -> str | None:
+    """按场景取绑定模型名(供不自带 system prompt 的调用点用); 无绑定回落 default_model。
+
+    user 可选: 传入 User 对象时走用户级解析(BYOK/平台授权/demo 零授权, 见
+    src/core/ai_client.get_model_for_scene), 不传保持系统级全局解析。
+    """
     if db is None:
         return default_model
     try:
         from src.core.ai_client import get_model_for_scene
 
-        bound = _coerce_bound_model(get_model_for_scene(db, scene))
+        bound = _coerce_bound_model(get_model_for_scene(db, scene, user=user))
         return bound or default_model
     except Exception:
         return default_model

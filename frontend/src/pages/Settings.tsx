@@ -73,6 +73,33 @@ interface ModelForm {
   capabilities: string[]
 }
 
+// BYOK(我的服务商): 用户自定义 LLM 服务商(2026-08-15)
+interface MyModelItem {
+  name: string
+  model: string
+  is_default: boolean
+  scene: string
+  capabilities: string[]
+}
+interface MyAIService {
+  id: number
+  name: string
+  base_url: string
+  api_key: string
+  models: MyModelItem[]
+  created_at?: string | null
+}
+interface MyServiceForm {
+  name: string
+  base_url: string
+  api_key: string
+  model_name: string
+  model: string
+  is_default: boolean
+  scene: string
+  capabilities: string[]
+}
+
 interface ChannelForm {
   name: string
   type: string
@@ -161,6 +188,10 @@ const CHANNEL_TYPE_FIELDS: Record<string, { label: string; fields: ChannelFieldD
 }
 
 const emptyServiceForm: ServiceForm = { name: '', base_url: '', api_key: '' }
+const emptyMyServiceForm: MyServiceForm = {
+  name: '', base_url: '', api_key: '',
+  model_name: '', model: '', is_default: true, scene: 'chat', capabilities: [],
+}
 const emptyModelForm: ModelForm = { name: '', service_id: null, model: '', capabilities: [] }
 const emptyChannelForm: ChannelForm = { name: '', type: 'telegram', config: {} }
 
@@ -234,6 +265,15 @@ export default function SettingsPage() {
   const [serviceForm, setServiceForm] = useState<ServiceForm>(emptyServiceForm)
   const [editServiceId, setEditServiceId] = useState<number | null>(null)
   const [serviceKeyVisible, setServiceKeyVisible] = useState(false)
+
+  // BYOK(我的服务商) dialog
+  const [myServices, setMyServices] = useState<MyAIService[]>([])
+  const [myServicesLoading, setMyServicesLoading] = useState(true)
+  const [mySvcDialogOpen, setMySvcDialogOpen] = useState(false)
+  const [mySvcForm, setMySvcForm] = useState<MyServiceForm>(emptyMyServiceForm)
+  const [editMySvcId, setEditMySvcId] = useState<number | null>(null)
+  const [mySvcKeyVisible, setMySvcKeyVisible] = useState(false)
+  const [mySvcSaving, setMySvcSaving] = useState(false)
 
   // Model dialog
   const [modelDialogOpen, setModelDialogOpen] = useState(false)
@@ -349,7 +389,7 @@ export default function SettingsPage() {
 
   const load = async () => {
     try {
-      const [settingsData, keyDataSourcesData, servicesData, channelsData, versionData, healthData, sceneBindingsData] = await Promise.all([
+      const [settingsData, keyDataSourcesData, servicesData, channelsData, versionData, healthData, sceneBindingsData, myServicesData] = await Promise.all([
         fetchAPI<Setting[]>('/settings'),
         fetchAPI<KeyDataSource[]>('/datasources'),
         fetchAPI<AIService[]>('/providers/services'),
@@ -357,6 +397,8 @@ export default function SettingsPage() {
         fetchAPI<{ version: string }>('/settings/version'),
         fetchAPI<AgentsHealth>('/agents/health'),
         listSceneBindings(),
+        // BYOK: 用户自己的服务商(demo 账号后端 403, 静默降级为空列表)
+        fetchAPI<MyAIService[]>('/my-ai-services', { cacheMode: 'reload' }).catch(() => [] as MyAIService[]),
       ])
       setSettings(settingsData)
       setKeyDataSources(keyDataSourcesData)
@@ -366,6 +408,8 @@ export default function SettingsPage() {
       setHealth(healthData)
       setSceneBindings(sceneBindingsData)
       setSceneBindingsLoading(false)
+      setMyServices(myServicesData)
+      setMyServicesLoading(false)
       // 同花顺登录态(静默加载,失败不阻塞)
       try {
         const ths = await fetchAPI<any>('/ths/session')
@@ -734,6 +778,82 @@ export default function SettingsPage() {
     try {
       await fetchAPI(`/providers/services/${id}`, { method: 'DELETE' })
       load()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '删除失败', 'error')
+    }
+  }
+
+  // ── BYOK(我的服务商): 用户自定义 LLM 服务商, 用自己的 API Key(2026-08-15) ──
+  const isDemo = currentUser?.username === 'demo'
+  const reloadMyServices = async () => {
+    try {
+      const data = await fetchAPI<MyAIService[]>('/my-ai-services', { cacheMode: 'reload' })
+      setMyServices(data)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '加载我的服务商失败', 'error')
+    }
+  }
+  const openMySvcDialog = (svc?: MyAIService) => {
+    if (svc) {
+      const m = svc.models?.[0]
+      setMySvcForm({
+        name: svc.name,
+        base_url: svc.base_url,
+        api_key: svc.api_key,
+        model_name: m?.name || '',
+        model: m?.model || '',
+        is_default: m?.is_default ?? true,
+        scene: m?.scene || 'chat',
+        capabilities: m?.capabilities || [],
+      })
+      setEditMySvcId(svc.id)
+    } else {
+      setMySvcForm(emptyMyServiceForm)
+      setEditMySvcId(null)
+    }
+    setMySvcKeyVisible(false)
+    setMySvcDialogOpen(true)
+  }
+  const saveMySvc = async () => {
+    if (!mySvcForm.name.trim() || !mySvcForm.base_url.trim()) return
+    setMySvcSaving(true)
+    try {
+      const models: MyModelItem[] = mySvcForm.model.trim()
+        ? [{
+            name: mySvcForm.model_name.trim() || mySvcForm.model.trim(),
+            model: mySvcForm.model.trim(),
+            is_default: mySvcForm.is_default,
+            scene: mySvcForm.scene,
+            capabilities: mySvcForm.capabilities,
+          }]
+        : []
+      const payload = {
+        name: mySvcForm.name.trim(),
+        base_url: mySvcForm.base_url.trim(),
+        api_key: mySvcForm.api_key,
+        models,
+      }
+      if (editMySvcId) {
+        await fetchAPI(`/my-ai-services/${editMySvcId}`, { method: 'PUT', body: JSON.stringify(payload) })
+        toast('已保存', 'success')
+      } else {
+        await fetchAPI('/my-ai-services', { method: 'POST', body: JSON.stringify(payload) })
+        toast('已添加，调用时将优先使用你的服务商', 'success')
+      }
+      setMySvcDialogOpen(false)
+      reloadMyServices()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '保存失败', 'error')
+    } finally {
+      setMySvcSaving(false)
+    }
+  }
+  const deleteMySvc = async (id: number) => {
+    if (!confirm('删除后将无法使用该服务商调用，确定？')) return
+    try {
+      await fetchAPI(`/my-ai-services/${id}`, { method: 'DELETE' })
+      toast('已删除', 'success')
+      reloadMyServices()
     } catch (e) {
       toast(e instanceof Error ? e.message : '删除失败', 'error')
     }
@@ -1271,6 +1391,63 @@ export default function SettingsPage() {
           </div>
         </section>
 
+        {/* 我的服务商(BYOK): 用户自定义 LLM 服务商, 用自己的 API Key(2026-08-15) */}
+        <section id="sec-my-services" className="card p-4 md:p-6 lg:col-span-12">
+          <div className="flex items-start justify-between mb-4 md:mb-5 gap-3">
+            <div>
+              <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">我的服务商 (BYOK)</h3>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                配置你自己的模型服务商，使用你自己的 API Key 调用（不影响平台配置）。demo 账号不可用。
+              </p>
+            </div>
+            {!isDemo && (
+              <Button size="sm" className="h-8" onClick={() => openMySvcDialog()}>
+                <Plus className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">添加我的服务商</span>
+              </Button>
+            )}
+          </div>
+
+          {isDemo ? (
+            <div className="rounded-xl border border-border/50 bg-accent/20 p-3.5 text-[12px] text-muted-foreground">
+              演示账号为只读浏览模式，不可配置自己的服务商。
+            </div>
+          ) : myServicesLoading ? (
+            <p className="text-[13px] text-muted-foreground text-center py-6">加载中...</p>
+          ) : myServices.length === 0 ? (
+            <p className="text-[13px] text-muted-foreground text-center py-6">暂无我的服务商，点击"添加我的服务商"创建</p>
+          ) : (
+            <div className="space-y-2">
+              {myServices.map(svc => (
+                <div key={svc.id} className="flex items-center justify-between gap-3 rounded-lg bg-accent/30 px-3 py-2.5 hover:bg-accent/50 transition-colors">
+                  <div className="min-w-0 flex items-center gap-2.5">
+                    <Cpu className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                    <div className="min-w-0">
+                      <span className="text-[12px] font-medium text-foreground">{svc.name}</span>
+                      <p className="text-[10px] text-muted-foreground truncate font-mono">{svc.base_url}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${
+                      svc.api_key
+                        ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-400'
+                        : 'border-amber-500/25 bg-amber-500/10 text-amber-400'
+                    }`}>
+                      {svc.api_key ? '********' : '未配置 Key'}
+                    </span>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openMySvcDialog(svc)} title="编辑我的服务商">
+                      <Pencil className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-destructive" onClick={() => deleteMySvc(svc.id)} title="删除我的服务商">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
         {/* Notify Channel Section */}
         <section id="sec-notify" className="card p-4 md:p-6 lg:col-span-5">
           <div className="flex items-start justify-between mb-4 md:mb-5 gap-3">
@@ -1760,6 +1937,132 @@ export default function SettingsPage() {
               <Button variant="ghost" onClick={() => setServiceDialogOpen(false)}>取消</Button>
               <Button onClick={saveService} disabled={!serviceForm.name || !serviceForm.base_url}>
                 {editServiceId ? '保存' : '创建'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 我的服务商(BYOK) Dialog */}
+      <Dialog open={mySvcDialogOpen} onOpenChange={setMySvcDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editMySvcId ? '编辑我的服务商' : '添加我的服务商'}</DialogTitle>
+            <DialogDescription>用自己的 API Key 配置服务商，仅你自己可见（不影响平台配置）</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div>
+              <Label>名称</Label>
+              <Input
+                value={mySvcForm.name}
+                onChange={e => setMySvcForm({ ...mySvcForm, name: e.target.value })}
+                placeholder="如 OpenAI、DeepSeek"
+              />
+            </div>
+            <div>
+              <Label>Base URL</Label>
+              <Input
+                value={mySvcForm.base_url}
+                onChange={e => setMySvcForm({ ...mySvcForm, base_url: e.target.value })}
+                placeholder="https://api.openai.com/v1"
+                className="font-mono"
+              />
+            </div>
+            <div>
+              <Label>API Key</Label>
+              <div className="relative">
+                <Input
+                  type={mySvcKeyVisible ? 'text' : 'password'}
+                  value={mySvcForm.api_key}
+                  onChange={e => setMySvcForm({ ...mySvcForm, api_key: e.target.value })}
+                  placeholder={editMySvcId ? '留空或保持 ******** 则不修改' : 'sk-...'}
+                  className="font-mono pr-10"
+                />
+                <Button
+                  type="button" variant="ghost" size="icon"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8"
+                  onClick={() => setMySvcKeyVisible(!mySvcKeyVisible)}
+                >
+                  {mySvcKeyVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </Button>
+              </div>
+            </div>
+            <div className="rounded-xl border border-border/50 bg-accent/20 p-3 space-y-3">
+              <p className="text-[11px] font-medium text-foreground">模型（单模型简化配置，可留空稍后补充）</p>
+              <div>
+                <Label>模型标识</Label>
+                <Input
+                  value={mySvcForm.model}
+                  onChange={e => setMySvcForm({ ...mySvcForm, model: e.target.value })}
+                  placeholder="gpt-4o / deepseek-chat"
+                  className="font-mono"
+                />
+              </div>
+              <div>
+                <Label>显示名称 <span className="text-muted-foreground font-normal">(选填，默认同模型标识)</span></Label>
+                <Input
+                  value={mySvcForm.model_name}
+                  onChange={e => setMySvcForm({ ...mySvcForm, model_name: e.target.value })}
+                  placeholder="不填则使用模型标识"
+                />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <Label>使用场景</Label>
+                  <Select value={mySvcForm.scene} onValueChange={v => setMySvcForm({ ...mySvcForm, scene: v })}>
+                    <SelectTrigger className="h-9 text-[12px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="chat">日常对话</SelectItem>
+                      <SelectItem value="trading_agents">深度分析</SelectItem>
+                      <SelectItem value="reports">报告生成</SelectItem>
+                      <SelectItem value="referee">AI 裁判</SelectItem>
+                      <SelectItem value="selfcheck">自检</SelectItem>
+                      <SelectItem value="insights">机会评分</SelectItem>
+                      <SelectItem value="vision">视觉(图片识别)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>能力</Label>
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    {(['chat', 'vision', 'tools'] as const).map(cap => (
+                      <button
+                        key={cap}
+                        type="button"
+                        onClick={() => setMySvcForm({
+                          ...mySvcForm,
+                          capabilities: mySvcForm.capabilities.includes(cap)
+                            ? mySvcForm.capabilities.filter(c => c !== cap)
+                            : [...mySvcForm.capabilities, cap],
+                        })}
+                        className={`px-2 py-1 rounded-md text-[11px] border transition-colors ${
+                          mySvcForm.capabilities.includes(cap)
+                            ? 'border-primary/40 bg-primary/10 text-primary'
+                            : 'border-border/60 bg-background/60 text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        {cap === 'chat' ? '对话' : cap === 'vision' ? '视觉' : '工具'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-[12px] text-muted-foreground cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={mySvcForm.is_default}
+                  onChange={e => setMySvcForm({ ...mySvcForm, is_default: e.target.checked })}
+                  className="accent-primary"
+                />
+                设为默认模型
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" onClick={() => setMySvcDialogOpen(false)}>取消</Button>
+              <Button onClick={saveMySvc} disabled={!mySvcForm.name.trim() || !mySvcForm.base_url.trim() || mySvcSaving}>
+                {mySvcSaving ? '保存中…' : editMySvcId ? '保存' : '创建'}
               </Button>
             </div>
           </div>

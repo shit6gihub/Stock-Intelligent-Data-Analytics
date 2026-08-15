@@ -1,12 +1,42 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Users, Plus, Trash2, KeyRound, Ban, CheckCircle2, UserCog } from 'lucide-react'
-import { authApi, UserInfo } from '@panwatch/api'
+import { Users, Plus, Trash2, KeyRound, Ban, CheckCircle2, UserCog, Boxes, Loader2 } from 'lucide-react'
+import { authApi, fetchAPI, UserInfo } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@panwatch/base-ui/components/ui/dialog'
 
 interface Props {
   currentUser: UserInfo | null
 }
+
+type ModelAccessMode = 'inherit' | 'granted' | 'deny_all'
+
+interface ModelInfo {
+  id: number
+  name: string
+  model: string
+  service_name: string | null
+}
+
+interface ModelAccessData {
+  mode: ModelAccessMode
+  model_ids: number[]
+  all_models: ModelInfo[]
+  user_role: string
+  username: string
+}
+
+const MODE_OPTIONS: { value: ModelAccessMode; label: string; hint: string }[] = [
+  { value: 'inherit', label: '继承全部平台模型', hint: '未单独授权时, 可使用平台当前全部模型' },
+  { value: 'granted', label: '仅使用勾选模型', hint: '只能使用下方勾选的模型(不勾选=全部禁用)' },
+  { value: 'deny_all', label: '全部禁用', hint: '不可使用任何 AI 模型' },
+]
 
 export default function UserManagement({ currentUser }: Props) {
   const { toast } = useToast()
@@ -19,6 +49,13 @@ export default function UserManagement({ currentUser }: Props) {
   // 改密对话框
   const [resetTarget, setResetTarget] = useState<UserInfo | null>(null)
   const [resetPass, setResetPass] = useState('')
+  // 模型授权对话框
+  const [accessTarget, setAccessTarget] = useState<UserInfo | null>(null)
+  const [accessLoading, setAccessLoading] = useState(false)
+  const [accessSaving, setAccessSaving] = useState(false)
+  const [accessMode, setAccessMode] = useState<ModelAccessMode>('inherit')
+  const [accessModels, setAccessModels] = useState<ModelInfo[]>([])
+  const [checkedIds, setCheckedIds] = useState<number[]>([])
 
   const isOwner = currentUser?.role === 'owner'
 
@@ -87,6 +124,48 @@ export default function UserManagement({ currentUser }: Props) {
     }
   }
 
+  // ── 模型授权 ────────────────────────────────────────────────────────
+  const openModelAccess = async (u: UserInfo) => {
+    setAccessTarget(u)
+    setAccessLoading(true)
+    setAccessSaving(false)
+    try {
+      const data = await fetchAPI<ModelAccessData>(`/users/${u.id}/model-access`, { cacheMode: 'reload' })
+      setAccessMode(data.mode)
+      setAccessModels(data.all_models || [])
+      setCheckedIds(data.model_ids || [])
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '加载模型授权失败', 'error')
+      setAccessTarget(null)
+    } finally {
+      setAccessLoading(false)
+    }
+  }
+
+  const toggleModel = (id: number) => {
+    setCheckedIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]))
+  }
+
+  const saveModelAccess = async () => {
+    if (!accessTarget) return
+    setAccessSaving(true)
+    try {
+      await fetchAPI(`/users/${accessTarget.id}/model-access`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          mode: accessMode,
+          ...(accessMode === 'granted' ? { model_ids: checkedIds } : {}),
+        }),
+      })
+      toast(`${accessTarget.username} 的模型授权已保存`, 'success')
+      setAccessTarget(null)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '保存失败', 'error')
+    } finally {
+      setAccessSaving(false)
+    }
+  }
+
   if (!isOwner) {
     return (
       <div className="rounded-xl border border-border/50 bg-card p-6 text-center text-[13px] text-muted-foreground">
@@ -145,6 +224,15 @@ export default function UserManagement({ currentUser }: Props) {
               </span>
             </div>
             <div className="flex items-center gap-1.5">
+              {u.id !== currentUser?.id && (
+                <button
+                  className="flex items-center gap-1 rounded border border-border/50 px-1.5 py-1 text-[11px] text-muted-foreground hover:border-primary/30 hover:text-primary"
+                  title="配置该用户可用的 AI 模型"
+                  onClick={() => void openModelAccess(u)}
+                >
+                  <Boxes className="h-3 w-3" /> 模型授权
+                </button>
+              )}
               {u.role !== 'owner' && (
                 <>
                   <button
@@ -194,6 +282,95 @@ export default function UserManagement({ currentUser }: Props) {
           </div>
         </div>
       )}
+
+      <Dialog open={!!accessTarget} onOpenChange={(open) => { if (!open) setAccessTarget(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>模型授权</DialogTitle>
+            <DialogDescription>
+              {accessTarget ? `配置 ${accessTarget.username} 可使用的 AI 模型` : ' '}
+            </DialogDescription>
+          </DialogHeader>
+
+          {accessLoading ? (
+            <div className="flex items-center justify-center gap-2 py-8 text-[12px] text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> 加载中
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* 模式三选 */}
+              <div className="space-y-2">
+                {MODE_OPTIONS.map(opt => (
+                  <label
+                    key={opt.value}
+                    className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border/50 bg-background/50 px-3 py-2.5 transition-colors hover:border-primary/30"
+                  >
+                    <input
+                      type="radio"
+                      name="model-access-mode"
+                      className="mt-0.5 h-3.5 w-3.5 accent-[hsl(240_60%_50%)]"
+                      checked={accessMode === opt.value}
+                      onChange={() => setAccessMode(opt.value)}
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-[12px] font-medium text-foreground">{opt.label}</span>
+                      <span className="block text-[11px] text-muted-foreground">{opt.hint}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+
+              {/* 仅勾选模式下: 模型 checkbox 列表 */}
+              {accessMode === 'granted' && (
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between text-[11px] text-muted-foreground">
+                    <span>可选模型({accessModels.length})</span>
+                    <button
+                      className="text-[11px] text-primary hover:underline"
+                      onClick={() => setCheckedIds(accessModels.map(m => m.id))}
+                    >
+                      全选
+                    </button>
+                  </div>
+                  <div className="max-h-52 space-y-1 overflow-y-auto rounded-lg border border-border/40 bg-background/40 p-2">
+                    {accessModels.length === 0 && (
+                      <div className="py-4 text-center text-[12px] text-muted-foreground">暂无可用模型</div>
+                    )}
+                    {accessModels.map(m => (
+                      <label
+                        key={m.id}
+                        className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-accent"
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5 accent-[hsl(240_60%_50%)]"
+                          checked={checkedIds.includes(m.id)}
+                          onChange={() => toggleModel(m.id)}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[12px] font-medium text-foreground">{m.name}</span>
+                          <span className="block truncate font-mono text-[10px] text-muted-foreground">
+                            {m.model}{m.service_name ? ` · ${m.service_name}` : ''}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 操作 */}
+              <div className="flex justify-end gap-2 border-t border-border/40 pt-3">
+                <Button size="sm" variant="outline" onClick={() => setAccessTarget(null)}>取消</Button>
+                <Button size="sm" onClick={() => void saveModelAccess()} disabled={accessSaving}>
+                  {accessSaving ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
+                  {accessSaving ? '保存中' : '保存'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

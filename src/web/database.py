@@ -306,6 +306,31 @@ CREATE TABLE IF NOT EXISTS ai_scene_bindings (
             )
             conn.commit()
 
+        # 用户 BYOK AI 服务表(2026-08-15): 同上, create_all 已建(ORM 注册),
+        # 这里兜底保证存量库直接升级也有该表。
+        if not _has_table(conn, "user_ai_services"):
+            conn.execute(
+                text(
+                    """
+CREATE TABLE IF NOT EXISTS user_ai_services (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id VARCHAR(36) NOT NULL,
+  name VARCHAR NOT NULL,
+  base_url VARCHAR NOT NULL,
+  api_key VARCHAR DEFAULT '',
+  models_json TEXT NOT NULL DEFAULT '[]',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+"""
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_user_ai_services_user_id ON user_ai_services(user_id);"
+                )
+            )
+            conn.commit()
+
 
 def _migrate_old_providers(engine):
     """如果存在旧的 ai_providers 表，迁移数据到 ai_services + ai_models"""

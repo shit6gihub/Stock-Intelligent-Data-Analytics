@@ -58,7 +58,7 @@ const desktopNavGroups = [
 // 不再用 slice(0,5) 依赖 navItems 顺序); navItems 数组顺序保持不动, 桌面端平铺分组完全不变
 const MOBILE_PRIMARY_TO = ['/', '/portfolio', '/opportunities', '/forecast', '/alerts']
 
-// ═══ demo 账号只读模式(2026-08-15): 从 JWT payload 解出 username, 隐藏管理类导航 ═══
+// ═══ demo 账号只读模式(2026-08-15): 从 JWT payload 解出 username/role, 按角色控制导航 ═══
 const getJwtUsername = (): string | null => {
   try {
     const t = localStorage.getItem('token') || ''
@@ -67,9 +67,23 @@ const getJwtUsername = (): string | null => {
     return payload.username || null
   } catch { return null }
 }
+// 2026-08-15: 从 JWT payload 取 role(owner|member|guest); demo 账号兼容按 username==demo 判定
+const getJwtRole = (): string | null => {
+  try {
+    const t = localStorage.getItem('token') || ''
+    if (!t) return null
+    const payload = JSON.parse(atob(t.split('.')[1]))
+    return payload.role || null
+  } catch { return null }
+}
 const isDemoUser = (): boolean => getJwtUsername() === 'demo'
-// demo 隐藏的管理/个人页面(数据源/AI配置/Agent/策略等核心内容; 设置/持仓/自选可浏览但只读)
-const DEMO_HIDDEN_PATHS = new Set(['/paper-trading', '/alerts', '/shadow', '/agents', '/strategies', '/datasources'])
+// 是否 guest 角色: role==guest 或 demo 账号(后端口径: username=="demo" || role=="guest")
+const isGuestUser = (): boolean => getJwtRole() === 'guest' || isDemoUser()
+// 角色化隐藏导航: owner/member 全部显示(现状不变); guest(demo) 隐藏管理/个人页面
+// (数据源/AI配置/Agent/策略等核心内容; 设置/持仓/自选可浏览但只读)
+const GUEST_HIDDEN_PATHS = ['/paper-trading', '/alerts', '/shadow', '/agents', '/strategies', '/datasources']
+const isNavHiddenForGuest = (to: string): boolean =>
+  GUEST_HIDDEN_PATHS.includes(to) || to.startsWith('/manage')
 const mobilePrimaryNavItems = navItems.filter(n => MOBILE_PRIMARY_TO.includes(n.to))
 const mobileMoreNavItems = navItems.filter(n => !MOBILE_PRIMARY_TO.includes(n.to))
 
@@ -227,8 +241,8 @@ function App() {
             {/* Nav Links — 桌面端三组全平铺(行情/交易/系统), 组间 1px 分隔线, 不再 slice(0,5) */}
             <nav className="flex items-center gap-1 min-w-0 flex-1 justify-center overflow-x-auto">
               {desktopNavGroups.map((group, gi) => {
-                // demo 账号: 隐藏管理/个人页面导航(数据源/设置/Agent/策略/持仓等)
-                const items = group.items.filter(n => !isDemoUser() || !DEMO_HIDDEN_PATHS.has(n.to))
+                // guest(demo): 隐藏管理/个人页面导航(数据源/设置/Agent/策略/持仓等; 按角色计算)
+                const items = group.items.filter(n => !isGuestUser() || !isNavHiddenForGuest(n.to))
                 if (items.length === 0) return null
                 return (
                 <Fragment key={group.key}>
@@ -323,7 +337,7 @@ function App() {
               <NotificationBell size="sm" />
               <AccountMenu
                 size="sm"
-                navItems={isDemoUser() ? mobileMoreNavItems.filter(n => !DEMO_HIDDEN_PATHS.has(n.to)) : mobileMoreNavItems}
+                navItems={isGuestUser() ? mobileMoreNavItems.filter(n => !isNavHiddenForGuest(n.to)) : mobileMoreNavItems}
                 mode={mode}
                 onSetMode={setMode}
                 onOpenSelfCheck={() => setSelfCheckOpen(true)}
@@ -336,7 +350,7 @@ function App() {
       {/* Mobile Bottom Nav */}
       <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-card border-t border-border px-2 pb-[env(safe-area-inset-bottom)]">
         <div className="flex items-center justify-around h-14">
-          {mobilePrimaryNavItems.filter(n => !isDemoUser() || !DEMO_HIDDEN_PATHS.has(n.to)).map(({ to, icon: Icon, label }) => {
+          {mobilePrimaryNavItems.filter(n => !isGuestUser() || !isNavHiddenForGuest(n.to)).map(({ to, icon: Icon, label }) => {
             const isActive = to === '/' ? location.pathname === '/' : location.pathname.startsWith(to)
             return (
               <NavLink
