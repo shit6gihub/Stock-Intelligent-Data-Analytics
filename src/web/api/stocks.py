@@ -226,6 +226,12 @@ def get_quotes(db: Session = Depends(get_db), user: User = Depends(get_current_u
 
 @router.post("", response_model=StockResponse)
 def create_stock(stock: StockCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    # demo 账号: 自选数量上限 1 只(演示体验; 防公开账号堆积垃圾数据)
+    if user.username == "demo":
+        own_count = db.query(Stock).filter(Stock.user_id == user.id).count()
+        if own_count >= 1:
+            raise HTTPException(403, "演示账号仅可添加 1 只自选股。请先删除当前自选,再添加其他股票体验。")
+
     existing = db.query(Stock).filter(
         Stock.symbol == stock.symbol, Stock.market == stock.market,
         or_(Stock.user_id == user.id, Stock.user_id.is_(None)),
@@ -274,10 +280,16 @@ def update_stock(stock_id: int, stock: StockUpdate, db: Session = Depends(get_db
 
 
 @router.delete("/{stock_id}")
-def delete_stock(stock_id: int, db: Session = Depends(get_db)):
+def delete_stock(stock_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     db_stock = db.query(Stock).filter(Stock.id == stock_id).first()
     if not db_stock:
         raise HTTPException(404, "股票不存在")
+
+    # 归属校验(2026-08-15 安全加固): 只能删自己的自选; 共享默认项(user_id NULL)仅 owner 可删
+    if db_stock.user_id is not None and db_stock.user_id != user.id:
+        raise HTTPException(403, "无权删除该自选(非本人创建)")
+    if db_stock.user_id is None and user.role != "owner":
+        raise HTTPException(403, "无权删除共享默认自选")
 
     # 删除股票前，要求先清理持仓，避免误删资产数据。
     has_position = db.query(Position.id).filter(Position.stock_id == stock_id).first()

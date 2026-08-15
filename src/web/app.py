@@ -122,8 +122,13 @@ async def demo_isolation_middleware(request: Request, call_next):
 
     if username == "demo":
         msg = "演示账号为只读浏览模式,不可修改数据或访问管理页面。请自行部署体验完整功能: https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics"
-        # 1) 只读: 一切写操作拒绝
-        if method not in ("GET", "HEAD", "OPTIONS"):
+        # demo 专属例外: 自选增删(自己的数据, user_id 隔离; 数量上限在接口层)
+        is_own_watchlist_write = (
+            (method == "POST" and path.rstrip("/") == "/api/stocks")
+            or (method == "DELETE" and path.startswith("/api/stocks/"))
+        )
+        # 1) 写操作: 除自选增删外一律拒绝
+        if method not in ("GET", "HEAD", "OPTIONS") and not is_own_watchlist_write:
             return JSONResponse(status_code=403, content={"code": 403, "success": False, "message": msg})
         # 2) 管理区页面隔离
         if path.startswith(_DEMO_ADMIN_PREFIXES):
