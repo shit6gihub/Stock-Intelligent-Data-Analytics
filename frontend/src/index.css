@@ -4,29 +4,29 @@
 
 @layer base {
   :root {
-    /* 反AI模板 P1: 中性色色相 220→215 统一向锚点色收敛(消除 AI 灰);卡片不再纯白 */
-    --background: 215 20% 97%;
-    --foreground: 215 20% 10%;
-    --card: 215 25% 99%; /* 纸面白(极低色度),替代纯白卡 */
-    --card-foreground: 215 20% 10%;
-    --popover: 215 25% 99%; /* 纸面白(极低色度),替代纯白 */
-    --popover-foreground: 215 20% 10%;
+    /* 反AI模板 P1: 中性色色相 220→240 统一向锚点色收敛(消除 AI 灰);卡片不再纯白 */
+    --background: 240 20% 97%;
+    --foreground: 240 20% 10%;
+    --card: 240 25% 99%; /* 纸面白(极低色度),替代纯白卡 */
+    --card-foreground: 240 20% 10%;
+    --popover: 240 25% 99%; /* 纸面白(极低色度),替代纯白 */
+    --popover-foreground: 240 20% 10%;
     /* 锚点色: A股数据感深青钢蓝,替代 shadcn 默认 234 蓝(AI模板特征) */
-    --primary: 215 70% 45%;
+    --primary: 240 70% 45%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 215 15% 94%;
-    --secondary-foreground: 215 15% 40%;
-    --muted: 215 15% 94%;
-    --muted-foreground: 215 10% 48%; /* make-interfaces: 次级文字对比度余量(4.9:1) */
-    --accent: 215 15% 92%;
-    --accent-foreground: 215 20% 10%;
+    --secondary: 240 15% 94%;
+    --secondary-foreground: 240 15% 40%;
+    --muted: 240 15% 94%;
+    --muted-foreground: 240 10% 48%; /* make-interfaces: 次级文字对比度余量(4.9:1) */
+    --accent: 240 15% 92%;
+    --accent-foreground: 240 20% 10%;
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
     --success: 152 60% 42%;
     --success-foreground: 0 0% 100%;
-    --border: 215 15% 90%;
-    --input: 215 15% 90%;
-    --ring: 215 70% 45%; /* 跟随锚点色 */
+    --border: 240 15% 90%;
+    --input: 240 15% 90%;
+    --ring: 240 70% 45%; /* 跟随锚点色 */
     --radius: 0.75rem;
 
     /* 数字专用字体栈(金融数据感): 指数点位/涨跌幅/预测值等数字大字处使用 */
@@ -45,28 +45,28 @@
   }
 
   .dark {
-    /* 反AI模板 P1: 暗色同样统一色相 215,锚点色提亮为 215 70% 60% */
-    --background: 215 20% 6%;
-    --foreground: 215 15% 90%;
-    --card: 215 20% 10%;
-    --card-foreground: 215 15% 90%;
-    --popover: 215 20% 10%;
-    --popover-foreground: 215 15% 90%;
-    --primary: 215 70% 60%;
+    /* 反AI模板 P1: 暗色同样统一色相 215,锚点色提亮为 240 70% 60% */
+    --background: 240 20% 6%;
+    --foreground: 240 15% 90%;
+    --card: 240 20% 10%;
+    --card-foreground: 240 15% 90%;
+    --popover: 240 20% 10%;
+    --popover-foreground: 240 15% 90%;
+    --primary: 240 70% 60%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 215 15% 15%;
-    --secondary-foreground: 215 15% 70%;
-    --muted: 215 15% 15%;
-    --muted-foreground: 215 10% 58%; /* make-interfaces: 暗色次级文字对比度(≈5.6:1) */
-    --accent: 215 15% 18%;
-    --accent-foreground: 215 15% 90%;
+    --secondary: 240 15% 15%;
+    --secondary-foreground: 240 15% 70%;
+    --muted: 240 15% 15%;
+    --muted-foreground: 240 10% 58%; /* make-interfaces: 暗色次级文字对比度(≈5.6:1) */
+    --accent: 240 15% 18%;
+    --accent-foreground: 240 15% 90%;
     --destructive: 0 60% 45%;
     --destructive-foreground: 0 0% 100%;
     --success: 152 50% 38%;
     --success-foreground: 0 0% 100%;
-    --border: 215 15% 16%;
-    --input: 215 15% 18%;
-    --ring: 215 70% 60%; /* 跟随锚点色 */
+    --border: 240 15% 16%;
+    --input: 240 15% 18%;
+    --ring: 240 70% 60%; /* 跟随锚点色 */
   }
 
   /* 密度档位覆盖(normal 为默认,不加选择器即保持原样):
@@ -108,13 +108,13 @@
   /* 反AI模板④: hover 层级 = 表面亮度抬升 + 中性边框变化,去掉 primary 彩色光晕。
      亮色: 纸面微提白 + 轻中性阴影(无彩色);暗色: 背景提亮一档 + 边框中性提亮,不用阴影。 */
   .card-hover:hover {
-    background-color: hsl(215 25% 100%); /* 亮色: 比 --card(99%) 提亮一档的纸面白 */
+    background-color: hsl(240 25% 100%); /* 亮色: 比 --card(99%) 提亮一档的纸面白 */
     border-color: hsl(var(--border));
-    box-shadow: 0 1px 0 hsl(var(--border) / 0.4), 0 4px 14px -6px hsl(215 15% 40% / 0.16); /* 轻中性阴影,无 primary 色 */
+    box-shadow: 0 1px 0 hsl(var(--border) / 0.4), 0 4px 14px -6px hsl(240 15% 40% / 0.16); /* 轻中性阴影,无 primary 色 */
   }
   .dark .card-hover:hover {
-    background-color: hsl(215 20% 13.5%); /* 暗色: 表面亮度抬升(比 --card 的 10% 亮一档) */
-    border-color: hsl(215 15% 24%);       /* 1px 边框中性提亮 */
+    background-color: hsl(240 20% 13.5%); /* 暗色: 表面亮度抬升(比 --card 的 10% 亮一档) */
+    border-color: hsl(240 15% 24%);       /* 1px 边框中性提亮 */
     box-shadow: none;                     /* 暗色层级靠亮度,不用阴影 */
   }
   .card-subtle {

@@ -531,8 +531,10 @@ export default function ForecastPage() {
         </div>
       </div>
 
+      {/* 三列工作台(设计蓝本): 输入(窄) | 结果/模型对比(宽); 移动端堆叠 */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
       {/* 输入区 */}
-      <div className="card p-4">
+      <div className="card p-4 xl:col-span-3">
         <div className="mb-3">
           <div className="text-lg font-bold">发起预测</div>
         </div>
@@ -617,7 +619,7 @@ export default function ForecastPage() {
 
       {/* 预测进度日志 */}
       {(loading || taskLogs.length > 0) && (
-        <div className="card p-4">
+        <div className="card p-4 xl:col-span-9">
           <div className="flex items-center gap-2 mb-2">
             <span className={`h-2.5 w-2.5 rounded-full ${taskStatus === 'done' ? 'bg-green-500' : taskStatus === 'error' ? 'bg-red-500' : 'bg-blue-500 animate-pulse'}`} />
             <span className="font-medium">
@@ -639,7 +641,7 @@ export default function ForecastPage() {
 
       {/* 预测结果 */}
       {result && (
-        <div className="card p-4">
+        <div className="card p-4 xl:col-span-9">
           <div className="mb-3">
             <div className="flex items-center justify-between">
               <span>预测结果：{result.symbol}{result.stock_name ? ` ${result.stock_name}` : ''}</span>
@@ -782,6 +784,7 @@ export default function ForecastPage() {
           </div>
         </div>
       )}
+      </div>{/* 三列工作台 grid 结束 */}
 
       {/* 预测报告（双格式） */}
       {report && (
