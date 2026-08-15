@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Check, Eye, EyeOff, Plus, Pencil, Trash2, Star, Send, Cpu, Play, Download, Upload, FileJson, BarChart3, User, Radar, RefreshCw, QrCode, MonitorUp, MailCheck, Copy } from 'lucide-react'
+import { Check, Eye, EyeOff, Plus, Pencil, Trash2, Star, Send, Cpu, Play, Download, Upload, FileJson, BarChart3, User, Radar, RefreshCw, QrCode, MonitorUp, MailCheck, Copy, KeyRound } from 'lucide-react'
 import { fetchAPI, listSceneBindings, setSceneBinding, wechatBindStart, wechatBindStatus, wechatBindUnbind, wechatBindGet, type AIService, type AIModel, type NotifyChannel, type SceneBinding, type UserInfo, type SubscriptionItem, type WechatBindStartResult, type WechatBindInfo, authApi } from '@panwatch/api'
 import { QRCodeSVG } from 'qrcode.react'
 import UserManagement from '@/components/UserManagement'
@@ -193,6 +193,15 @@ function CapBadges({ caps }: { caps?: string[] }) {
 const SECRET_SETTING_KEYS = new Set(['wudao_mcp_token', 'zhitu_token', 'tdx_api_key'])
 const SECRET_MASK = '********'
 
+// 数据源接口 Key 元信息(与后端 SETTING_DESCRIPTIONS 对齐)
+const DATA_SOURCE_KEYS: Array<{ key: string; name: string; desc: string }> = [
+  { key: 'wudao_mcp_token', name: '悟道', desc: '竞价 / 题材数据源' },
+  { key: 'zhitu_token', name: '智兔', desc: '分红 / 股东数据源 · 200次/天' },
+  { key: 'tdx_api_key', name: '通达信', desc: '问小达 MCP · 自然语言投研 / 选股' },
+]
+
+const STOCK_LINK_OPTIONS: Record<string, string> = { xueqiu: '雪球' }
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Setting[]>([])
   const [keyDataSources, setKeyDataSources] = useState<KeyDataSource[]>([])
@@ -202,7 +211,6 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [health, setHealth] = useState<AgentsHealth | null>(null)
   const [saving, setSaving] = useState<string | null>(null)
-  const [saved, setSaved] = useState<string | null>(null)
   const [edited, setEdited] = useState<Record<string, string>>({})
   // 多用户(2026-08-10 阶段5): 当前用户 + 订阅
   const [currentUser, setCurrentUser] = useState<UserInfo | null>(null)
@@ -214,6 +222,12 @@ export default function SettingsPage() {
   const [thsLoading, setThsLoading] = useState(false)
 
   const [systemQuery, setSystemQuery] = useState('')
+
+  // 接口 Key 管理第二窗口(Dialog): 单个数据源凭证编辑
+  const [keyDialogKey, setKeyDialogKey] = useState<string | null>(null)
+  const [keyInputVisible, setKeyInputVisible] = useState(false)
+  // 系统设置编辑第二窗口(Dialog)
+  const [sysDialogKey, setSysDialogKey] = useState<string | null>(null)
 
   // Service dialog
   const [serviceDialogOpen, setServiceDialogOpen] = useState(false)
@@ -539,7 +553,7 @@ export default function SettingsPage() {
   }
 
 
-  const handleSave = async (key: string) => {
+  const handleSave = async (key: string): Promise<boolean> => {
     setSaving(key)
     try {
       const existing = settings.find(s => s.key === key)?.value
@@ -549,9 +563,7 @@ export default function SettingsPage() {
         const newEdited = { ...edited }
         delete newEdited[key]
         setEdited(newEdited)
-        setSaved(key)
-        setTimeout(() => setSaved(null), 2000)
-        return
+        return true
       }
       await fetchAPI(`/settings/${key}`, {
         method: 'PUT',
@@ -560,13 +572,55 @@ export default function SettingsPage() {
       const newEdited = { ...edited }
       delete newEdited[key]
       setEdited(newEdited)
-      setSaved(key)
-      setTimeout(() => setSaved(null), 2000)
       load()
+      return true
     } catch {
       toast('保存失败', 'error')
+      return false
     } finally {
       setSaving(null)
+    }
+  }
+
+  // 接口 Key 管理 Dialog 打开/关闭
+  const openKeyDialog = (key: string) => {
+    // 打开即清空该 key 的未保存编辑,以当前 DB 状态为准
+    setEdited(prev => {
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+    setKeyInputVisible(false)
+    setKeyDialogKey(key)
+  }
+  const closeKeyDialog = () => {
+    setKeyDialogKey(null)
+    setKeyInputVisible(false)
+  }
+  const saveKeyDialog = async () => {
+    if (!keyDialogKey) return
+    const ok = await handleSave(keyDialogKey)
+    if (ok) {
+      closeKeyDialog()
+      toast('接口 Key 已保存', 'success')
+    }
+  }
+
+  // 系统设置编辑 Dialog
+  const openSysDialog = (setting: Setting) => {
+    setEdited(prev => {
+      const next = { ...prev }
+      delete next[setting.key]
+      return next
+    })
+    setSysDialogKey(setting.key)
+  }
+  const saveSysDialog = async () => {
+    if (!sysDialogKey) return
+    const ok = await handleSave(sysDialogKey)
+    if (ok) {
+      setSysDialogKey(null)
+      toast('设置已保存', 'success')
     }
   }
 
@@ -1405,52 +1459,31 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
-            <div className="space-y-4">
-              {/* 数据源 Token 组 */}
-              <div className="text-[11px] font-medium text-muted-foreground mt-1">数据源 Token</div>
-              {settings.filter(s => s.key === 'wudao_mcp_token' || s.key === 'zhitu_token' || s.key === 'tdx_api_key').map(setting => {
-                const isChanged = setting.key in edited
+            <div className="space-y-2">
+              {DATA_SOURCE_KEYS.map(item => {
+                const setting = settings.find(s => s.key === item.key)
+                const configured = !!setting && setting.value === SECRET_MASK
                 return (
-                  <div key={setting.key} className="rounded-xl bg-accent/30 p-3.5">
-                    <Label className="text-[12px]">{setting.description || setting.key}</Label>
-                    <div className="flex items-center gap-2.5 mt-2">
-                      <div className="flex-1 relative">
-                        <Input
-                          type="password"
-                          value={isChanged ? (edited[setting.key] ?? '') : ''}
-                          onChange={e => setEdited({ ...edited, [setting.key]: e.target.value })}
-                          className={`font-mono ${isChanged ? 'ring-2 ring-primary/20 border-primary/30' : ''}`}
-                          placeholder={setting.value === SECRET_MASK ? '已配置（输入新 Key 可替换，留空不变）' : '未配置，输入接口 Key'}
-                        />
-                        {!isChanged && setting.value === SECRET_MASK && (
-                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-emerald-500">已配置</span>
-                        )}
+                  <div key={item.key} className="flex items-center justify-between gap-3 rounded-lg bg-accent/30 px-3 py-2.5 hover:bg-accent/50 transition-colors">
+                    <div className="min-w-0 flex items-center gap-2.5">
+                      <KeyRound className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                      <div className="min-w-0">
+                        <span className="text-[12px] font-medium text-foreground">{item.name}</span>
+                        <p className="text-[10px] text-muted-foreground truncate">{item.desc}</p>
                       </div>
-                      <button
-                        onClick={() => handleSave(setting.key)}
-                        disabled={!isChanged || saving === setting.key}
-                        className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
-                          saved === setting.key
-                            ? 'bg-emerald-500/10 text-emerald-600'
-                            : isChanged
-                              ? 'bg-primary text-white'
-                              : 'text-muted-foreground/30'
-                        }`}
-                      >
-                        {saving === setting.key ? (
-                          <span className="w-4 h-4 border-2 border-current/30 border-t-current rounded-full animate-spin" />
-                        ) : (
-                          <Check className="w-4 h-4" />
-                        )}
-                      </button>
                     </div>
-                    <p className="text-[10px] text-muted-foreground mt-2">
-                      {setting.key === 'wudao_mcp_token'
-                        ? '悟道 MCP Token（竞价/题材数据）'
-                        : setting.key === 'tdx_api_key'
-                        ? '通达信问小达 MCP Token（自然语言投研/选股数据源）'
-                        : '智兔数据接口 Token（分红/股东数据，200次/天）'}。读取优先级：设置页 &gt; 环境变量 &gt; 内置默认。
-                    </p>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${
+                        configured
+                          ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-400'
+                          : 'border-amber-500/25 bg-amber-500/10 text-amber-400'
+                      }`}>
+                        {configured ? '已配置' : '未配置'}
+                      </span>
+                      <Button size="sm" variant="secondary" className="h-7 px-2 text-[11px]" onClick={() => openKeyDialog(item.key)}>
+                        管理
+                      </Button>
+                    </div>
                   </div>
                 )
               })}
@@ -1517,62 +1550,24 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            <div className="space-y-5">
+            <div className="space-y-2">
               {filteredSettings.map(setting => {
                 const currentValue = edited[setting.key] ?? setting.value
                 const isChanged = setting.key in edited
-                const STOCK_LINK_OPTIONS: Record<string, string> = { xueqiu: '雪球' }
+                const summary = setting.key === 'stock_link_platform'
+                  ? (STOCK_LINK_OPTIONS[currentValue] ?? currentValue) || '未设置'
+                  : currentValue || '未设置'
                 return (
-                  <div key={setting.key}>
-                    <Label>{setting.description || setting.key}</Label>
-                    <div className="flex items-center gap-2.5">
-                      {setting.key === 'stock_link_platform' ? (
-                        <Select
-                          value={currentValue || 'xueqiu'}
-                          onValueChange={v => setEdited({ ...edited, [setting.key]: v })}
-                        >
-                          <SelectTrigger className={`${isChanged ? 'ring-2 ring-primary/20 border-primary/30' : ''}`}>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {Object.entries(STOCK_LINK_OPTIONS).map(([val, label]) => (
-                              <SelectItem key={val} value={val}>{label}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                      <div className="flex-1 relative">
-                        <Input
-                          type={SECRET_SETTING_KEYS.has(setting.key) ? 'password' : 'text'}
-                          value={SECRET_SETTING_KEYS.has(setting.key) && !isChanged ? (setting.value === SECRET_MASK ? '' : currentValue) : currentValue}
-                          onChange={e => setEdited({ ...edited, [setting.key]: e.target.value })}
-                          className={`font-mono ${isChanged ? 'ring-2 ring-primary/20 border-primary/30' : ''}`}
-                          placeholder={SECRET_SETTING_KEYS.has(setting.key)
-                            ? (setting.value === SECRET_MASK ? '已配置(留空保存则不变)' : setting.key)
-                            : setting.key}
-                        />
-                        {SECRET_SETTING_KEYS.has(setting.key) && setting.value === SECRET_MASK && !isChanged && (
-                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-emerald-500">已配置</span>
-                        )}
-                      </div>
-                      )}
-                      <button
-                        onClick={() => handleSave(setting.key)}
-                        disabled={!isChanged || saving === setting.key}
-                        className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
-                          saved === setting.key
-                            ? 'bg-emerald-500/10 text-emerald-600'
-                            : isChanged
-                              ? 'bg-primary text-white'
-                              : 'text-muted-foreground/30'
-                        }`}
-                      >
-                        {saving === setting.key ? (
-                          <span className="w-4 h-4 border-2 border-current/30 border-t-current rounded-full animate-spin" />
-                        ) : (
-                          <Check className="w-4 h-4" />
-                        )}
-                      </button>
+                  <div key={setting.key} className="flex items-center justify-between gap-3 rounded-lg bg-accent/30 px-3 py-2.5 hover:bg-accent/50 transition-colors">
+                    <div className="min-w-0">
+                      <span className="text-[12px] font-medium text-foreground">{setting.description || setting.key}</span>
+                      <p className="text-[10px] text-muted-foreground truncate font-mono">{summary}</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {isChanged && <span className="text-[10px] text-amber-400">未保存</span>}
+                      <Button size="sm" variant="secondary" className="h-7 px-2 text-[11px]" onClick={() => openSysDialog(setting)}>
+                        <Pencil className="w-3 h-3" /> 编辑
+                      </Button>
                     </div>
                   </div>
                 )
@@ -2137,6 +2132,99 @@ export default function SettingsPage() {
               )}
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 接口 Key 管理 Dialog(第二窗口): 单个数据源凭证编辑 */}
+      <Dialog open={keyDialogKey !== null} onOpenChange={open => { if (!open) closeKeyDialog() }}>
+        <DialogContent className="max-w-md">
+          {keyDialogKey && (() => {
+            const item = DATA_SOURCE_KEYS.find(k => k.key === keyDialogKey)
+            const setting = settings.find(s => s.key === keyDialogKey)
+            const configured = !!setting && setting.value === SECRET_MASK
+            const isChanged = keyDialogKey in edited
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle>管理接口 Key · {item?.name ?? keyDialogKey}</DialogTitle>
+                  <DialogDescription>{item?.desc ?? ''}。读取优先级：设置页 &gt; 环境变量 &gt; 内置默认。</DialogDescription>
+                </DialogHeader>
+                <div className="relative mt-1">
+                  <Input
+                    type={keyInputVisible ? 'text' : 'password'}
+                    value={edited[keyDialogKey] ?? ''}
+                    onChange={e => setEdited({ ...edited, [keyDialogKey]: e.target.value })}
+                    className={`font-mono pr-10 ${isChanged ? 'ring-2 ring-primary/20 border-primary/30' : ''}`}
+                    placeholder={configured ? '已配置（输入新 Key 可替换，留空保存不变）' : '未配置，输入接口 Key'}
+                  />
+                  {!isChanged && configured && (
+                    <span className="absolute right-10 top-1/2 -translate-y-1/2 text-[10px] text-emerald-500">已配置</span>
+                  )}
+                  <Button
+                    type="button" variant="ghost" size="icon"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8"
+                    onClick={() => setKeyInputVisible(!keyInputVisible)}
+                  >
+                    {keyInputVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </Button>
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="ghost" onClick={closeKeyDialog}>取消</Button>
+                  <Button onClick={() => void saveKeyDialog()} disabled={!isChanged || saving === keyDialogKey}>
+                    {saving === keyDialogKey ? '保存中…' : '保存'}
+                  </Button>
+                </div>
+              </>
+            )
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* 系统设置编辑 Dialog(第二窗口) */}
+      <Dialog open={sysDialogKey !== null} onOpenChange={open => { if (!open) setSysDialogKey(null) }}>
+        <DialogContent className="max-w-md">
+          {sysDialogKey && (() => {
+            const setting = settings.find(s => s.key === sysDialogKey)
+            if (!setting) return null
+            const isChanged = sysDialogKey in edited
+            const currentValue = edited[sysDialogKey] ?? setting.value
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{setting.description || setting.key}</DialogTitle>
+                  <DialogDescription className="font-mono text-[11px]">{setting.key}</DialogDescription>
+                </DialogHeader>
+                {setting.key === 'stock_link_platform' ? (
+                  <Select
+                    value={currentValue || 'xueqiu'}
+                    onValueChange={v => setEdited({ ...edited, [sysDialogKey]: v })}
+                  >
+                    <SelectTrigger className={isChanged ? 'ring-2 ring-primary/20 border-primary/30' : ''}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(STOCK_LINK_OPTIONS).map(([val, label]) => (
+                        <SelectItem key={val} value={val}>{label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    value={currentValue}
+                    onChange={e => setEdited({ ...edited, [sysDialogKey]: e.target.value })}
+                    className={`font-mono ${isChanged ? 'ring-2 ring-primary/20 border-primary/30' : ''}`}
+                    placeholder={setting.key}
+                  />
+                )}
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="ghost" onClick={() => setSysDialogKey(null)}>取消</Button>
+                  <Button onClick={() => void saveSysDialog()} disabled={!isChanged || saving === sysDialogKey}>
+                    {saving === sysDialogKey ? '保存中…' : '保存'}
+                  </Button>
+                </div>
+              </>
+            )
+          })()}
         </DialogContent>
       </Dialog>
 
