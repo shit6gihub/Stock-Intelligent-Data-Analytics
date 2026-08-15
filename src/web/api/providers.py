@@ -156,11 +156,15 @@ def list_services(db: Session = Depends(get_db)):
 
 
 def _service_to_response(service: AIService) -> dict:
+    # 安全(2026-08-15): api_key 不回显明文, 已配置显示掩码占位(与 settings 的 SECRET_MASK 一致)
+    api_key = service.api_key or ""
+    if api_key:
+        api_key = "********"
     return {
         "id": service.id,
         "name": service.name,
         "base_url": service.base_url,
-        "api_key": service.api_key or "",
+        "api_key": api_key,
         "models": [
             {
                 "id": m.id,
@@ -191,6 +195,9 @@ def update_service(service_id: int, body: ServiceUpdate, db: Session = Depends(g
         raise HTTPException(404, "AI 服务商不存在")
 
     for key, value in body.model_dump(exclude_unset=True).items():
+        # 掩码占位不覆盖真 key(前端编辑时未修改会回传 "********")
+        if key == "api_key" and value in ("********", "", None):
+            continue
         setattr(service, key, value)
 
     db.commit()

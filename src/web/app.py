@@ -130,8 +130,9 @@ async def demo_isolation_middleware(request: Request, call_next):
         # 1) 写操作: 除自选增删外一律拒绝
         if method not in ("GET", "HEAD", "OPTIONS") and not is_own_watchlist_write:
             return JSONResponse(status_code=403, content={"code": 403, "success": False, "message": msg})
-        # 2) 管理区页面隔离
-        if path.startswith(_DEMO_ADMIN_PREFIXES):
+        # 2) 管理区页面隔离: 设置/服务商列表允许浏览(敏感 key 已掩码), 其余管理页仍不可见
+        _DEMO_READABLE_PREFIXES = ("/api/settings", "/api/providers")
+        if path.startswith(_DEMO_ADMIN_PREFIXES) and not path.startswith(_DEMO_READABLE_PREFIXES):
             return JSONResponse(status_code=403, content={"code": 403, "success": False, "message": msg})
     return await call_next(request)
 
