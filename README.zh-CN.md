@@ -33,6 +33,8 @@
 |---|---|---|
 | ![首页](docs/screenshots/home.png) | ![预测](docs/screenshots/forecast.png) | ![机会](docs/screenshots/opportunities.png) |
 
+*在线演示: [https://www.sida.hengsheng-elec.com](https://www.sida.hengsheng-elec.com)*
+
 ## 快速开始
 
 ### Docker(推荐)

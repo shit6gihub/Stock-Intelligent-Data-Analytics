@@ -33,7 +33,7 @@ Most A-share tools show you **data**. SIDA closes the loop: it **reads the marke
 |---|---|---|
 | ![home](docs/screenshots/home.png) | ![forecast](docs/screenshots/forecast.png) | ![opportunities](docs/screenshots/opportunities.png) |
 
-*Live demo (read-only): [https://www.sida.example.com](https://www.sida.example.com) — contact us for demo access*
+*Live demo: [https://www.sida.hengsheng-elec.com](https://www.sida.hengsheng-elec.com)*
 
 ## Quick Start
 
