@@ -91,17 +91,6 @@ cd frontend && pnpm install && pnpm dev
 | WeChat | Tencent official iLink Bot API (pure Python, QR-code binding) |
 | AI config | Unified LLM config center (multi-provider + scene binding) |
 
-## Open-source vs Pro
-
-| | Open-source (this repo) | Pro (paid) |
-|---|---|---|
-| License | AGPL-3.0 | Closed source |
-| Core: data, analysis, prediction, chat | ✅ | ✅ |
-| Full feature set / premium models | Partial | Full |
-| Managed cloud / priority support | — | ✅ |
-
-The open-source edition is fully self-hostable and free. The Pro edition unlocks the complete feature set — built for users who want zero-maintenance operation.
-
 ## Multi-user & AI config
 
 - **Account isolation**: positions, watchlists, notification channels, WeChat bindings are per-user
