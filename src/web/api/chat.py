@@ -2113,6 +2113,12 @@ async def send_message(
         if not conv:
             raise HTTPException(404, "对话不存在")
 
+        # demo 账号限流: 每日对话次数上限, 防共享模型 key 被公开访客滥用
+        if user.username == "demo":
+            from src.core.demo_limit import allow
+            if not allow(user.id):
+                raise HTTPException(429, "演示账号每日对话次数已用完(10次/天)。请自行部署体验完整功能: https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics")
+
         # 多模态: 图片先由 agnes 视觉代理转成文字描述(在保存前处理, 保证 DB 历史连贯)
         if body.image_data:
             desc = await _describe_image(body.image_data)
@@ -2190,6 +2196,13 @@ async def send_message_stream(
             if not conv:
                 yield _sse_event("error", {"message": "对话不存在"})
                 return
+
+            # demo 账号限流: 每日对话次数上限, 防共享模型 key 被公开访客滥用
+            if user.username == "demo":
+                from src.core.demo_limit import allow, remaining
+                if not allow(user.id):
+                    yield _sse_event("error", {"message": f"演示账号每日对话次数已用完(10次/天)。请自行部署体验完整功能: https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics"})
+                    return
 
             # 多模态: 图片先由 agnes 视觉代理转成文字描述(在保存前处理, 保证 DB 历史连贯)
             if body.image_data:
