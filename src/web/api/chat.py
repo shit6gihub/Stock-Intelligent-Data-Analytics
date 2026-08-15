@@ -710,6 +710,42 @@ def _format_fundamentals_text(symbol: str, market: str, data: dict) -> str:
 
 
 # ──────────────── 网页链接抓取工具(2026-08-14): get_web_content ────────────────
+
+# SSRF 防护: 内网/本地/云 metadata 主机名(IP 直连 + 域名解析后双重检查)
+_INTERNAL_HOSTNAMES = {
+    "localhost", "metadata.google.internal", "metadata.tencentyun.com",
+    "metadata.aliyun.com", "metadata", "kubernetes.default.svc",
+}
+
+
+def _is_internal_target(parsed) -> bool:
+    """判断目标 URL 是否指向内网/本地/云 metadata(SSRF 拦截)。"""
+    import ipaddress
+    import socket
+
+    host = (parsed.hostname or "").strip().lower().rstrip(".")
+    if not host:
+        return True
+    if host in _INTERNAL_HOSTNAMES:
+        return True
+    # IP 形式直接判断
+    try:
+        ip = ipaddress.ip_address(host)
+        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast
+    except ValueError:
+        pass
+    # 域名形式: 解析一次, 命中内网段也拒绝(防 DNS 指向内网)
+    try:
+        for info in socket.getaddrinfo(host, None):
+            try:
+                ip = ipaddress.ip_address(info[4][0])
+                if ip.is_private or ip.is_loopback or ip.is_link_local:
+                    return True
+            except ValueError:
+                continue
+    except (socket.gaierror, OSError):
+        pass  # 解析失败交给后续请求报错
+    return False
 # 用户可能在对话中发来网页链接(微信公众号文章/新闻/研报等), AI 通过该工具抓取正文再回答。
 # 轻量实现: httpx GET(15s 超时 + 常见浏览器 UA, 微信文章需要 UA) + html.parser 标准库提取正文,
 # 不引入 BeautifulSoup 等重型依赖。
@@ -798,6 +834,10 @@ def get_web_content(url: str) -> str:
         return "抓取失败: 链接格式非法, 仅支持 http/https 网址。"
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         return "抓取失败: 仅支持 http/https 链接, 请检查链接格式。"
+
+    # SSRF 防护(2026-08-15): 拒绝内网/本地/云 metadata 地址, 防服务器被当作代理扫描内网
+    if _is_internal_target(parsed):
+        return "抓取失败: 目标链接为内网/本地地址, 已拒绝访问。"
 
     try:
         import httpx

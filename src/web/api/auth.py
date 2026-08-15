@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -286,15 +286,23 @@ async def auth_status(db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(data: LoginRequest, db: Session = Depends(get_db)):
-    """登录(多用户)。"""
+async def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    """登录(多用户)。带暴力破解限速: 同 IP+用户名 5 次失败锁 10 分钟。"""
+    ip = request.client.host if request.client else "unknown"
+    from src.core.login_ratelimit import check, fail, success
+    locked = check(ip, data.username.strip())
+    if locked:
+        raise HTTPException(429, locked)
+
     get_or_create_owner(db)  # 确保 owner 存在(兼容首次部署)
     user = get_user_by_username(db, data.username.strip())
     if not user or not verify_password(data.password, user.password_hash):
+        fail(ip, data.username.strip())
         raise HTTPException(401, "用户名或密码错误")
     if not user.is_active:
         raise HTTPException(403, "账号已禁用")
 
+    success(ip, data.username.strip())
     token, expires_at = create_token(user)
     return TokenResponse(
         token=token,
