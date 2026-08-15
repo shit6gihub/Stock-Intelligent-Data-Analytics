@@ -704,6 +704,7 @@ export default function ForecastPage() {
             )}
 
             {/* 预测价格序列 */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div>
               <div className="text-sm font-medium mb-2">预测价格（综合投票）</div>
               <div className="flex flex-wrap gap-2">
@@ -750,6 +751,7 @@ export default function ForecastPage() {
               </div>
               <ModelDivergenceChart result={result} />
             </div>
+            </div>{/* 预测价格 + 四模型对比 两栏 grid 结束 */}
 
             {/* 消息情绪面 */}
             {result.sentiment && (

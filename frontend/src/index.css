@@ -121,10 +121,10 @@
     @apply rounded-xl border border-border/40 bg-accent/20;
   }
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg text-[13px] font-semibold hover:bg-primary/90 active:scale-[0.98] transition-[background-color,transform];
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg text-[13px] font-semibold hover:bg-primary/90 active:scale-[0.96] transition-[background-color,transform];
   }
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-secondary text-secondary-foreground border border-border rounded-lg text-[13px] font-medium hover:bg-secondary/80 active:scale-[0.98] transition-[background-color,transform];
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-secondary text-secondary-foreground border border-border rounded-lg text-[13px] font-medium hover:bg-secondary/80 active:scale-[0.96] transition-[background-color,transform];
   }
   .input-field {
     @apply w-full h-10 px-3 rounded-lg border border-border bg-background text-[13px] placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors;
