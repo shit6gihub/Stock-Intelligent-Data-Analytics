@@ -466,7 +466,7 @@ export default function DataSourcesPage() {
 
             <div className="flex justify-between gap-2 pt-2">
               {editId ? (
-                <Button variant="ghost" className="text-red-500 hover:text-red-600" onClick={deleteSource}>
+                <Button variant="ghost" className="text-red-600 hover:text-red-700" onClick={deleteSource}>
                   <Trash2 className="w-4 h-4 mr-1" />删除
                 </Button>
               ) : <span />}
@@ -488,9 +488,9 @@ export default function DataSourcesPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {testResult?.test_passed ? (
-                <Check className="w-5 h-5 text-emerald-500" />
+                <Check className="w-5 h-5 text-emerald-700 dark:text-emerald-500" />
               ) : (
-                <X className="w-5 h-5 text-red-500" />
+                <X className="w-5 h-5 text-red-600" />
               )}
               测试结果 - {testResult?.source_name}
             </DialogTitle>
@@ -505,7 +505,7 @@ export default function DataSourcesPage() {
             <div className="flex items-center gap-4 p-3 rounded-lg bg-accent/30">
               <div className="flex-1">
                 <div className="text-[11px] text-muted-foreground">状态</div>
-                <div className={`text-[13px] font-medium ${testResult?.test_passed ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'}`}>
+                <div className={`text-[13px] font-medium ${testResult?.test_passed ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600'}`}>
                   {testResult?.test_passed ? '测试成功' : '测试失败'}
                 </div>
               </div>
@@ -522,7 +522,7 @@ export default function DataSourcesPage() {
             {/* Error message */}
             {testResult?.error && (
               <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-                <div className="text-[11px] text-red-500 font-medium mb-1">错误信息</div>
+                <div className="text-[11px] text-red-600 font-medium mb-1">错误信息</div>
                 <div className="text-[12px] text-red-600 dark:text-red-400 break-words whitespace-pre-wrap">{testResult.error}</div>
               </div>
             )}
@@ -541,7 +541,7 @@ export default function DataSourcesPage() {
                       <span className={`px-1 py-0.5 rounded text-[10px] flex-shrink-0 ${
                         log.action === 'start' ? 'bg-blue-500/10 text-blue-500' :
                         log.action === 'success' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' :
-                        'bg-red-500/10 text-red-500'
+                        'bg-red-500/10 text-red-600'
                       }`}>
                         {log.action === 'start' ? '开始' : log.action === 'success' ? '成功' : '失败'}
                       </span>
@@ -594,7 +594,7 @@ export default function DataSourcesPage() {
                         <div className="flex items-center gap-3">
                           <span className="text-[12px] font-mono">{quoteItem.price?.toFixed(2)}</span>
                           <span className={`text-[11px] font-medium ${
-                            (quoteItem.change_pct ?? 0) > 0 ? 'text-red-500' : (quoteItem.change_pct ?? 0) < 0 ? 'text-green-500' : 'text-muted-foreground'
+                            (quoteItem.change_pct ?? 0) > 0 ? 'text-red-600' : (quoteItem.change_pct ?? 0) < 0 ? 'text-green-700' : 'text-muted-foreground'
                           }`}>
                             {(quoteItem.change_pct ?? 0) > 0 ? '+' : ''}{quoteItem.change_pct?.toFixed(2)}%
                           </span>
@@ -656,7 +656,7 @@ export default function DataSourcesPage() {
                         <span className="text-[12px] font-medium text-foreground">{flowItem.name || flowItem.symbol}</span>
                         <div className="flex items-center gap-3">
                           <span className={`text-[12px] font-mono ${
-                            (flowItem.main_net ?? 0) > 0 ? 'text-red-500' : 'text-green-500'
+                            (flowItem.main_net ?? 0) > 0 ? 'text-red-600' : 'text-green-700'
                           }`}>
                             {(flowItem.main_net ?? 0) > 0 ? '+' : ''}{((flowItem.main_net ?? 0) / 10000).toFixed(2)}万
                           </span>
@@ -675,7 +675,7 @@ export default function DataSourcesPage() {
                       <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-accent/30">
                         <span className="text-[12px] font-medium text-foreground">{dtItem.name || dtItem.symbol}</span>
                         <span className={`text-[12px] font-mono ${
-                          (dtItem.net_buy ?? 0) > 0 ? 'text-red-500' : 'text-green-500'
+                          (dtItem.net_buy ?? 0) > 0 ? 'text-red-600' : 'text-green-700'
                         }`}>
                           {(dtItem.net_buy ?? 0) > 0 ? '+' : ''}{((dtItem.net_buy ?? 0) / 10000).toFixed(2)}万
                         </span>
@@ -733,7 +733,7 @@ export default function DataSourcesPage() {
                         <span className="text-[12px] font-medium text-foreground">{nbItem.date}</span>
                         <div className="flex items-center gap-3">
                           <span className={`text-[12px] font-mono ${
-                            (nbItem.total_net ?? 0) > 0 ? 'text-red-500' : 'text-green-500'
+                            (nbItem.total_net ?? 0) > 0 ? 'text-red-600' : 'text-green-700'
                           }`}>
                             {(nbItem.total_net ?? 0) > 0 ? '+' : ''}{((nbItem.total_net ?? 0) / 10000).toFixed(2)}万
                           </span>

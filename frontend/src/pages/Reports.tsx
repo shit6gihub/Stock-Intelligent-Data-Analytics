@@ -21,6 +21,8 @@ export default function ReportsPage() {
   const [items, setItems] = useState<ReportItem[]>([])
   const [jobs, setJobs] = useState<{ job_id: string; job_name: string }[]>([])
   const [loading, setLoading] = useState(false)
+  // 初始加载失败提示(失败≠空态:不把"加载失败"误读为"暂无报告")
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [jobFilter, setJobFilter] = useState<string>('') // 空 = 全部
   const [selected, setSelected] = useState<{ item: ReportItem; content: string } | null>(null)
@@ -28,12 +30,14 @@ export default function ReportsPage() {
 
   const load = async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       const res = await reportsApi.list({ limit: 500 })
       setItems(res.items)
       setJobs(res.jobs)
     } catch (e) {
       console.error(e)
+      setLoadError(e instanceof Error ? e.message : '加载失败')
     } finally {
       setLoading(false)
     }
@@ -128,6 +132,17 @@ export default function ReportsPage() {
       {loading ? (
         <div className="flex items-center justify-center py-12 text-muted-foreground">
           <Loader2 className="w-5 h-5 animate-spin mr-2" /> 加载中...
+        </div>
+      ) : loadError ? (
+        <div className="card-subtle p-8 text-center text-sm text-muted-foreground">
+          加载失败{loadError ? `: ${loadError}` : ''}
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="ml-2 rounded-md px-2 py-1 text-[11px] text-primary transition-colors hover:bg-accent"
+          >
+            重试
+          </button>
         </div>
       ) : grouped.size === 0 ? (
         <div className="card-subtle p-8 text-center text-sm text-muted-foreground">

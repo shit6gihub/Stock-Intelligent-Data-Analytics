@@ -118,7 +118,7 @@ export default function IndexDetailPage() {
       {loading ? (
         <div className="text-center text-muted-foreground py-12">加载中...</div>
       ) : error ? (
-        <div className="text-center text-red-500 py-12">{error}</div>
+        <div className="text-center text-red-600 py-12">{error}</div>
       ) : data ? (
         <>
           {/* 实时行情卡片(同个股详情风格) */}
@@ -126,7 +126,7 @@ export default function IndexDetailPage() {
             <div className="flex items-end gap-4 flex-wrap">
               <div>
                 <div className="text-3xl font-num font-bold tabular-nums">{q?.current_price?.toFixed(2) ?? '--'}</div>
-                <div className={`text-sm font-num tabular-nums ${up ? 'text-red-500' : 'text-green-500'}`}>
+                <div className={`text-sm font-num tabular-nums ${up ? 'text-red-600' : 'text-green-700'}`}>
                   {q?.change_amount != null && q.change_amount > 0 ? '+' : ''}{q?.change_amount?.toFixed(2)} ({q?.change_pct?.toFixed(2)}%)
                 </div>
               </div>
@@ -161,13 +161,13 @@ export default function IndexDetailPage() {
                 </div>
                 <div className="flex items-center gap-4 text-[12px]">
                   <span className="text-muted-foreground">主力净流入
-                    <b className={`font-mono ${(marketFlow.total_main_flow ?? 0) >= 0 ? 'text-red-500' : 'text-green-500'}`}>
+                    <b className={`font-mono ${(marketFlow.total_main_flow ?? 0) >= 0 ? 'text-red-600' : 'text-green-700'}`}>
                       {(marketFlow.total_main_flow ?? 0) >= 0 ? '+' : ''}{(marketFlow.total_main_flow ?? 0).toFixed(1)}亿
                     </b>
                   </span>
                   <span className="text-muted-foreground">成交额 <b className="font-mono">{(marketFlow.total_amount ?? 0).toFixed(0)}亿</b></span>
-                  <span className="text-muted-foreground">涨 <b className="text-red-500 font-mono">{marketFlow.up_count ?? '--'}</b>
-                    <span className="mx-1">/</span>跌 <b className="text-green-500 font-mono">{marketFlow.down_count ?? '--'}</b></span>
+                  <span className="text-muted-foreground">涨 <b className="text-red-600 font-mono">{marketFlow.up_count ?? '--'}</b>
+                    <span className="mx-1">/</span>跌 <b className="text-green-700 font-mono">{marketFlow.down_count ?? '--'}</b></span>
                   <span className="text-muted-foreground">沪 <b className="font-mono">{(marketFlow.sh_flow ?? 0).toFixed(1)}亿</b>
                     <span className="mx-1">/</span>深 <b className="font-mono">{(marketFlow.sz_flow ?? 0).toFixed(1)}亿</b></span>
                 </div>
@@ -178,12 +178,12 @@ export default function IndexDetailPage() {
                 <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3">
                   {marketFlow.inflow_boards?.length ? (
                     <div>
-                      <div className="text-[11px] font-semibold text-red-500 mb-1 flex items-center gap-1"><Flame className="w-3 h-3" />资金流入板块</div>
+                      <div className="text-[11px] font-semibold text-red-600 mb-1 flex items-center gap-1"><Flame className="w-3 h-3" />资金流入板块</div>
                       <div className="space-y-0.5">
                         {marketFlow.inflow_boards.map(b => (
                           <div key={b.name} className="flex justify-between text-[11px]">
                             <span className="text-muted-foreground truncate">{b.name}</span>
-                            <span className="font-mono text-red-500">+{b.net_inflow.toFixed(1)}亿</span>
+                            <span className="font-mono text-red-600">+{b.net_inflow.toFixed(1)}亿</span>
                           </div>
                         ))}
                       </div>
@@ -191,12 +191,12 @@ export default function IndexDetailPage() {
                   ) : null}
                   {marketFlow.outflow_boards?.length ? (
                     <div>
-                      <div className="text-[11px] font-semibold text-green-500 mb-1 flex items-center gap-1"><Droplets className="w-3 h-3" />资金流出板块</div>
+                      <div className="text-[11px] font-semibold text-green-700 mb-1 flex items-center gap-1"><Droplets className="w-3 h-3" />资金流出板块</div>
                       <div className="space-y-0.5">
                         {marketFlow.outflow_boards.map(b => (
                           <div key={b.name} className="flex justify-between text-[11px]">
                             <span className="text-muted-foreground truncate">{b.name}</span>
-                            <span className="font-mono text-green-500">{b.net_inflow.toFixed(1)}亿</span>
+                            <span className="font-mono text-green-700">{b.net_inflow.toFixed(1)}亿</span>
                           </div>
                         ))}
                       </div>
@@ -215,7 +215,7 @@ export default function IndexDetailPage() {
               <span className="text-[10px] text-muted-foreground">单位:亿元</span>
             </div>
             <AmountChart trend={data.amount_trend} />
-            {data.note && <div className="text-[10px] text-amber-500 mt-2">{data.note}</div>}
+            {data.note && <div className="text-[10px] text-amber-700 dark:text-amber-500 mt-2">{data.note}</div>}
           </div>
         </>
       ) : null}

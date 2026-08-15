@@ -50,13 +50,13 @@ function pct(v?: number | null, digits = 2): string {
 }
 function moveColor(v?: number | null): string {
   if (v == null) return 'text-muted-foreground'
-  return v > 0 ? 'text-rose-500' : v < 0 ? 'text-emerald-500' : 'text-muted-foreground'
+  return v > 0 ? 'text-red-600' : v < 0 ? 'text-green-700' : 'text-muted-foreground'
 }
 /** 涨跌着色 chip 的背景+文字类;null/平盘 → 灰底。红涨绿跌(A股口径)。 */
 function pctChipCls(v?: number | null): string {
   if (v == null) return 'bg-accent text-muted-foreground'
-  if (v > 0) return 'bg-rose-500/10 text-rose-500'
-  if (v < 0) return 'bg-emerald-500/10 text-emerald-500'
+  if (v > 0) return 'bg-red-600/10 text-red-600'
+  if (v < 0) return 'bg-green-700/10 text-green-700'
   return 'bg-accent text-muted-foreground'
 }
 /** 归一化后端列表响应:可能直接是数组,也可能是 {items:[...]} / {data:[...]},取不到返回空数组。 */
@@ -122,8 +122,8 @@ const ALERT_LABEL: Record<string, string> = {
 }
 
 const FEED_BADGE: Record<string, { label: string; cls: string }> = {
-  alert: { label: '提醒命中', cls: 'bg-rose-500/15 text-rose-500' },
-  holding: { label: '持仓', cls: 'bg-emerald-500/15 text-emerald-500' },
+  alert: { label: '提醒命中', cls: 'bg-rose-500/15 text-red-600' },
+  holding: { label: '持仓', cls: 'bg-emerald-500/15 text-green-700' },
   watch: { label: '自选', cls: 'bg-accent text-muted-foreground' },
   risk: { label: '风险', cls: 'bg-amber-500/15 text-amber-600' },
   opportunity: { label: '机会', cls: 'bg-primary/10 text-primary' },
@@ -168,6 +168,8 @@ export default function DashboardPage() {
   const [hotStocks, setHotStocks] = useState<MarketHotStockItem[]>([])
   const [hotStocksLoading, setHotStocksLoading] = useState(true)
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null)
+  // 核心接口失败全局横幅(任一失败即提示,失败≠空态;重试=重新 load)
+  const [loadError, setLoadError] = useState<string | null>(null)
   // 分享卡开关:成绩单(基准)/ 组合体检 / 每日 digest
   const [shareBench, setShareBench] = useState(false)
   const [shareDiag, setShareDiag] = useState(false)
@@ -197,30 +199,40 @@ export default function DashboardPage() {
 
   const load = useCallback(async (opts?: { skipBench?: boolean }) => {
     setLoading(true)
+    setLoadError(null)
     // 指数 pills:独立加载不阻塞首屏(spark 冷启动可能 ~1s,数据到了自然浮现)
-    dashboardApi.indices().then(setIndices).catch(() => {})
-    // 大盘资金流(同花顺源):独立加载,失败静默
-    dashboardApi.marketCapitalFlow().then(setMarketFlow).catch(() => {})
+    dashboardApi.indices().then(setIndices).catch(() => setLoadError('部分数据加载失败'))
+    // 大盘资金流(同花顺源):独立加载,失败聚合到全局横幅
+    dashboardApi.marketCapitalFlow().then(setMarketFlow).catch(() => setLoadError('部分数据加载失败'))
     // 最新报告(Hermes cron):独立加载,失败静默;cacheMode reload 保证 30s 轮询必拿新数据
     setReportsLoading(true)
     reportsApi
       .list({ limit: 8, cacheMode: 'reload' })
       .then((r) => setReports((r.items || []).slice(0, 4)))
-      .catch(() => setReports([]))
+      .catch(() => {
+        setReports([])
+        setLoadError('部分数据加载失败')
+      })
       .finally(() => setReportsLoading(false))
     // 异动池(东财):独立加载,失败静默(端点未就绪时优雅降级为空态)
     setAnomaliesLoading(true)
     dashboardApi
       .anomalies({ limit: 10 })
       .then((r) => setAnomalies(pickList<MarketAnomalyItem>(r, 'items').slice(0, 10)))
-      .catch(() => setAnomalies([]))
+      .catch(() => {
+        setAnomalies([])
+        setLoadError('部分数据加载失败')
+      })
       .finally(() => setAnomaliesLoading(false))
     // 热榜(同花顺):独立加载,失败静默
     setHotStocksLoading(true)
     dashboardApi
       .hotStocks({ period: 'hour', limit: 10 })
       .then((r) => setHotStocks(pickList<MarketHotStockItem>(r, 'items').slice(0, 10)))
-      .catch(() => setHotStocks([]))
+      .catch(() => {
+        setHotStocks([])
+        setLoadError('部分数据加载失败')
+      })
       .finally(() => setHotStocksLoading(false))
     // 快车道:DB/轻量查询,先让首屏(要紧事/体检分布)尽快出来
     const [sc, ov, dg, ht, td, ms] = await Promise.allSettled([
@@ -237,6 +249,7 @@ export default function DashboardPage() {
     if (ht.status === 'fulfilled') setAlertHits(ht.value)
     if (td.status === 'fulfilled') setTodos(td.value.todos || [])
     if (ms.status === 'fulfilled') setMarketStatus(ms.value)
+    if ([sc, ov, dg, ht, td, ms].some((r) => r.status === 'rejected')) setLoadError('部分数据加载失败')
     setLoading(false) // 首屏不再等基准/归因(要拉全持仓 K 线)
     setRefreshedAt(new Date())
 
@@ -245,7 +258,7 @@ export default function DashboardPage() {
       recommendationsApi
         .listStrategySignals({ status: 'active', limit: 5 })
         .then((r) => setOppFallback(r.items || []))
-        .catch(() => {})
+        .catch(() => setLoadError('部分数据加载失败'))
     }
 
     // 慢车道:基准/归因需拉全持仓 K 线(分钟级),独立加载,就绪后回填超额/归因。
@@ -264,7 +277,7 @@ export default function DashboardPage() {
     // 自选股列表(判断盘前标的是否已加自选)
     stocksApi.list().then((rows) => {
       setWatchSymbols(new Set((rows || []).map((s) => `${s.market}:${s.symbol}`)))
-    }).catch(() => {})
+    }).catch(() => setLoadError('部分数据加载失败'))
   }, [loadBench])
 
   // 盘前标的快捷加入自选
@@ -464,6 +477,20 @@ export default function DashboardPage() {
           ))}
         </div>
       </div>
+
+      {/* 核心接口失败横幅:失败≠空态,给出重试入口 */}
+      {loadError && (
+        <div className="mb-3 flex items-center gap-2 rounded-lg border border-border/60 bg-accent/30 px-3 py-2 text-[12px] text-muted-foreground">
+          <span>{loadError}</span>
+          <button
+            type="button"
+            onClick={() => load()}
+            className="ml-auto rounded-md px-2 py-0.5 text-[11px] text-primary transition-colors hover:bg-accent"
+          >
+            重试
+          </button>
+        </div>
+      )}
 
       {/* 最新报告:Hermes cron 盘前/盘后报告速览(最近 4 条, 30s 随首页自动刷新, 点击进报告页) */}
       <div className="card mb-3 p-4">
@@ -705,7 +732,7 @@ export default function DashboardPage() {
                   >
                     <span
                       className={`w-5 shrink-0 text-center font-mono text-[13px] font-bold ${
-                        i < 3 ? 'text-rose-500' : 'text-muted-foreground'
+                        i < 3 ? 'text-red-600' : 'text-muted-foreground'
                       }`}
                     >
                       {h.rank ?? i + 1}
@@ -969,7 +996,7 @@ export default function DashboardPage() {
                   ))}
                 </div>
               ) : (
-                <div className="pt-1 text-[11px] text-emerald-500">✓ 集中度/分布未见明显风险</div>
+                <div className="pt-1 text-[11px] text-green-700">✓ 集中度/分布未见明显风险</div>
               )}
               <button
                 type="button"
@@ -1076,7 +1103,7 @@ export default function DashboardPage() {
                       <span className="text-foreground">{s.name}</span>
                       <span className="font-mono text-muted-foreground">{s.symbol}</span>
                       {inWatch ? (
-                        <span className="text-[10px] text-emerald-500">已自选</span>
+                        <span className="text-[10px] text-green-700">已自选</span>
                       ) : (
                         <button
                           type="button"

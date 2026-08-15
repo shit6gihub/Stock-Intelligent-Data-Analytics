@@ -197,11 +197,11 @@ const emptyChannelForm: ChannelForm = { name: '', type: 'telegram', config: {} }
 
 // 模型功能标签(capabilities): 彩色小徽标展示; key 与后端 capabilities 取值一致
 const MODEL_CAP_META: Record<string, { label: string; badge: string }> = {
-  chat: { label: '对话', badge: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25' },
-  vision: { label: '视觉', badge: 'bg-sky-500/10 text-sky-400 border-sky-500/25' },
-  image: { label: '图像', badge: 'bg-purple-500/10 text-purple-400 border-purple-500/25' },
-  video: { label: '视频', badge: 'bg-orange-500/10 text-orange-400 border-orange-500/25' },
-  tools: { label: '工具', badge: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/25' },
+  chat: { label: '对话', badge: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/25' },
+  vision: { label: '视觉', badge: 'bg-sky-500/10 text-sky-700 dark:text-sky-400 border-sky-500/25' },
+  image: { label: '图像', badge: 'bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/25' },
+  video: { label: '视频', badge: 'bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-500/25' },
+  tools: { label: '工具', badge: 'bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 border-cyan-500/25' },
 }
 const MODEL_CAP_ORDER = ['chat', 'vision', 'image', 'video', 'tools']
 
@@ -1361,7 +1361,7 @@ export default function SettingsPage() {
                     </div>
                     <div className="flex-shrink-0 w-[220px] sm:w-[280px]">
                       {b.scene === 'vision' && (
-                        <p className="mb-1 text-[10px] text-sky-400/90">优先选择含视觉(vision)能力的模型</p>
+                        <p className="mb-1 text-[10px] text-sky-700/90 dark:text-sky-400/90">优先选择含视觉(vision)能力的模型</p>
                       )}
                       <Select
                         value={b.model_id != null ? String(b.model_id) : SCENE_DEFAULT_VALUE}
@@ -1480,7 +1480,7 @@ export default function SettingsPage() {
               {channels.map(ch => (
                 <div key={ch.id} className="flex items-center justify-between p-3.5 rounded-xl bg-accent/30 hover:bg-accent/50 transition-colors">
                   <div className="flex items-center gap-3 min-w-0">
-                    {ch.is_default && <Star className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
+                    {ch.is_default && <Star className="w-3.5 h-3.5 text-amber-700 dark:text-amber-500 flex-shrink-0" />}
                     <div className="min-w-0">
                       <span className="text-[13px] font-medium text-foreground">{ch.name}</span>
                       <p className="text-[11px] text-muted-foreground mt-0.5">{CHANNEL_TYPE_FIELDS[ch.type]?.label || ch.type}</p>
@@ -1693,7 +1693,7 @@ export default function SettingsPage() {
                   <div><span className="text-muted-foreground">账号:</span> <span className="font-mono">{thsSession.account}</span></div>
                   <div><span className="text-muted-foreground">UserID:</span> <span className="font-mono">{thsSession.userid}</span></div>
                   <div><span className="text-muted-foreground">过期:</span> <span className="font-mono">{thsSession.expires?.replace('T', ' ').slice(0, 19)}</span></div>
-                  <div><span className="text-emerald-500">✓ 已登录 · 自动续期</span></div>
+                  <div><span className="text-emerald-700 dark:text-emerald-500">✓ 已登录 · 自动续期</span></div>
                 </div>
               ) : (
                 <div className="text-[12px] text-muted-foreground">未登录。点击「扫码登录」后用手机同花顺 APP 扫描二维码。</div>
@@ -2190,7 +2190,7 @@ export default function SettingsPage() {
                     <div key={m.id} className="flex items-center justify-between gap-2 rounded-lg border border-border/50 bg-background/60 px-3 py-2">
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
-                          {m.is_default && <Star className="w-3 h-3 text-amber-500 flex-shrink-0" />}
+                          {m.is_default && <Star className="w-3 h-3 text-amber-700 dark:text-amber-500 flex-shrink-0" />}
                           <span className="text-[12px] font-medium text-foreground truncate">{m.name}</span>
                           <CapBadges caps={m.capabilities} />
                         </div>
@@ -2464,7 +2464,7 @@ export default function SettingsPage() {
                     placeholder={configured ? '已配置（输入新 Key 可替换，留空保存不变）' : '未配置，输入接口 Key'}
                   />
                   {!isChanged && configured && (
-                    <span className="absolute right-10 top-1/2 -translate-y-1/2 text-[10px] text-emerald-500">已配置</span>
+                    <span className="absolute right-10 top-1/2 -translate-y-1/2 text-[10px] text-emerald-700 dark:text-emerald-500">已配置</span>
                   )}
                   <Button
                     type="button" variant="ghost" size="icon"

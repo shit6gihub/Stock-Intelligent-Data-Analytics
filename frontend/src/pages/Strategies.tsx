@@ -17,18 +17,18 @@ const CATEGORY_LABELS: Record<string, string> = {
 const BADGE_COLORS: Record<string, string> = {
   价值: 'bg-blue-500/15 text-blue-500 border-blue-500/30',
   资金: 'bg-orange-500/15 text-orange-500 border-orange-500/30',
-  突破: 'bg-red-500/15 text-red-500 border-red-500/30',
+  突破: 'bg-red-500/15 text-red-600 border-red-500/30',
   反弹: 'bg-purple-500/15 text-purple-500 border-purple-500/30',
-  动量: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30',
+  动量: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-500 border-emerald-500/30',
   防御: 'bg-slate-500/15 text-slate-500 border-slate-500/30',
-  多因子: 'bg-amber-500/15 text-amber-500 border-amber-500/30',
+  多因子: 'bg-amber-500/15 text-amber-700 dark:text-amber-500 border-amber-500/30',
   蓝筹: 'bg-cyan-500/15 text-cyan-500 border-cyan-500/30',
 }
 
 function scoreColor(s: number): string {
-  if (s >= 75) return 'text-emerald-500'
-  if (s >= 50) return 'text-amber-500'
-  return 'text-red-500'
+  if (s >= 75) return 'text-emerald-700 dark:text-emerald-500'
+  if (s >= 50) return 'text-amber-700 dark:text-amber-500'
+  return 'text-red-600'
 }
 
 function scoreBg(s: number): string {
@@ -183,7 +183,7 @@ export default function StrategiesPage() {
                     {it.source}
                   </div>
                   {it.available_now ? (
-                    <span className="text-[10px] text-emerald-500 flex items-center gap-1">
+                    <span className="text-[10px] text-emerald-700 dark:text-emerald-500 flex items-center gap-1">
                       <CheckCircle2 className="w-3 h-3" /> 实时
                     </span>
                   ) : (
@@ -210,7 +210,7 @@ export default function StrategiesPage() {
                     {selected.ui_badge}
                   </span>
                   {selected.available_now ? (
-                    <span className="text-[10px] text-emerald-500 flex items-center gap-1">
+                    <span className="text-[10px] text-emerald-700 dark:text-emerald-500 flex items-center gap-1">
                       <CheckCircle2 className="w-3 h-3" /> 实时可用
                     </span>
                   ) : (
@@ -259,7 +259,7 @@ export default function StrategiesPage() {
                 {applyResult && (
                   <div className={`card-subtle p-4 ${applyResult.passed ? 'border-emerald-500/30' : 'border-amber-500/30'}`}>
                     {applyResult.error ? (
-                      <div className="text-red-500 text-sm flex items-center gap-1.5"><XCircle className="w-4 h-4 shrink-0" />{applyResult.error}</div>
+                      <div className="text-red-600 text-sm flex items-center gap-1.5"><XCircle className="w-4 h-4 shrink-0" />{applyResult.error}</div>
                     ) : (
                       <>
                         <div className="flex items-center justify-between mb-3">
@@ -268,7 +268,7 @@ export default function StrategiesPage() {
                               {applyResult.score.toFixed(1)}
                             </div>
                             <div>
-                              <div className={`text-sm font-medium inline-flex items-center gap-1.5 ${applyResult.passed ? 'text-emerald-500' : 'text-amber-500'}`}>
+                              <div className={`text-sm font-medium inline-flex items-center gap-1.5 ${applyResult.passed ? 'text-emerald-700 dark:text-emerald-500' : 'text-amber-700 dark:text-amber-500'}`}>
                                 {applyResult.passed ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
                                 {applyResult.passed ? '通过' : '未通过'}
                               </div>
@@ -283,13 +283,13 @@ export default function StrategiesPage() {
                         {/* 失败过滤 */}
                         {applyResult.failed_filters.length > 0 && (
                           <div className="mb-3">
-                            <div className="text-xs font-semibold text-red-500 mb-1">
+                            <div className="text-xs font-semibold text-red-600 mb-1">
                               失败过滤 ({applyResult.failed_filters.length}):
                             </div>
                             <div className="space-y-1">
                               {applyResult.failed_filters.map((f, i) => (
                                 <div key={i} className="text-xs text-muted-foreground">
-                                  <code className="text-red-500">{f.field}</code>=<strong>{String(f.actual)}</strong> 需要 {f.required} {String(f.threshold)}
+                                  <code className="text-red-600">{f.field}</code>=<strong>{String(f.actual)}</strong> 需要 {f.required} {String(f.threshold)}
                                 </div>
                               ))}
                             </div>

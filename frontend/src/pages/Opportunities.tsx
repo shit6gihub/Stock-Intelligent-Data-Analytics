@@ -95,22 +95,22 @@ const toneClass = (item: StrategySignalItem) => {
   const action = (item.action || '').toLowerCase()
   const score = Number(item.rank_score || item.score || 0)
   if (action === 'buy') {
-    return 'border-rose-500/35 bg-[linear-gradient(140deg,hsl(var(--rose-500)/0.14),hsl(var(--card)/0.96),hsl(var(--card)/0.98))]'
+    return 'border-l-2 border-l-rose-600/70'
   }
   if (action === 'add') {
-    return 'border-emerald-500/35 bg-[linear-gradient(140deg,hsl(var(--emerald-500)/0.13),hsl(var(--card)/0.96),hsl(var(--card)/0.98))]'
+    return 'border-l-2 border-l-emerald-600/70'
   }
   if (score >= 85) {
-    return 'border-primary/35 bg-[linear-gradient(140deg,hsl(var(--primary)/0.12),hsl(var(--card)/0.96),hsl(var(--card)/0.98))]'
+    return 'border-l-2 border-l-primary/70'
   }
-  return 'border-border/60 bg-card'
+  return ''
 }
 
 const actionBadgeClass = (action?: string) => {
   const key = (action || '').toLowerCase()
-  if (key === 'buy') return 'bg-rose-500/15 text-rose-400 border border-rose-500/35'
-  if (key === 'add') return 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/35'
-  if (key === 'hold') return 'bg-blue-500/15 text-blue-400 border border-blue-500/35'
+  if (key === 'buy') return 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border border-rose-500/35'
+  if (key === 'add') return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/35'
+  if (key === 'hold') return 'bg-blue-500/15 text-blue-700 dark:text-blue-400 border border-blue-500/35'
   return 'bg-accent text-muted-foreground border border-border/50'
 }
 
@@ -223,9 +223,9 @@ const formatEntryDisplay = (action: string | undefined, entryLow: number | null,
 }
 
 const regimeToneClass = (regime?: string) => {
-  if (regime === 'bullish') return 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-  if (regime === 'bearish') return 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
-  return 'bg-amber-500/12 text-amber-300 border border-amber-500/25'
+  if (regime === 'bullish') return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30'
+  if (regime === 'bearish') return 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border border-rose-500/30'
+  return 'bg-amber-500/12 text-amber-700 dark:text-amber-300 border border-amber-500/25'
 }
 
 export default function OpportunitiesPage() {
@@ -813,7 +813,7 @@ export default function OpportunitiesPage() {
                       输入板块或选股条件,点击查询(每次查询消耗 1 次 tdx ask 配额)
                     </div>
                   ) : tdxData == null ? (
-                    <div className="text-[11px] text-red-500 py-3">查询失败,请稍后重试</div>
+                    <div className="text-[11px] text-red-600 py-3">查询失败,请稍后重试</div>
                   ) : (
                     <>
                       <div className="text-[11px] text-muted-foreground mb-2">
@@ -889,8 +889,8 @@ export default function OpportunitiesPage() {
                                   <span
                                     className={
                                       String(chg).startsWith('-')
-                                        ? 'text-emerald-400'
-                                        : 'text-rose-400'
+                                        ? 'text-emerald-700 dark:text-emerald-400'
+                                        : 'text-rose-700 dark:text-rose-400'
                                     }
                                   >
                                     {chg}%
@@ -1059,7 +1059,7 @@ export default function OpportunitiesPage() {
       </div>
 
       {error && (
-        <div className="card p-3 mb-4 text-[12px] text-amber-500 flex items-center gap-2">
+        <div className="card p-3 mb-4 text-[12px] text-amber-700 dark:text-amber-500 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4" />
           {error}
         </div>
@@ -1108,7 +1108,7 @@ export default function OpportunitiesPage() {
           )}
         </div>
         {scanError && (
-          <div className="mt-2 text-[12px] text-amber-500 flex items-center gap-1.5">
+          <div className="mt-2 text-[12px] text-amber-700 dark:text-amber-500 flex items-center gap-1.5">
             <AlertTriangle className="w-3.5 h-3.5" /> {scanError}
           </div>
         )}
@@ -1213,7 +1213,7 @@ export default function OpportunitiesPage() {
                     {item.ai_score != null && (
                       <div className="mt-1 flex items-center justify-end gap-1">
                         <span className="text-[10px] text-muted-foreground">AI</span>
-                        <span className={`inline-flex items-center justify-center min-w-[18px] px-1.5 py-0.5 rounded text-[11px] font-semibold ${item.ai_score >= 8 ? 'bg-green-500/20 text-green-400' : item.ai_score >= 6 ? 'bg-primary/20 text-primary' : item.ai_score >= 4 ? 'bg-amber-500/20 text-amber-400' : 'bg-red-500/20 text-red-400'}`}>
+                        <span className={`inline-flex items-center justify-center min-w-[18px] px-1.5 py-0.5 rounded text-[11px] font-semibold ${item.ai_score >= 8 ? 'bg-green-500/20 text-green-700 dark:text-green-400' : item.ai_score >= 6 ? 'bg-primary/20 text-primary' : item.ai_score >= 4 ? 'bg-amber-500/20 text-amber-700 dark:text-amber-400' : 'bg-red-500/20 text-red-700 dark:text-red-400'}`}>
                           {item.ai_score}
                         </span>
                       </div>
@@ -1251,19 +1251,19 @@ export default function OpportunitiesPage() {
                 {item.factor_explain && (((item.factor_explain.positive?.length ?? 0) > 0) || ((item.factor_explain.negative?.length ?? 0) > 0)) && (
                   <div className="mt-1.5 flex flex-wrap gap-1">
                     {(item.factor_explain.positive ?? []).map((f) => (
-                      <span key={`p-${f.factor}`} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-green-500/15 text-green-400">
+                      <span key={`p-${f.factor}`} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-green-500/15 text-green-700 dark:text-green-400">
                         {f.label} +{Math.abs(f.contribution).toFixed(1)}
                       </span>
                     ))}
                     {(item.factor_explain.negative ?? []).map((f) => (
-                      <span key={`n-${f.factor}`} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-red-500/15 text-red-400">
+                      <span key={`n-${f.factor}`} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-red-500/15 text-red-700 dark:text-red-400">
                         {f.label} {f.contribution.toFixed(1)}
                       </span>
                     ))}
                   </div>
                 )}
                 {item.constrained && (
-                  <div className="mt-1.5 text-[10px] text-amber-400">
+                  <div className="mt-1.5 text-[10px] text-amber-700 dark:text-amber-400">
                     组合约束: {(item.constraint_reasons || []).join('；') || '已自动降级'}
                   </div>
                 )}
@@ -1281,8 +1281,8 @@ export default function OpportunitiesPage() {
                       onClick={() => handleCandidateFeedback(item, true)}
                       className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors disabled:opacity-40 ${
                         feedbackMap[group.key] === true
-                          ? 'bg-green-500/15 text-green-400'
-                          : 'text-muted-foreground hover:text-green-400'
+                          ? 'bg-green-500/15 text-green-700 dark:text-green-400'
+                          : 'text-muted-foreground hover:text-green-700 dark:hover:text-green-400'
                       }`}
                       title="这个候选建议有用"
                     >
@@ -1295,8 +1295,8 @@ export default function OpportunitiesPage() {
                       onClick={() => handleCandidateFeedback(item, false)}
                       className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors disabled:opacity-40 ${
                         feedbackMap[group.key] === false
-                          ? 'bg-red-500/15 text-red-400'
-                          : 'text-muted-foreground hover:text-red-400'
+                          ? 'bg-red-500/15 text-red-700 dark:text-red-400'
+                          : 'text-muted-foreground hover:text-red-700 dark:hover:text-red-400'
                       }`}
                       title="这个候选建议没用"
                     >

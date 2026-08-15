@@ -423,6 +423,8 @@ export default function StocksPage() {
   const [services, setServices] = useState<AIService[]>([])
   const [channels, setChannels] = useState<NotifyChannel[]>([])
   const [loading, setLoading] = useState(true)
+  // 初始加载失败提示(失败≠空态:避免把"加载失败"误读为"没有数据")
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   // Portfolio
   const [portfolio, setPortfolio] = useState<PortfolioSummary | null>(null)
@@ -648,6 +650,7 @@ export default function StocksPage() {
   }
 
   const load = async () => {
+    setLoadError(null)
     try {
       // 核心数据（立即需要）
       const [stockData, accountData] = await Promise.all([
@@ -660,6 +663,7 @@ export default function StocksPage() {
       setExpandedAccounts(new Set(accountData.map((a: Account) => a.id)))
     } catch (e) {
       console.error(e)
+      setLoadError(e instanceof Error ? e.message : '加载失败')
     } finally {
       setLoading(false)  // 提前解除阻塞
     }
@@ -693,6 +697,7 @@ export default function StocksPage() {
       }
     } catch (e) {
       console.error(e)
+      setLoadError(e instanceof Error ? e.message : '加载失败')
     } finally {
       setPortfolioLoading(false)
     }
@@ -1820,6 +1825,19 @@ export default function StocksPage() {
       </div>
 
       {/* Portfolio Total Summary */}
+      {/* 初始加载失败横幅:失败≠空态,给出重试入口 */}
+      {loadError && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-border/60 bg-accent/30 px-3 py-2 text-[12px] text-muted-foreground">
+          <span>加载失败{loadError ? `: ${loadError}` : ''}</span>
+          <button
+            type="button"
+            onClick={() => { void load(); void loadPortfolio() }}
+            className="ml-auto rounded-md px-2 py-0.5 text-[11px] text-primary transition-colors hover:bg-accent"
+          >
+            重试
+          </button>
+        </div>
+      )}
       {portfolioLoading && !portfolio ? (
         // 首次加载时显示骨架屏
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
@@ -2550,10 +2568,12 @@ export default function StocksPage() {
             </div>
           </div>
           {stocks.length === 0 ? (
-            <div className="py-12 text-center">
-              <div className="text-[13px] text-muted-foreground">还没有添加关注股票</div>
-              <div className="mt-2 text-[11px] text-muted-foreground/70">点击右上角“添加股票”开始</div>
-            </div>
+            loadError ? null : (
+              <div className="py-12 text-center">
+                <div className="text-[13px] text-muted-foreground">还没有添加关注股票</div>
+                <div className="mt-2 text-[11px] text-muted-foreground/70">点击右上角“添加股票”开始</div>
+              </div>
+            )
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {stocks

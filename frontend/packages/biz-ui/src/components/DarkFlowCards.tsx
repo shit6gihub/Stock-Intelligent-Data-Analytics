@@ -63,7 +63,7 @@ function fmtSigned(v: number | null | undefined, digits = 2): string {
 
 function upColor(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return 'text-muted-foreground'
-  return v > 0 ? 'text-rose-400' : v < 0 ? 'text-emerald-400' : 'text-muted-foreground'
+  return v > 0 ? 'text-rose-700 dark:text-rose-400' : v < 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground'
 }
 
 export default function DarkFlowCards({ symbol, market }: { symbol: string; market: string }) {
@@ -186,7 +186,7 @@ export default function DarkFlowCards({ symbol, market }: { symbol: string; mark
           <>
             {/* 内外盘占比进度条: 外盘(买)红 / 内盘(卖)绿 */}
             <div className="flex items-center gap-2 text-[11px] mb-1">
-              <span className="text-rose-400 font-mono">外盘 {fmtPct(io.buy_pct)}</span>
+              <span className="text-rose-700 dark:text-rose-400 font-mono">外盘 {fmtPct(io.buy_pct)}</span>
               <div className="flex-1 h-1.5 rounded-full bg-accent/40 overflow-hidden flex">
                 <div
                   className="h-full bg-rose-400/80"
@@ -197,7 +197,7 @@ export default function DarkFlowCards({ symbol, market }: { symbol: string; mark
                   style={{ width: `${Math.min(100, Math.max(0, io.sell_pct ?? 0))}%` }}
                 />
               </div>
-              <span className="text-emerald-400 font-mono">内盘 {fmtPct(io.sell_pct)}</span>
+              <span className="text-emerald-700 dark:text-emerald-400 font-mono">内盘 {fmtPct(io.sell_pct)}</span>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px] mt-2">
               <Stat label="量比" value={io.volume_ratio != null ? io.volume_ratio.toFixed(2) : '--'} />
