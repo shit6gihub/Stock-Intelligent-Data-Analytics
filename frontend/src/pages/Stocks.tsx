@@ -1651,7 +1651,7 @@ export default function StocksPage() {
           </div>
         </div>
         {/* Summary Cards Skeleton */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="card p-4">
               <Skeleton className="h-4 w-16 mb-2" />
@@ -1822,7 +1822,7 @@ export default function StocksPage() {
       {/* Portfolio Total Summary */}
       {portfolioLoading && !portfolio ? (
         // 首次加载时显示骨架屏
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="card p-4">
               <div className="flex items-center gap-2 mb-2">
@@ -1834,7 +1834,7 @@ export default function StocksPage() {
           ))}
         </div>
       ) : portfolio ? (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 md:gap-4 mb-6">
           <div className="card p-4">
             <div className="flex items-center gap-2 text-muted-foreground mb-1">
               <TrendingUp className="w-4 h-4" />
@@ -1882,7 +1882,7 @@ export default function StocksPage() {
                     </span>
                   )}
                 </div>
-                <div className={`text-[20px] font-bold font-mono ${isUp ? 'text-rose-500' : 'text-emerald-500'}`}>
+                <div className={`text-[20px] font-bold font-mono tabular-nums ${isUp ? 'text-rose-500' : 'text-emerald-500'}`}>
                   {isUp ? '+' : ''}{formatMoney(dayPnl)}
                   <span className="text-[13px] ml-1.5">({pct >= 0 ? '+' : ''}{pct.toFixed(2)}%)</span>
                 </div>
@@ -1895,7 +1895,7 @@ export default function StocksPage() {
               <Wallet className="w-4 h-4" />
               <span className="text-[12px]">可用资金</span>
             </div>
-            <div className="text-[20px] font-bold text-foreground font-mono">
+            <div className="text-[20px] font-bold text-foreground font-mono tabular-nums">
               {formatMoney(portfolio.total.available_funds)}
             </div>
           </div>
@@ -1904,7 +1904,7 @@ export default function StocksPage() {
               <PiggyBank className="w-4 h-4" />
               <span className="text-[12px]">总资产</span>
             </div>
-            <div className="text-[20px] font-bold text-foreground font-mono">
+            <div className="text-[20px] font-bold text-foreground font-mono tabular-nums">
               {formatMoney(portfolio.total.total_assets)}
             </div>
           </div>
@@ -1914,7 +1914,7 @@ export default function StocksPage() {
               <Bell className="w-4 h-4" />
               <span className="text-[12px]">仓位占比</span>
             </div>
-            <div className="text-[20px] font-bold text-foreground font-mono">
+            <div className="text-[20px] font-bold text-foreground font-mono tabular-nums">
               {positionRatio ? `${positionRatio.pct.toFixed(1)}%` : '--'}
             </div>
             <div className="mt-1 text-[11px] text-muted-foreground line-clamp-1">
@@ -2078,11 +2078,11 @@ export default function StocksPage() {
                   <div className="flex items-center gap-2.5 md:gap-6 min-w-0">
                     <div className="text-left md:text-right">
                       <div className="text-[10px] md:text-[11px] text-muted-foreground">市值</div>
-                      <div className="text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap">{formatMoney(account.total_market_value)}</div>
+                      <div className="text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap tabular-nums">{formatMoney(account.total_market_value)}</div>
                     </div>
                     <div className="text-left md:text-right">
                       <div className="text-[10px] md:text-[11px] text-muted-foreground">盈亏</div>
-                      <div className={`text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap ${account.total_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                      <div className={`text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap tabular-nums ${account.total_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
                         {account.total_pnl >= 0 ? '+' : ''}{formatMoney(account.total_pnl)}
                         <span className="text-[10px] md:text-[11px] ml-1 hidden md:inline">({account.total_pnl_pct >= 0 ? '+' : ''}{account.total_pnl_pct.toFixed(2)}%)</span>
                       </div>
@@ -2094,13 +2094,13 @@ export default function StocksPage() {
                       >
                         {dailyPnlDisplayLabel(account, true)}
                       </div>
-                      <div className={`text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap ${account.total_daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                      <div className={`text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap tabular-nums ${account.total_daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
                         {account.total_daily_pnl >= 0 ? '+' : ''}{formatMoney(account.total_daily_pnl)}
                       </div>
                     </div>
                     <div className="text-left md:text-right hidden sm:block">
                       <div className="text-[10px] md:text-[11px] text-muted-foreground">可用</div>
-                      <div className="text-[12px] md:text-[13px] font-mono whitespace-nowrap">{formatMoney(account.available_funds)}</div>
+                      <div className="text-[12px] md:text-[13px] font-mono whitespace-nowrap tabular-nums">{formatMoney(account.available_funds)}</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-0 md:gap-1 shrink-0" onClick={e => e.stopPropagation()}>
@@ -2142,8 +2142,8 @@ export default function StocksPage() {
                               >
                                 {dailyPnlDisplayLabel(account, true)}
                               </th>
-                              <th className="text-center px-4 py-2 text-[11px] font-semibold text-muted-foreground">风格</th>
-                              <th className="text-left px-4 py-2 text-[11px] font-semibold text-muted-foreground">Agent</th>
+                              <th className="hidden lg:table-cell text-center px-4 py-2 text-[11px] font-semibold text-muted-foreground">风格</th>
+                              <th className="hidden lg:table-cell text-left px-4 py-2 text-[11px] font-semibold text-muted-foreground">Agent</th>
                               <th className="text-center px-4 py-2 text-[11px] font-semibold text-muted-foreground">操作</th>
                             </tr>
                           </thead>
@@ -2258,7 +2258,7 @@ export default function StocksPage() {
                                       </div>
                                     ) : '—'}
                                   </td>
-                                  <td className="px-4 py-2.5 text-center">
+                                  <td className="hidden lg:table-cell px-4 py-2.5 text-center">
                                     {pos.trading_style ? (
                                       <span className={`text-[10px] px-1.5 py-0.5 rounded ${pos.trading_style === 'short' ? 'bg-rose-500/10 text-rose-600' : pos.trading_style === 'long' ? 'bg-blue-500/10 text-blue-600' : 'bg-amber-500/10 text-amber-600'}`}>
                                         {pos.trading_style === 'short' ? '短线' : pos.trading_style === 'long' ? '长线' : '波段'}
@@ -2267,7 +2267,7 @@ export default function StocksPage() {
                                       <span className="text-[10px] text-muted-foreground/50">-</span>
                                     )}
                                   </td>
-                                  <td className="px-4 py-2.5">
+                                  <td className="hidden lg:table-cell px-4 py-2.5">
                                     {stock && (
                                       <button onClick={() => setAgentDialogStock(stock)} className="flex items-center gap-1.5 hover:opacity-70 transition-opacity">
                                         {stock.agents && stock.agents.length > 0 ? (
@@ -2368,10 +2368,10 @@ export default function StocksPage() {
                                 setDraggingPositionAccountId(null)
                                 positionDragSnapshotRef.current = null
                               }}
-                              className={`p-3 hover:bg-accent/30 transition-colors ${draggingPositionId === pos.id ? 'opacity-60' : ''}`}
+                              className={`px-3 py-2.5 hover:bg-accent/30 transition-colors ${draggingPositionId === pos.id ? 'opacity-60' : ''}`}
                             >
                               {/* Row 1: Stock info + Current price */}
-                              <div className="flex items-center justify-between gap-2 mb-2">
+                              <div className="flex items-center justify-between gap-2 mb-1.5">
                                 <div className="flex items-center gap-1.5 min-w-0">
                                   <span className={`shrink-0 text-[9px] px-1 py-0.5 rounded ${badge.style}`}>{badge.label}</span>
                                   <span className="shrink-0 font-mono text-[12px] font-semibold text-foreground">
@@ -2389,7 +2389,7 @@ export default function StocksPage() {
                                     </span>
                                   )}
                                 </div>
-                                <div className={`font-mono text-[13px] font-medium whitespace-nowrap shrink-0 ${changeColor}`}>
+                                <div className={`font-mono text-[13px] font-medium whitespace-nowrap shrink-0 tabular-nums ${changeColor}`}>
                                   {pos.current_price?.toFixed(2) || '—'}
                                   {pos.change_pct != null && <span className="text-[11px] ml-1">{pos.change_pct >= 0 ? '+' : ''}{pos.change_pct.toFixed(2)}%</span>}
                                 </div>
@@ -2398,7 +2398,7 @@ export default function StocksPage() {
                               {(() => {
                                 const { suggestion, kline } = getSuggestionForStock(pos.symbol, pos.market, true)
                                 return (suggestion || kline) ? (
-                                  <div className="mb-2">
+                                  <div className="mb-1.5">
                                     <SuggestionBadge
                                       suggestion={suggestion}
                                       stockName={pos.name}
@@ -2414,19 +2414,19 @@ export default function StocksPage() {
                               <div className="grid grid-cols-4 gap-2 text-[11px]">
                                 <div className="min-w-0">
                                   <div className="text-[10px] text-muted-foreground">成本</div>
-                                  <div className="font-mono text-foreground truncate" title={String(pos.cost_price)}>{formatPrice(pos.cost_price)}</div>
+                                  <div className="font-mono text-foreground truncate tabular-nums" title={String(pos.cost_price)}>{formatPrice(pos.cost_price)}</div>
                                 </div>
                                 <div className="min-w-0">
                                   <div className="text-[10px] text-muted-foreground">数量</div>
-                                  <div className="font-mono text-foreground truncate" title={String(pos.quantity)}>{pos.quantity}</div>
+                                  <div className="font-mono text-foreground truncate tabular-nums" title={String(pos.quantity)}>{pos.quantity}</div>
                                 </div>
                                 <div className="min-w-0">
                                   <div className="text-[10px] text-muted-foreground">盈亏</div>
-                                  <div className={`font-mono whitespace-nowrap ${pnlColor}`}>
+                                  <div className={`font-mono whitespace-nowrap tabular-nums ${pnlColor}`}>
                                     {pos.pnl != null ? `${pos.pnl >= 0 ? '+' : ''}${formatMoney(pos.pnl)}` : '—'}
                                   </div>
                                   {pos.pnl_pct != null && (
-                                    <div className={`text-[10px] font-mono ${pnlColor} opacity-80`}>
+                                    <div className={`text-[10px] font-mono tabular-nums ${pnlColor} opacity-80`}>
                                       {pos.pnl_pct >= 0 ? '+' : ''}{pos.pnl_pct.toFixed(2)}%
                                     </div>
                                   )}
@@ -2437,13 +2437,13 @@ export default function StocksPage() {
                                       { period: pos.daily_pnl_period, date: pos.quote_date },
                                     ]), true)}
                                   </div>
-                                  <div className={`font-mono whitespace-nowrap ${pos.daily_pnl != null ? (pos.daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500') : 'text-muted-foreground'}`}>
+                                  <div className={`font-mono whitespace-nowrap tabular-nums ${pos.daily_pnl != null ? (pos.daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500') : 'text-muted-foreground'}`}>
                                     {pos.daily_pnl != null ? `${pos.daily_pnl >= 0 ? '+' : ''}${formatMoney(pos.daily_pnl)}` : '—'}
                                   </div>
                                 </div>
                               </div>
                               {/* Row 4: Actions */}
-                              <div className="flex items-center justify-between mt-2 pt-2 border-t border-border/20">
+                              <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-border/20">
                                 <div>
                                   {stock && stock.agents && stock.agents.length > 0 ? (
                                     <button onClick={() => setAgentDialogStock(stock)} className="flex items-center gap-1">
@@ -2600,7 +2600,7 @@ export default function StocksPage() {
                       setDraggingWatchStockId(null)
                       watchDragSnapshotRef.current = null
                     }}
-                    className={`group rounded-xl border border-border/40 bg-background/30 hover:bg-accent/20 transition-colors p-3 cursor-pointer ${draggingWatchStockId === stock.id ? 'opacity-60' : ''}`}
+                    className={`group rounded-xl border border-border/40 bg-background/30 hover:bg-accent/20 transition-colors px-3 py-2.5 cursor-pointer ${draggingWatchStockId === stock.id ? 'opacity-60' : ''}`}
                     onClick={() => {
                       if (isSuppressCardClick()) return
                       setAgentDialogStock(stock)
@@ -2626,17 +2626,17 @@ export default function StocksPage() {
                           </button>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <div className={`font-mono text-[14px] font-bold leading-tight ${changeColor}`}>
+                      <div className="text-right shrink-0 whitespace-nowrap">
+                        <div className={`font-mono text-[14px] font-bold leading-tight tabular-nums ${changeColor}`}>
                           {quote?.current_price != null ? quote.current_price.toFixed(2) : '--'}
                         </div>
-                        <div className={`font-mono text-[11px] leading-tight ${changeColor}`}>
+                        <div className={`font-mono text-[11px] leading-tight tabular-nums ${changeColor}`}>
                           {quote?.change_pct != null ? `${quote.change_pct >= 0 ? '+' : ''}${quote.change_pct.toFixed(2)}%` : '--'}
                         </div>
                       </div>
                     </div>
 
-                    <div className="mt-2">
+                    <div className="mt-1.5">
                       {(suggestion || kline) ? (
                         <SuggestionBadge
                           suggestion={suggestion}
@@ -2651,7 +2651,7 @@ export default function StocksPage() {
                       )}
                     </div>
 
-                    <div className="mt-2 pt-2 border-t border-border/30 flex items-center justify-between gap-2">
+                    <div className="mt-1.5 pt-1.5 border-t border-border/30 flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1 flex-wrap">
                         {stock.agents && stock.agents.length > 0 ? (
                           <Badge variant="secondary" className="text-[10px]">{stock.agents.length} Agent</Badge>

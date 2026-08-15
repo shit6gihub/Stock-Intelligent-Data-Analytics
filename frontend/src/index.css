@@ -45,7 +45,9 @@
   }
 
   .dark {
-    /* 反AI模板 P1: 暗色同样统一色相 215,锚点色提亮为 240 70% 60% */
+    /* 反AI模板 P1: 暗色统一色相 240,锚点色提亮为 240 70% 60%。
+       层级说明(oklch L 实测): bg 15.9 → card 19.8(Δ3.9)→ hover 23.1(Δ3.3)→ muted 25.1 → accent 27.9,
+       每级 ≥3% 已分明,故背景/卡片/悬浮明度保持不动。 */
     --background: 240 20% 6%;
     --foreground: 240 15% 90%;
     --card: 240 20% 10%;
@@ -64,8 +66,11 @@
     --destructive-foreground: 0 0% 100%;
     --success: 152 50% 38%;
     --success-foreground: 0 0% 100%;
-    --border: 240 15% 16%;
-    --input: 240 15% 18%;
+    /* 边框降档 16%→14%: 原 16%(oklch 26.0)高于 muted 填充、比 card 亮 6.2,全局 150 处 border-border
+       全浓度描边过亮显脏;降至 14%(oklch≈24.5)落在 card(19.8)与 hover(23.1)之间,结构清晰不抢眼。 */
+    --border: 240 15% 14%;
+    /* 输入框描边 18%→15%: 原与 accent 同亮(27.9)层级越位;降至 15%,略亮于 --border 保持输入可交互性。 */
+    --input: 240 15% 15%;
     --ring: 240 70% 60%; /* 跟随锚点色 */
   }
 
@@ -114,7 +119,7 @@
   }
   .dark .card-hover:hover {
     background-color: hsl(240 20% 13.5%); /* 暗色: 表面亮度抬升(比 --card 的 10% 亮一档) */
-    border-color: hsl(240 15% 24%);       /* 1px 边框中性提亮 */
+    border-color: hsl(240 15% 20%);       /* hover 边框提亮: 原 24% 按旧 --border 16% 校准,现随 14% 基准下调,保持相对提亮梯度 */
     box-shadow: none;                     /* 暗色层级靠亮度,不用阴影 */
   }
   .card-subtle {

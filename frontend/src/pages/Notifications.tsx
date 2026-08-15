@@ -447,9 +447,9 @@ export default function NotificationsPage() {
                       )}
                     </span>
                     <span className="mt-1 block line-clamp-2 text-[11px] leading-5 text-muted-foreground">{item.body || '无正文'}</span>
-                    <span className="mt-1.5 flex items-center gap-2 text-[10px] text-muted-foreground/70">
-                      <span>{formatDateTime(item.created_at)}</span>
-                      {item.push_status && <span className={item.push_status === 'failed' ? 'text-rose-500' : item.push_status === 'sent' ? 'text-emerald-500' : ''}>{channelSummary(item)}</span>}
+                    <span className="mt-1.5 flex min-w-0 items-center gap-2 text-[10px] text-muted-foreground/70">
+                      <span className="shrink-0">{formatDateTime(item.created_at)}</span>
+                      {item.push_status && <span className={`min-w-0 truncate ${item.push_status === 'failed' ? 'text-rose-500' : item.push_status === 'sent' ? 'text-emerald-500' : ''}`}>{channelSummary(item)}</span>}
                     </span>
                   </span>
                   <span className={`mt-1.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors ${isSelected ? 'bg-primary text-primary-foreground' : 'text-muted-foreground/50 group-hover:bg-accent group-hover:text-foreground'}`}>

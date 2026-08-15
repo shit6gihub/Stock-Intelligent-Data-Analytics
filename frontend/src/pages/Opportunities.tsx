@@ -963,7 +963,7 @@ export default function OpportunitiesPage() {
       )}
 
       <div className="card p-3 md:p-4 mb-4">
-        <div className="grid grid-cols-2 md:grid-cols-8 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-2">
           <Select value={market} onValueChange={(v) => setMarket(v as 'ALL' | 'CN' | 'HK' | 'US')}>
             <SelectTrigger className="h-8 text-[12px]"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -1026,7 +1026,7 @@ export default function OpportunitiesPage() {
             清空筛选
           </Button>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mt-2">
           <div className="relative">
             <Input
               value={sector}
@@ -1130,7 +1130,6 @@ export default function OpportunitiesPage() {
                 {scanResult.items.map((it) => {
                   const d = it.current_data || {}
                   const num = (v: unknown) => (v == null || Number.isNaN(Number(v)) ? '--' : Number(v).toFixed(2))
-                  const pctCls = Number(d.change_pct) >= 0 ? 'text-rose-400' : 'text-emerald-400'
                   return (
                     <tr key={it.symbol} className="border-b border-border/30 hover:bg-accent/40 cursor-pointer" onClick={() => openInsight({
                       stock_symbol: it.symbol,
@@ -1143,7 +1142,7 @@ export default function OpportunitiesPage() {
                       <td className="py-1.5 pr-2 font-medium text-foreground">{it.name}</td>
                       <td className="py-1.5 pr-2 text-right font-semibold text-primary">{it.score.toFixed(1)}</td>
                       <td className="py-1.5 pr-2 text-right font-mono">{num(d.current_price)}</td>
-                      <td className={`py-1.5 pr-2 text-right font-mono ${pctCls}`}>{num(d.pe_ttm)}</td>
+                      <td className="py-1.5 pr-2 text-right font-mono">{num(d.pe_ttm)}</td>
                       <td className="py-1.5 pr-2 text-right font-mono">{num(d.pb_ratio)}</td>
                       <td className="py-1.5 text-right font-mono text-muted-foreground">{num(d.market_cap)}</td>
                     </tr>
@@ -1195,7 +1194,7 @@ export default function OpportunitiesPage() {
             ? (group.members.some((x) => x.source_pool === 'mixed') ? '市场+关注' : '市场池')
             : (item.source_pool_label || '关注池')
           return (
-            <div key={stateKey} className={`card p-4 transition-colors ${toneClass(item)}`}>
+            <div key={stateKey} className={`card p-3 sm:p-4 transition-colors ${toneClass(item)}`}>
               <button className="w-full text-left" onClick={() => openInsight(item)}>
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
@@ -1208,7 +1207,7 @@ export default function OpportunitiesPage() {
                         {displayActionLabel(item)}
                       </span>
                     </div>
-                    <div className={`text-[12px] font-mono mt-1 ${Number(item.rank_score || item.score || 0) >= 80 ? 'text-primary' : 'text-muted-foreground'}`}>
+                    <div className={`text-[13px] font-bold font-mono mt-1.5 ${Number(item.rank_score || item.score || 0) >= 80 ? 'text-primary' : 'text-muted-foreground'}`}>
                       评分 {Math.round(item.rank_score || item.score || 0)}
                     </div>
                     {item.ai_score != null && (
@@ -1221,9 +1220,9 @@ export default function OpportunitiesPage() {
                     )}
                   </div>
                 </div>
-                <div className="mt-2 text-[12px] text-foreground line-clamp-2">{item.signal || item.reason || '--'}</div>
-                <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
-                  <div>入场: {formatEntryDisplay(item.action, entryLow, entryHigh)}</div>
+                <div className="mt-1.5 text-[12px] leading-5 text-foreground line-clamp-2">{item.signal || item.reason || '--'}</div>
+                <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] leading-4 text-muted-foreground">
+                  <div className="font-medium text-foreground/90">入场: {formatEntryDisplay(item.action, entryLow, entryHigh)}</div>
                   <div>止损: {formatPlanPrice(stopLoss)}</div>
                   <div>目标: {formatPlanPrice(targetPrice)}</div>
                   <div>失效: {item.invalidation || '--'}</div>
@@ -1241,16 +1240,16 @@ export default function OpportunitiesPage() {
                   <div>持仓: {item.is_holding_snapshot ? '持仓中' : '未持仓'}</div>
                   <div>市场: {marketLabel(item.stock_market)}</div>
                 </div>
-                <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-muted-foreground">
+                <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] leading-4 text-muted-foreground">
                   <div>Alpha: {formatMetric(breakdown.alpha_score)}</div>
                   <div>催化: {formatMetric(breakdown.catalyst_score)}</div>
                   <div>质量: {formatMetric(breakdown.quality_score)}</div>
                   <div>风险惩罚: {formatMetric(breakdown.risk_penalty)}</div>
                   <div>相对强弱: {crossFeature.relative_strength_pct != null ? `${Number(crossFeature.relative_strength_pct).toFixed(0)}分位` : '--'}</div>
-                  <div>事件催化: {eventScore != null ? eventScore.toFixed(1) : '--'}{eventCount > 0 ? `（${eventCount}条）` : '（无命中）'}</div>
+                  <div className="font-medium text-foreground/90">事件催化: {eventScore != null ? eventScore.toFixed(1) : '--'}{eventCount > 0 ? `（${eventCount}条）` : '（无命中）'}</div>
                 </div>
                 {item.factor_explain && (((item.factor_explain.positive?.length ?? 0) > 0) || ((item.factor_explain.negative?.length ?? 0) > 0)) && (
-                  <div className="mt-2 flex flex-wrap gap-1">
+                  <div className="mt-1.5 flex flex-wrap gap-1">
                     {(item.factor_explain.positive ?? []).map((f) => (
                       <span key={`p-${f.factor}`} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-green-500/15 text-green-400">
                         {f.label} +{Math.abs(f.contribution).toFixed(1)}
@@ -1264,13 +1263,13 @@ export default function OpportunitiesPage() {
                   </div>
                 )}
                 {item.constrained && (
-                  <div className="mt-2 text-[10px] text-amber-400">
+                  <div className="mt-1.5 text-[10px] text-amber-400">
                     组合约束: {(item.constraint_reasons || []).join('；') || '已自动降级'}
                   </div>
                 )}
               </button>
 
-              <div className="mt-3 flex items-center justify-between">
+              <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
                 <div className="text-[10px] text-muted-foreground">
                   来源: {sourceFlags.join(' + ')}
                 </div>
