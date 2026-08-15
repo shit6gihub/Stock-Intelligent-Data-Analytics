@@ -54,6 +54,10 @@ app = FastAPI(
     title="SIDA API",
     version="0.1.0",
     redirect_slashes=False,  # 避免重定向丢失 Authorization header
+    # 安全: 生产关闭 API 文档(/docs /redoc /openapi.json), 防接口地图泄露(2026-08-15 公开 demo 后)
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 # GZip 压缩(2026-08-10): 静态 JS 2.3MB 未压缩, 跨境弱网加载慢 → 压缩后 ~600KB
