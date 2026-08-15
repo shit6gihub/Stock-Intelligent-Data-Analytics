@@ -311,8 +311,11 @@ export default function DashboardPage() {
     setShowOnboarding(false)
   }
 
+  // 异动池/热榜等数据源返回 SH/SZ/BJ(交易所代码),行情接口统一按 A股 CN 处理
+  const normalizeMarket = (m: string) => (['SH', 'SZ', 'BJ'].includes((m || '').toUpperCase()) ? 'CN' : m || 'CN')
+
   const openStock = (symbol: string, market: string, name = '', hasPosition = false) =>
-    setModal({ open: true, symbol, market: market || 'CN', name, hasPosition })
+    setModal({ open: true, symbol, market: normalizeMarket(market), name, hasPosition })
 
   // ========== PC 右键菜单 ==========
   const [stockCtxMenu, setStockCtxMenu] = useState<StockContextMenuState | null>(null)
@@ -320,7 +323,7 @@ export default function DashboardPage() {
   const openStockContextMenu = useCallback((e: React.MouseEvent, stock: StockContextTarget) => {
     e.preventDefault()
     e.stopPropagation()
-    setStockCtxMenu({ x: e.clientX, y: e.clientY, stock })
+    setStockCtxMenu({ x: e.clientX, y: e.clientY, stock: { ...stock, market: normalizeMarket(stock.market) } })
   }, [])
 
   const addToWatchlistFromMenu = useCallback((stock: StockContextTarget) => {

@@ -40,6 +40,9 @@ class InsightsBatchRequest(BaseModel):
 
 
 def _parse_market(market: str) -> MarketCode:
+    # 兼容数据源返回的交易所代码(SH/SZ/BJ 均属 A股 CN 市场)
+    if (market or "").upper() in ("SH", "SZ", "BJ"):
+        market = "CN"
     try:
         return MarketCode(market)
     except ValueError:
