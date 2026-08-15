@@ -68,8 +68,8 @@ const getJwtUsername = (): string | null => {
   } catch { return null }
 }
 const isDemoUser = (): boolean => getJwtUsername() === 'demo'
-// demo 隐藏的管理/个人页面(数据源/设置/AI配置/Agent/策略等核心内容)
-const DEMO_HIDDEN_PATHS = new Set(['/portfolio', '/paper-trading', '/alerts', '/shadow', '/agents', '/strategies', '/datasources', '/settings'])
+// demo 隐藏的管理/个人页面(数据源/设置/AI配置/Agent/策略等核心内容; 持仓/自选保留浏览但只读)
+const DEMO_HIDDEN_PATHS = new Set(['/paper-trading', '/alerts', '/shadow', '/agents', '/strategies', '/datasources', '/settings'])
 const mobilePrimaryNavItems = navItems.filter(n => MOBILE_PRIMARY_TO.includes(n.to))
 const mobileMoreNavItems = navItems.filter(n => !MOBILE_PRIMARY_TO.includes(n.to))
 

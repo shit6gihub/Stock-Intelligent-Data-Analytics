@@ -94,8 +94,6 @@ _DEMO_ADMIN_PREFIXES = (
     "/api/users",
     "/api/shadow",
     "/api/paper-trading",
-    "/api/portfolio",
-    "/api/watchlist",
     "/api/forecast/predict",
     "/api/upload",
     "/api/reports/generate",
