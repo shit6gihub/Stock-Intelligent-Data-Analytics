@@ -57,18 +57,23 @@ SIDA 把 A 股行情数据、AI 深度分析、多模型预测、双向对话和
 
 ### 生产部署（Docker）
 
-```bash
-# 拉镜像（阿里云 ACR 国内加速）
-docker pull crpi-mte80ai8o78b1429.cn-shanghai.personal.cr.aliyuncs.com/xiaozexwz/xzxwz:v0.2.36
+镜像源二选一（GitHub 源全球可用，阿里云 ACR 国内加速）：
 
-# 运行（数据卷持久化）
+```bash
+# 方式一：GitHub 源（ghcr.io）
+docker pull ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest
+
+# 方式二：阿里云 ACR（国内加速）
+docker pull crpi-mte80ai8o78b1429.cn-shanghai.personal.cr.aliyuncs.com/xiaozexwz/xzxwz:v0.2.37
+
+# 运行（数据卷持久化，将 IMAGE 替换为上面拉取的镜像）
 docker run -d --name sida -p 8000:8000 --restart unless-stopped \
   -v sida_data:/app/data \
   -e AUTH_USERNAME=admin \
   -e AUTH_PASSWORD=<你的密码> \
   -e TZ=Asia/Shanghai \
   -e DATA_DIR=/app/data \
-  crpi-mte80ai8o78b1429.cn-shanghai.personal.cr.aliyuncs.com/xiaozexwz/xzxwz:v0.2.36
+  IMAGE
 ```
 
 ### 开发环境
