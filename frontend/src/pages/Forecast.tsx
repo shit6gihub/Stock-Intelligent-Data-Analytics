@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { TrendingUp, LineChart, RefreshCw, Activity, Download, History, FileText, Send } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
-import { fetchAPI, stocksApi, type StockItem } from '@panwatch/api'
+import { fetchAPI, getToken, stocksApi, type StockItem } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Input } from '@panwatch/base-ui/components/ui/input'
 import { Label } from '@panwatch/base-ui/components/ui/label'
@@ -284,6 +284,29 @@ export default function ForecastPage() {
       setHistory([])
     } finally {
       setHistoryLoading(false)
+    }
+  }
+
+  // 导出历史预测 CSV(/api/export/predictions, 带 token 直接 fetch blob)
+  const exportPredictions = async () => {
+    try {
+      const token = getToken()
+      const res = await fetch('/api/export/predictions', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `预测记录_${new Date().toISOString().slice(0, 10)}.csv`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      toast('预测记录已导出', 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '导出失败', 'error')
     }
   }
 
@@ -929,9 +952,15 @@ export default function ForecastPage() {
             <History className="h-4 w-4" />
             <span className="text-lg font-bold">历史预测</span>
           </div>
-          <Button variant="ghost" size="sm" className="h-8" onClick={loadHistory} disabled={historyLoading}>
-            <RefreshCw className={`h-3.5 w-3.5 ${historyLoading ? 'animate-spin' : ''}`} />
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button variant="ghost" size="sm" className="h-8" onClick={exportPredictions}>
+              <Download className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline ml-1">导出</span>
+            </Button>
+            <Button variant="ghost" size="sm" className="h-8" onClick={loadHistory} disabled={historyLoading}>
+              <RefreshCw className={`h-3.5 w-3.5 ${historyLoading ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
         </div>
         {history.length === 0 ? (
           <div className="text-sm text-muted-foreground py-4 text-center">

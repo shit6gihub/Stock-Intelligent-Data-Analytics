@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { Plus, Trash2, Pencil, Search, X, TrendingUp, Bot, Play, RefreshCw, Wallet, PiggyBank, ArrowUpRight, ArrowDownRight, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink, BarChart3, Brain, Activity } from 'lucide-react'
+import { Plus, Trash2, Pencil, Search, X, TrendingUp, Bot, Play, RefreshCw, Wallet, PiggyBank, ArrowUpRight, ArrowDownRight, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink, BarChart3, Brain, Activity, Download } from 'lucide-react'
 import { fetchAPI, getToken, stocksApi, type AIService, type NotifyChannel } from '@panwatch/api'
 import { useLocalStorage, parseServerTime } from '@/lib/utils'
 import { SuggestionBadge, type SuggestionInfo, type KlineSummary } from '@panwatch/biz-ui/components/suggestion-badge'
@@ -1687,6 +1687,29 @@ export default function StocksPage() {
     )
   }
 
+  // 导出持仓 CSV(/api/export/portfolio, 带 token 直接 fetch blob)
+  const exportPortfolio = async () => {
+    try {
+      const token = getToken()
+      const res = await fetch('/api/export/portfolio', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `持仓_${new Date().toISOString().slice(0, 10)}.csv`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      toast('持仓已导出', 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '导出失败', 'error')
+    }
+  }
+
   return (
     <div>
       {/* Header */}
@@ -1739,6 +1762,9 @@ export default function StocksPage() {
               )}
             </div>
             {/* Buttons */}
+            <Button variant="secondary" onClick={exportPortfolio}>
+              <Download className="w-4 h-4" /> 导出
+            </Button>
             <Button variant="secondary" onClick={handleRefresh} disabled={quotesLoading}>
               <RefreshCw className={`w-4 h-4 ${quotesLoading ? 'animate-spin' : ''}`} />
               刷新
@@ -1755,6 +1781,9 @@ export default function StocksPage() {
           </div>
           {/* Mobile buttons */}
           <div className="flex md:hidden items-center gap-1.5">
+            <Button variant="secondary" size="sm" className="h-8 w-8 p-0" onClick={exportPortfolio}>
+              <Download className="w-4 h-4" />
+            </Button>
             <Button variant="secondary" size="sm" className="h-8 w-8 p-0" onClick={handleRefresh} disabled={quotesLoading}>
               <RefreshCw className={`w-4 h-4 ${quotesLoading ? 'animate-spin' : ''}`} />
             </Button>

@@ -44,6 +44,9 @@ from src.web.api import (
     my_ai_services,
     users,
     llm_usage,
+    profile,
+    export as export_data,
+    audit,
 )
 from src.web.api import factors
 from src.web.api import notifications
@@ -320,6 +323,24 @@ app.include_router(
     llm_usage.router,
     prefix="/api",
     tags=["llm-usage"],
+    dependencies=protected,
+)
+app.include_router(
+    profile.router,
+    prefix="/api/profile",
+    tags=["profile"],
+    dependencies=protected,
+)
+app.include_router(
+    export_data.router,
+    prefix="/api/export",
+    tags=["export"],
+    dependencies=protected,
+)
+app.include_router(
+    audit.router,
+    prefix="/api/audit",
+    tags=["audit"],
     dependencies=protected,
 )
 app.include_router(

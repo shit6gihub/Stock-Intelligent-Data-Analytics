@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { Moon, Sun, Monitor, Check, LogOut, User, Stethoscope, KeyRound, type LucideIcon } from 'lucide-react'
+import { Moon, Sun, Monitor, Check, LogOut, User, Stethoscope, KeyRound, UserCog, type LucideIcon } from 'lucide-react'
 import { isAuthenticated, logout, authApi } from '@panwatch/api'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@panwatch/base-ui/components/ui/dialog'
 import { Input } from '@panwatch/base-ui/components/ui/input'
@@ -160,6 +160,22 @@ export default function AccountMenu({
               </NavLink>
             )
           })}
+
+          <div className="my-1 h-px bg-border/50" />
+
+          {/* 个人中心(2026-08-15 SIDA P1) */}
+          <NavLink
+            to="/profile"
+            onClick={() => setOpen(false)}
+            className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[12px] transition-colors ${
+              location.pathname.startsWith('/profile')
+                ? 'bg-primary/10 text-primary'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent/60'
+            }`}
+          >
+            <UserCog className="w-3.5 h-3.5" />
+            个人中心
+          </NavLink>
 
           <div className="my-1 h-px bg-border/50" />
 

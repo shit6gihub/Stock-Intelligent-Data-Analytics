@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, RefreshCw, Share2, Sparkles, ScanSearch, ThumbsDown, ThumbsUp } from 'lucide-react'
+import { AlertTriangle, RefreshCw, Share2, Sparkles, ScanSearch, ThumbsDown, ThumbsUp, Download } from 'lucide-react'
 import {
+  getToken,
   recommendationsApi,
   stocksApi,
   strategiesApi,
@@ -588,6 +589,29 @@ export default function OpportunitiesPage() {
     }
   }
 
+  // 导出机会候选 CSV(/api/export/opportunities, 带 token 直接 fetch blob)
+  const exportOpportunities = async () => {
+    try {
+      const token = getToken()
+      const res = await fetch('/api/export/opportunities', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `机会候选_${new Date().toISOString().slice(0, 10)}.csv`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      toast('机会候选已导出', 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '导出失败', 'error')
+    }
+  }
+
   const resetFilters = useCallback(() => {
     setMarket(DEFAULT_FILTERS.market)
     setSource(DEFAULT_FILTERS.source)
@@ -704,6 +728,15 @@ export default function OpportunitiesPage() {
         </div>
         <div className="flex items-center gap-2">
           <span className="text-[11px] text-muted-foreground">{snapshotDate || '最新快照'}</span>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="h-8 text-[12px]"
+            onClick={exportOpportunities}
+          >
+            <Download className="w-3.5 h-3.5 mr-1" />
+            导出
+          </Button>
           <Button
             variant="secondary"
             size="sm"

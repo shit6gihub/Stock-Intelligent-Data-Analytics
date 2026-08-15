@@ -38,8 +38,29 @@ class User(Base):
     token_version = Column(Integer, default=1, nullable=False)
     # 影子账户交易画像(交割单分析落库, profile.to_dict()); NULL=未上传过交割单
     shadow_profile_json = Column(JSON, nullable=True)
+    # 个人中心(2026-08-15): 昵称/头像
+    nickname = Column(String(64), nullable=True)
+    avatar = Column(String(255), nullable=True)  # 头像(base64 data URL 或路径)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class AuditLog(Base):
+    """操作审计日志(2026-08-15): 记录关键写操作(登录/配置修改/用户管理/导出等)。
+
+    owner 视角审计: 谁在什么时候改了什么。不记录读操作(避免噪音)。
+    """
+
+    __tablename__ = "audit_logs"
+    __table_args__ = (Index("ix_audit_logs_created", "created_at"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), nullable=True)  # 操作者(系统任务为 NULL)
+    username = Column(String(64), default="")
+    action = Column(String(64), nullable=False)  # login / logout / update_profile / update_password / manage_user / update_settings / update_datasource / export / register
+    detail = Column(String(255), default="")
+    ip = Column(String(64), default="")
+    created_at = Column(DateTime, server_default=func.now())
 
 
 class ReportSubscription(Base):

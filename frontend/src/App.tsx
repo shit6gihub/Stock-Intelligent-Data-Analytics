@@ -1,6 +1,6 @@
 import { Fragment, useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { Routes, Route, NavLink, useLocation, useNavigate, Navigate } from 'react-router-dom'
-import { TrendingUp, Bot, ScrollText, Settings, List, Database, Clock, LayoutDashboard, Github, BellRing, Sparkles, Activity, LineChart, FileText, BookOpen, Shield } from 'lucide-react'
+import { TrendingUp, Bot, ScrollText, Settings, List, Database, Clock, LayoutDashboard, Github, BellRing, Sparkles, Activity, LineChart, FileText, BookOpen, Shield, HelpCircle, ShieldCheck } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
 import { useHotkeys } from '@/hooks/use-hotkeys'
 import { appApi, fetchAPI, isAuthenticated } from '@panwatch/api'
@@ -23,6 +23,9 @@ const ForecastPage = lazy(() => import('@/pages/Forecast'))
 const IndexDetailPage = lazy(() => import('@/pages/IndexDetail'))
 const ShadowAccountPage = lazy(() => import('@/pages/ShadowAccount'))
 const NotificationsPage = lazy(() => import('@/pages/Notifications'))
+const ProfilePage = lazy(() => import('@/pages/Profile'))
+const HelpPage = lazy(() => import('@/pages/Help'))
+const AuditPage = lazy(() => import('@/pages/Audit'))
 import LogsModal from '@panwatch/biz-ui/components/logs-modal'
 import AmbientBackground from '@panwatch/biz-ui/components/AmbientBackground'
 import NotificationBell from '@panwatch/biz-ui/components/notification-bell'
@@ -47,6 +50,8 @@ const navItems = [
   { to: '/history', icon: Clock, label: '历史' },
   { to: '/datasources', icon: Database, label: '数据源' },
   { to: '/settings', icon: Settings, label: '设置' },
+  { to: '/help', icon: HelpCircle, label: '帮助' },
+  { to: '/audit', icon: ShieldCheck, label: '审计', ownerOnly: true },
 ]
 // 桌面端导航按业务分组(2026-08-12): 行情 / 交易 / 系统, 13 项全部平铺显示, 不再 slice 截断
 const desktopNavGroups = [
@@ -84,6 +89,9 @@ const isGuestUser = (): boolean => getJwtRole() === 'guest' || isDemoUser()
 const GUEST_HIDDEN_PATHS = ['/paper-trading', '/alerts', '/shadow', '/agents', '/strategies', '/datasources']
 const isNavHiddenForGuest = (to: string): boolean =>
   GUEST_HIDDEN_PATHS.includes(to) || to.startsWith('/manage')
+// owner 专属导航(审计页): 非 owner 一律隐藏(2026-08-15)
+const isNavHiddenForRole = (n: { to: string; ownerOnly?: boolean }): boolean =>
+  !!n.ownerOnly && getJwtRole() !== 'owner'
 const mobilePrimaryNavItems = navItems.filter(n => MOBILE_PRIMARY_TO.includes(n.to))
 const mobileMoreNavItems = navItems.filter(n => !MOBILE_PRIMARY_TO.includes(n.to))
 
@@ -242,7 +250,7 @@ function App() {
             <nav className="flex items-center gap-1 min-w-0 flex-1 justify-center overflow-x-auto">
               {desktopNavGroups.map((group, gi) => {
                 // guest(demo): 隐藏管理/个人页面导航(数据源/设置/Agent/策略/持仓等; 按角色计算)
-                const items = group.items.filter(n => !isGuestUser() || !isNavHiddenForGuest(n.to))
+                const items = group.items.filter(n => (!isGuestUser() || !isNavHiddenForGuest(n.to)) && !isNavHiddenForRole(n))
                 if (items.length === 0) return null
                 return (
                 <Fragment key={group.key}>
@@ -337,7 +345,7 @@ function App() {
               <NotificationBell size="sm" />
               <AccountMenu
                 size="sm"
-                navItems={isGuestUser() ? mobileMoreNavItems.filter(n => !isNavHiddenForGuest(n.to)) : mobileMoreNavItems}
+                navItems={isGuestUser() ? mobileMoreNavItems.filter(n => !isNavHiddenForGuest(n.to) && !isNavHiddenForRole(n)) : mobileMoreNavItems.filter(n => !isNavHiddenForRole(n))}
                 mode={mode}
                 onSetMode={setMode}
                 onOpenSelfCheck={() => setSelfCheckOpen(true)}
@@ -350,7 +358,7 @@ function App() {
       {/* Mobile Bottom Nav */}
       <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-card border-t border-border px-2 pb-[env(safe-area-inset-bottom)]">
         <div className="flex items-center justify-around h-14">
-          {mobilePrimaryNavItems.filter(n => !isGuestUser() || !isNavHiddenForGuest(n.to)).map(({ to, icon: Icon, label }) => {
+          {mobilePrimaryNavItems.filter(n => (!isGuestUser() || !isNavHiddenForGuest(n.to)) && !isNavHiddenForRole(n)).map(({ to, icon: Icon, label }) => {
             const isActive = to === '/' ? location.pathname === '/' : location.pathname.startsWith(to)
             return (
               <NavLink
@@ -388,6 +396,9 @@ function App() {
             <Route path="/paper-trading" element={<PaperTradingPage />} />
             <Route path="/alerts" element={<PriceAlertsPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
+            <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/help" element={<HelpPage />} />
+            <Route path="/audit" element={<AuditPage />} />
             <Route path="/datasources" element={<DataSourcesPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/analysis/:symbol/:date" element={<AnalysisDetailPage />} />

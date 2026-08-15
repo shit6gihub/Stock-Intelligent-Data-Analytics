@@ -152,6 +152,17 @@ def _backup_db_before_migration() -> None:
 def _migrate(engine):
     """增量 schema 迁移（SQLite ALTER TABLE ADD COLUMN）"""
     migrations = [
+        # 个人中心(2026-08-15): 昵称/头像
+        (
+            "users",
+            "nickname",
+            "ALTER TABLE users ADD COLUMN nickname VARCHAR(64)",
+        ),
+        (
+            "users",
+            "avatar",
+            "ALTER TABLE users ADD COLUMN avatar VARCHAR(255)",
+        ),
         # Phase 1(模拟盘求真):持仓期最高价,移动止损用
         (
             "paper_trading_positions",
