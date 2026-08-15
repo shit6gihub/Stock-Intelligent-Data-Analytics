@@ -177,3 +177,76 @@ def update_user_model_access(
     db.commit()
     logger.info(f"更新用户 {target.username}({target.id}) 模型授权: {data.mode} {model_ids}")
     return {"mode": data.mode, "model_ids": model_ids}
+
+
+# ── 模块权限(功能模块授权) ─────────────────────────────────────────────
+
+class PermissionUpdate(BaseModel):
+    # 白名单权限点列表(勾选 = 在角色基础权限上追加授权)
+    permissions: list[str] = []
+
+
+def _read_permission_list(perms) -> list[str]:
+    """从 users.permissions 兼容两种形态读取权限点白名单。"""
+    if isinstance(perms, dict):
+        return [p for p in perms.get("permissions", []) if isinstance(p, str)]
+    if isinstance(perms, list):
+        return [p for p in perms if isinstance(p, str)]
+    return []
+
+
+@router.get("/{uid}/permissions")
+def get_user_permissions(
+    uid: str,
+    owner: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    """获取某用户的模块权限白名单(仅 owner)。"""
+    del owner
+    target = get_user_by_id(db, uid)
+    if not target:
+        raise HTTPException(404, "用户不存在")
+    from src.core.permissions import PERMISSION_LABELS
+
+    all_permissions = [
+        {"key": k, "label": v[0], "group": v[1]} for k, v in PERMISSION_LABELS.items()
+    ]
+    return {
+        "username": target.username,
+        "role": target.role,
+        "granted": _read_permission_list(target.permissions),
+        "all_permissions": all_permissions,
+    }
+
+
+@router.put("/{uid}/permissions")
+def update_user_permissions(
+    uid: str,
+    body: PermissionUpdate,
+    owner: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    """写入用户的模块权限白名单(仅 owner)。保留 model_access 等其他键。"""
+    del owner
+    target = get_user_by_id(db, uid)
+    if not target:
+        raise HTTPException(404, "用户不存在")
+    from src.core.permissions import PERMISSION_LABELS
+
+    valid = set(PERMISSION_LABELS.keys())
+    invalid = set(body.permissions) - valid
+    if invalid:
+        raise HTTPException(400, f"无效权限点: {sorted(invalid)}")
+
+    # 保留 permissions dict 里的 model_access 等其他键
+    if isinstance(target.permissions, dict):
+        merged = dict(target.permissions)
+    elif isinstance(target.permissions, list):
+        merged = {"permissions": target.permissions}
+    else:
+        merged = {}
+    merged["permissions"] = list(dict.fromkeys(body.permissions))  # 去重保序
+    target.permissions = merged
+    db.commit()
+    logger.info(f"更新用户 {target.username}({target.id}) 模块权限: {merged['permissions']}")
+    return {"permissions": merged["permissions"]}

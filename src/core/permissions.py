@@ -70,3 +70,26 @@ def get_role_permissions(role: str | None) -> set[str]:
 def has_permission(role: str | None, perm: str) -> bool:
     """判断角色是否拥有某权限点。"""
     return perm in get_role_permissions(role)
+
+
+# 权限点中文标签 + 分组(前端「模块权限」设置 UI 用)
+PERMISSION_LABELS: dict[str, tuple[str, str]] = {
+    "view_dashboard": ("首页", "浏览"),
+    "view_quotes": ("行情", "浏览"),
+    "view_forecast": ("预测", "浏览"),
+    "view_reports": ("报告", "浏览"),
+    "view_opportunities": ("机会", "浏览"),
+    "edit_watchlist": ("自选管理", "操作"),
+    "edit_portfolio": ("持仓管理", "操作"),
+    "run_prediction": ("发起预测", "操作"),
+    "use_chat": ("AI 对话", "操作"),
+    "upload_files": ("文件上传", "操作"),
+    "manage_datasources": ("数据源", "管理"),
+    "manage_settings": ("系统设置", "管理"),
+    "manage_ai_services": ("AI 服务商", "管理"),
+    "manage_users": ("用户管理", "管理"),
+    "manage_agents": ("Agent 管理", "管理"),
+    "manage_strategies": ("策略库", "管理"),
+    "manage_shadow": ("影子账户", "管理"),
+    "manage_paper_trading": ("模拟盘", "管理"),
+}

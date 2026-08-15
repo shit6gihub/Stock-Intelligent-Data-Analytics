@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Users, Plus, Trash2, KeyRound, Ban, CheckCircle2, UserCog, Boxes, Loader2 } from 'lucide-react'
+import { Users, Plus, Trash2, KeyRound, Ban, CheckCircle2, UserCog, Boxes, ShieldCheck, Loader2 } from 'lucide-react'
 import { authApi, fetchAPI, UserInfo } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
@@ -16,6 +16,12 @@ interface Props {
 }
 
 type ModelAccessMode = 'inherit' | 'granted' | 'deny_all'
+
+interface PermissionItem {
+  key: string
+  label: string
+  group: string
+}
 
 interface ModelInfo {
   id: number
@@ -56,6 +62,12 @@ export default function UserManagement({ currentUser }: Props) {
   const [accessMode, setAccessMode] = useState<ModelAccessMode>('inherit')
   const [accessModels, setAccessModels] = useState<ModelInfo[]>([])
   const [checkedIds, setCheckedIds] = useState<number[]>([])
+  // 模块权限对话框
+  const [permTarget, setPermTarget] = useState<UserInfo | null>(null)
+  const [permLoading, setPermLoading] = useState(false)
+  const [permSaving, setPermSaving] = useState(false)
+  const [permAll, setPermAll] = useState<PermissionItem[]>([])
+  const [permGranted, setPermGranted] = useState<string[]>([])
 
   const isOwner = currentUser?.role === 'owner'
 
@@ -121,6 +133,44 @@ export default function UserManagement({ currentUser }: Props) {
       void load()
     } catch (e) {
       toast(e instanceof Error ? e.message : '删除失败', 'error')
+    }
+  }
+
+  // ── 模块权限 ────────────────────────────────────────────────────────
+  const openPermissionAccess = async (u: UserInfo) => {
+    setPermTarget(u)
+    setPermLoading(true)
+    setPermSaving(false)
+    try {
+      const data = await fetchAPI<{ granted: string[]; all_permissions: PermissionItem[] }>(`/users/${u.id}/permissions`, { cacheMode: 'reload' })
+      setPermAll(data.all_permissions || [])
+      setPermGranted(data.granted || [])
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '加载模块权限失败', 'error')
+      setPermTarget(null)
+    } finally {
+      setPermLoading(false)
+    }
+  }
+
+  const togglePerm = (key: string) => {
+    setPermGranted(prev => (prev.includes(key) ? prev.filter(x => x !== key) : [...prev, key]))
+  }
+
+  const savePermissions = async () => {
+    if (!permTarget) return
+    setPermSaving(true)
+    try {
+      await fetchAPI(`/users/${permTarget.id}/permissions`, {
+        method: 'PUT',
+        body: JSON.stringify({ permissions: permGranted }),
+      })
+      toast(`${permTarget.username} 的模块权限已保存`, 'success')
+      setPermTarget(null)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '保存模块权限失败', 'error')
+    } finally {
+      setPermSaving(false)
     }
   }
 
@@ -225,6 +275,7 @@ export default function UserManagement({ currentUser }: Props) {
             </div>
             <div className="flex items-center gap-1.5">
               {u.id !== currentUser?.id && (
+                <>
                 <button
                   className="flex items-center gap-1 rounded border border-border/50 px-1.5 py-1 text-[11px] text-muted-foreground hover:border-primary/30 hover:text-primary"
                   title="配置该用户可用的 AI 模型"
@@ -232,6 +283,14 @@ export default function UserManagement({ currentUser }: Props) {
                 >
                   <Boxes className="h-3 w-3" /> 模型授权
                 </button>
+                <button
+                  className="flex items-center gap-1 rounded border border-border/50 px-1.5 py-1 text-[11px] text-muted-foreground hover:border-primary/30 hover:text-primary"
+                  title="配置该用户可用的功能模块"
+                  onClick={() => void openPermissionAccess(u)}
+                >
+                  <ShieldCheck className="h-3 w-3" /> 模块权限
+                </button>
+                </>
               )}
               {u.role !== 'owner' && (
                 <>
@@ -369,6 +428,64 @@ export default function UserManagement({ currentUser }: Props) {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* 模块权限 Dialog */}
+      <Dialog open={!!permTarget} onOpenChange={(open) => { if (!open) setPermTarget(null) }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>模块权限</DialogTitle>
+            <DialogDescription>
+              {permTarget ? `配置 ${permTarget.username} 可用的功能模块(勾选 = 在角色基础上追加授权,管理类模块默认不开放)` : ''}
+            </DialogDescription>
+          </DialogHeader>
+          {permLoading ? (
+            <div className="py-6 flex items-center justify-center text-[12px] text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin mr-2" /> 加载中…
+            </div>
+          ) : (
+            <div className="space-y-4 max-h-[50vh] overflow-y-auto pr-1">
+              {(['浏览', '操作', '管理'] as const).map(group => {
+                const items = permAll.filter(p => p.group === group)
+                if (items.length === 0) return null
+                return (
+                  <div key={group}>
+                    <div className="text-[11px] font-semibold text-muted-foreground mb-1.5">{group}模块</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                      {items.map(p => (
+                        <label
+                          key={p.key}
+                          className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[12px] cursor-pointer transition-colors ${
+                            permGranted.includes(p.key)
+                              ? 'border-primary/40 bg-primary/5 text-foreground'
+                              : 'border-border/50 text-muted-foreground hover:border-border'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="accent-[hsl(240_60%_50%)]"
+                            checked={permGranted.includes(p.key)}
+                            onChange={() => togglePerm(p.key)}
+                          />
+                          {p.label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+              <p className="text-[10px] text-muted-foreground leading-relaxed">
+                说明:勾选 = 给该用户开放对应功能模块(在角色默认权限之上)。例如给成员勾选「数据源」,该用户即可进入数据源管理页。未勾选的管理类模块维持角色默认(成员不可见)。
+              </p>
+            </div>
+          )}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="ghost" size="sm" onClick={() => setPermTarget(null)}>取消</Button>
+            <Button size="sm" onClick={() => void savePermissions()} disabled={permLoading || permSaving}>
+              {permSaving ? '保存中' : '保存'}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
