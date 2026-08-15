@@ -1,7 +1,8 @@
 import os
 
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from src.web.api import (
     stocks,
@@ -76,6 +77,60 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ════════════════════════════════════════════════════════════════════
+# demo 账号隔离(2026-08-15): 公开 demo 后, 访客只读浏览 + 不可见管理页面
+# 1) 只读: 非 GET 请求一律 403(防修改数据源/设置/持仓等任何写操作)
+# 2) 页面隔离: 管理区路径 GET 也 403(数据源/设置/AI服务商/Agent/策略/用户等)
+# 登录/刷新在认证前(无 token), 不受影响。判定: JWT payload.username == "demo"。
+# ════════════════════════════════════════════════════════════════════
+_DEMO_ADMIN_PREFIXES = (
+    "/api/datasources",
+    "/api/settings",
+    "/api/ai-services",
+    "/api/agents",
+    "/api/strategies",
+    "/api/users",
+    "/api/shadow",
+    "/api/paper-trading",
+    "/api/portfolio",
+    "/api/watchlist",
+    "/api/forecast/predict",
+    "/api/upload",
+    "/api/reports/generate",
+    "/api/wechat",
+)
+
+
+@app.middleware("http")
+async def demo_isolation_middleware(request: Request, call_next):
+    path = request.url.path
+    method = request.method
+    # 非 API 路径(静态资源)直接放行
+    if not path.startswith("/api/"):
+        return await call_next(request)
+
+    username = None
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        try:
+            from src.web.api.auth import decode_token
+            payload = decode_token(auth[7:])
+            if payload:
+                username = payload.get("username")
+        except Exception:
+            pass
+
+    if username == "demo":
+        msg = "演示账号为只读浏览模式,不可修改数据或访问管理页面。请自行部署体验完整功能: https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics"
+        # 1) 只读: 一切写操作拒绝
+        if method not in ("GET", "HEAD", "OPTIONS"):
+            return JSONResponse(status_code=403, content={"code": 403, "success": False, "message": msg})
+        # 2) 管理区页面隔离
+        if path.startswith(_DEMO_ADMIN_PREFIXES):
+            return JSONResponse(status_code=403, content={"code": 403, "success": False, "message": msg})
+    return await call_next(request)
 
 # 认证路由（无需登录）
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])

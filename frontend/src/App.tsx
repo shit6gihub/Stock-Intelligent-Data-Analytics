@@ -57,6 +57,19 @@ const desktopNavGroups = [
 // 移动端底部 5 槽位按 to 路径挑选: 首页/持仓/机会/预测/提醒(2026-08-13, 模拟盘移入"更多"下拉,
 // 不再用 slice(0,5) 依赖 navItems 顺序); navItems 数组顺序保持不动, 桌面端平铺分组完全不变
 const MOBILE_PRIMARY_TO = ['/', '/portfolio', '/opportunities', '/forecast', '/alerts']
+
+// ═══ demo 账号只读模式(2026-08-15): 从 JWT payload 解出 username, 隐藏管理类导航 ═══
+const getJwtUsername = (): string | null => {
+  try {
+    const t = localStorage.getItem('token') || ''
+    if (!t) return null
+    const payload = JSON.parse(atob(t.split('.')[1]))
+    return payload.username || null
+  } catch { return null }
+}
+const isDemoUser = (): boolean => getJwtUsername() === 'demo'
+// demo 隐藏的管理/个人页面(数据源/设置/AI配置/Agent/策略等核心内容)
+const DEMO_HIDDEN_PATHS = new Set(['/portfolio', '/paper-trading', '/alerts', '/shadow', '/agents', '/strategies', '/datasources', '/settings'])
 const mobilePrimaryNavItems = navItems.filter(n => MOBILE_PRIMARY_TO.includes(n.to))
 const mobileMoreNavItems = navItems.filter(n => !MOBILE_PRIMARY_TO.includes(n.to))
 
@@ -204,14 +217,23 @@ function App() {
               </div>
               <span className="text-[15px] font-bold text-foreground">数智分析</span>
               {version && <span className="text-[11px] text-muted-foreground/60 font-normal">v{version}</span>}
+              {isDemoUser() && (
+                <span className="ml-1 shrink-0 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600" title="演示账号为只读浏览模式">
+                  演示模式 · 只读
+                </span>
+              )}
             </NavLink>
 
             {/* Nav Links — 桌面端三组全平铺(行情/交易/系统), 组间 1px 分隔线, 不再 slice(0,5) */}
             <nav className="flex items-center gap-1 min-w-0 flex-1 justify-center overflow-x-auto">
-              {desktopNavGroups.map((group, gi) => (
+              {desktopNavGroups.map((group, gi) => {
+                // demo 账号: 隐藏管理/个人页面导航(数据源/设置/Agent/策略/持仓等)
+                const items = group.items.filter(n => !isDemoUser() || !DEMO_HIDDEN_PATHS.has(n.to))
+                if (items.length === 0) return null
+                return (
                 <Fragment key={group.key}>
                   {gi > 0 && <div className="w-px h-5 bg-border/50 mx-1 shrink-0" aria-hidden="true" />}
-                  {group.items.map(({ to, icon: Icon, label }) => {
+                  {items.map(({ to, icon: Icon, label }) => {
                     const isActive = to === '/' ? location.pathname === '/' : location.pathname.startsWith(to)
                     return (
                       <NavLink
@@ -240,7 +262,8 @@ function App() {
                     )
                   })}
                 </Fragment>
-              ))}
+                )
+              })}
             </nav>
 
             {/* action wrapper:GitHub + 日志 + 头像(桌面端头像下拉仅含主题/自检/退出, 导航已平铺) */}
@@ -300,7 +323,7 @@ function App() {
               <NotificationBell size="sm" />
               <AccountMenu
                 size="sm"
-                navItems={mobileMoreNavItems}
+                navItems={isDemoUser() ? mobileMoreNavItems.filter(n => !DEMO_HIDDEN_PATHS.has(n.to)) : mobileMoreNavItems}
                 mode={mode}
                 onSetMode={setMode}
                 onOpenSelfCheck={() => setSelfCheckOpen(true)}
@@ -313,7 +336,7 @@ function App() {
       {/* Mobile Bottom Nav */}
       <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-card border-t border-border px-2 pb-[env(safe-area-inset-bottom)]">
         <div className="flex items-center justify-around h-14">
-          {mobilePrimaryNavItems.map(({ to, icon: Icon, label }) => {
+          {mobilePrimaryNavItems.filter(n => !isDemoUser() || !DEMO_HIDDEN_PATHS.has(n.to)).map(({ to, icon: Icon, label }) => {
             const isActive = to === '/' ? location.pathname === '/' : location.pathname.startsWith(to)
             return (
               <NavLink
