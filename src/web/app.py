@@ -110,6 +110,7 @@ async def demo_isolation_middleware(request: Request, call_next):
         return await call_next(request)
 
     username = None
+    payload = None
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         try:
@@ -122,6 +123,11 @@ async def demo_isolation_middleware(request: Request, call_next):
 
     if username == "demo":
         msg = "演示账号为只读浏览模式,不可修改数据或访问管理页面。请自行部署体验完整功能: https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics"
+        # 0) GET 限流: 每小时 5 次 API 请求(防爬虫刷数据源配额)
+        if method in ("GET", "HEAD"):
+            from src.core.demo_limit import allow_api_get
+            if not allow_api_get(str(payload.get("sub", ""))):
+                return JSONResponse(status_code=429, content={"code": 429, "success": False, "message": "演示账号请求过于频繁(每小时限 5 次)。请稍后再试,或自行部署体验完整功能: https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics"})
         # demo 专属例外: 自选增删(自己的数据, user_id 隔离; 数量上限在接口层)
         is_own_watchlist_write = (
             (method == "POST" and path.rstrip("/") == "/api/stocks")
