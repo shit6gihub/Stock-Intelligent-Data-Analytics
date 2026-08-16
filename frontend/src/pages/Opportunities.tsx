@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, RefreshCw, Share2, Sparkles, ScanSearch, ThumbsDown, ThumbsUp, Download } from 'lucide-react'
+import { AlertTriangle, BookOpen, RefreshCw, Share2, Sparkles, ScanSearch, ThumbsDown, ThumbsUp, Download } from 'lucide-react'
 import {
   getToken,
   recommendationsApi,
@@ -22,6 +22,7 @@ import { useLocalStorage } from '@/lib/utils'
 import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
 import FactorWeightsPanel from '@/components/FactorWeightsPanel'
 import SignalScoreShareCard from '@/components/SignalScoreShareCard'
+import StrategyLibraryDialog from '@/components/StrategyLibraryDialog'
 
 type SourceFilter = 'all' | 'market_scan' | 'watchlist' | 'mixed'
 type HoldingFilter = 'all' | 'held' | 'unheld'
@@ -319,6 +320,8 @@ export default function OpportunitiesPage() {
   const [scanStrategies, setScanStrategies] = useState<StrategyItem[]>([])
   const [scanStrategyId, setScanStrategyId] = useState('')
   const [scanUniverse, setScanUniverse] = useState<'all' | 'watchlist'>('all')
+  // 策略库弹窗(合并自原独立页面 /strategies)
+  const [strategyLibOpen, setStrategyLibOpen] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [scanResult, setScanResult] = useState<{ items: ScanItem[]; total: number; scanned: number; quoted: number } | null>(null)
   const [scanError, setScanError] = useState('')
@@ -728,6 +731,15 @@ export default function OpportunitiesPage() {
         </div>
         <div className="flex items-center gap-2">
           <span className="text-[11px] text-muted-foreground">{snapshotDate || '最新快照'}</span>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="h-8 text-[12px]"
+            onClick={() => setStrategyLibOpen(true)}
+          >
+            <BookOpen className="w-3.5 h-3.5 mr-1" />
+            策略库
+          </Button>
           <Button
             variant="secondary"
             size="sm"
@@ -1384,6 +1396,11 @@ export default function OpportunitiesPage() {
           item={shareSignal}
         />
       )}
+
+      <StrategyLibraryDialog
+        open={strategyLibOpen}
+        onOpenChange={setStrategyLibOpen}
+      />
     </div>
   )
 }

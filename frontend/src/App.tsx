@@ -1,6 +1,6 @@
 import { Fragment, useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { Routes, Route, NavLink, useLocation, useNavigate, Navigate } from 'react-router-dom'
-import { TrendingUp, Bot, ScrollText, Settings, List, Database, Clock, LayoutDashboard, Github, BellRing, Sparkles, Activity, LineChart, FileText, BookOpen, Shield, HelpCircle, ShieldCheck } from 'lucide-react'
+import { TrendingUp, Bot, ScrollText, Settings, List, Database, Clock, LayoutDashboard, Github, BellRing, Sparkles, Activity, LineChart, FileText, Shield, HelpCircle, ShieldCheck } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
 import { useHotkeys } from '@/hooks/use-hotkeys'
 import { appApi, fetchAPI, isAuthenticated } from '@panwatch/api'
@@ -14,7 +14,6 @@ const SettingsPage = lazy(() => import('@/pages/Settings'))
 const DataSourcesPage = lazy(() => import('@/pages/DataSources'))
 const HistoryPage = lazy(() => import('@/pages/History'))
 const ReportsPage = lazy(() => import('@/pages/Reports'))
-const StrategiesPage = lazy(() => import('@/pages/Strategies'))
 const AnalysisDetailPage = lazy(() => import('@/pages/AnalysisDetail'))
 const PriceAlertsPage = lazy(() => import('@/pages/PriceAlerts'))
 const PaperTradingPage = lazy(() => import('@/pages/PaperTrading'))
@@ -45,7 +44,6 @@ const navItems = [
   { to: '/alerts', icon: BellRing, label: '提醒' },
   { to: '/agents', icon: Bot, label: 'Agent' },
   { to: '/reports', icon: FileText, label: '报告' },
-  { to: '/strategies', icon: BookOpen, label: '策略库' },
   { to: '/shadow', icon: Shield, label: '影子账户' },
   { to: '/history', icon: Clock, label: '历史' },
   { to: '/datasources', icon: Database, label: '数据源' },
@@ -57,7 +55,7 @@ const navItems = [
 const desktopNavGroups = [
   { key: 'market', items: navItems.filter(n => ['/', '/portfolio', '/opportunities', '/forecast'].includes(n.to)) },
   { key: 'trading', items: navItems.filter(n => ['/paper-trading', '/alerts', '/shadow'].includes(n.to)) },
-  { key: 'system', items: navItems.filter(n => ['/agents', '/reports', '/strategies', '/history', '/datasources', '/settings', '/help', '/audit'].includes(n.to)) },
+  { key: 'system', items: navItems.filter(n => ['/agents', '/reports', '/history', '/datasources', '/settings', '/help', '/audit'].includes(n.to)) },
 ]
 // 移动端底部 5 槽位按 to 路径挑选: 首页/持仓/机会/预测/提醒(2026-08-13, 模拟盘移入"更多"下拉,
 // 不再用 slice(0,5) 依赖 navItems 顺序); navItems 数组顺序保持不动, 桌面端平铺分组完全不变
@@ -86,7 +84,7 @@ const isDemoUser = (): boolean => getJwtUsername() === 'demo'
 const isGuestUser = (): boolean => getJwtRole() === 'guest' || isDemoUser()
 // 角色化隐藏导航: owner/member 全部显示(现状不变); guest(demo) 隐藏管理/个人页面
 // (数据源/AI配置/Agent/策略等核心内容; 设置/持仓/自选可浏览但只读)
-const GUEST_HIDDEN_PATHS = ['/paper-trading', '/alerts', '/shadow', '/agents', '/strategies', '/datasources']
+const GUEST_HIDDEN_PATHS = ['/paper-trading', '/alerts', '/shadow', '/agents', '/datasources']
 const isNavHiddenForGuest = (to: string): boolean =>
   GUEST_HIDDEN_PATHS.includes(to) || to.startsWith('/manage')
 // owner 专属导航(审计页): 非 owner 一律隐藏(2026-08-15)
@@ -391,7 +389,6 @@ function App() {
             <Route path="/agents" element={<AgentsPage />} />
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/reports" element={<ReportsPage />} />
-            <Route path="/strategies" element={<StrategiesPage />} />
             <Route path="/shadow" element={<ShadowAccountPage />} />
             <Route path="/paper-trading" element={<PaperTradingPage />} />
             <Route path="/alerts" element={<PriceAlertsPage />} />
