@@ -207,6 +207,8 @@ export default function ForecastPage() {
   const [reportLoading, setReportLoading] = useState(false)
   const [backtestReport, setBacktestReport] = useState<BacktestReport | null>(null)
   const [showDetail, setShowDetail] = useState(false)
+  const [modelWeights, setModelWeights] = useState<Record<string, number> | null>(null)
+  const [weightsSource, setWeightsSource] = useState('')
   const { toast } = useToast()
 
   // 股票搜索(输入名称/代码) — 用 数智分析 自带 /stocks/search(返回 list)
@@ -311,6 +313,21 @@ export default function ForecastPage() {
   }
 
   useEffect(() => { loadHistory() }, [])
+
+  // 运行时拉取模型权重(权重透明度: 后端按历史回测命中率动态调整)
+  // 失败时回退硬编码默认(见下方渲染处的 fallback), 不阻塞页面
+  useEffect(() => {
+    let cancelled = false
+    fetchAPI<{ weights: Record<string, number>; source?: string }>('/forecast/weights')
+      .then(d => {
+        if (!cancelled && d?.weights) {
+          setModelWeights(d.weights)
+          setWeightsSource(d.source || '')
+        }
+      })
+      .catch(() => { /* 引擎未起/接口未就绪: 保留硬编码 fallback */ })
+    return () => { cancelled = true }
+  }, [])
 
   // 检测引擎状态(可手动刷新调用)
   const checkEngine = () => {
@@ -755,22 +772,22 @@ export default function ForecastPage() {
                 </span>
               </div>
               {/* 模型权重透明度: 4 模型投票权重。
-                  数据源: 引擎无公开权重接口(/forecast/models 只返回模型清单、/health 无权重、
-                  predict 响应不含权重字段), 此处展示生产后端最新一次回测落盘的实时权重
-                  (~/.panwatch_model_weights.json, 2026-08-13 17:56 更新, source=backtest):
-                  kronos 0.4414 / chronos 0.3379 / xgboost 0.1103 / linreg 0.1103。
-                  权重按历史回测命中率动态调整, 下次回测后可能变化;
-                  待后端暴露权重接口后应改为运行时拉取, 避免数字过期。 */}
+                  数据源: 引擎 /forecast/weights(按历史回测命中率动态调整,
+                  贝叶斯收缩 + 双写闭环, 见 forecast_lib/model_weights.py);
+                  接口未就绪时回退历史快照 (kronos 0.4414 / chronos 0.3379 /
+                  xgboost 0.1103 / linreg 0.1103, 2026-08-13 backtest)。 */}
               <div className="mb-2 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
                 <span>当前模型权重</span>
-                <span className="font-mono font-medium text-foreground/80">Kronos 44%</span>
+                <span className="font-mono font-medium text-foreground/80">Kronos {Math.round(((modelWeights?.kronos ?? 0.4414)) * 100)}%</span>
                 <span>·</span>
-                <span className="font-mono font-medium text-foreground/80">Chronos 34%</span>
+                <span className="font-mono font-medium text-foreground/80">Chronos {Math.round(((modelWeights?.chronos ?? 0.3379)) * 100)}%</span>
                 <span>·</span>
-                <span className="font-mono font-medium text-foreground/80">XGB 11%</span>
+                <span className="font-mono font-medium text-foreground/80">XGB {Math.round(((modelWeights?.xgboost ?? 0.1103)) * 100)}%</span>
                 <span>·</span>
-                <span className="font-mono font-medium text-foreground/80">线性回归 11%</span>
-                <span className="opacity-70">(按历史命中率动态调整 · 最近回测 2026-08-13)</span>
+                <span className="font-mono font-medium text-foreground/80">线性回归 {Math.round(((modelWeights?.linreg ?? 0.1103)) * 100)}%</span>
+                <span className="opacity-70">
+                  (按历史命中率动态调整{weightsSource === 'default' ? ' · 暂无回测数据, 使用默认权重' : weightsSource === 'history' ? ' · 实时回测统计' : weightsSource === 'file' ? ' · 最近回测落盘' : ' · 最近回测 2026-08-13'})
+                </span>
               </div>
               <ModelDivergenceChart result={result} />
             </div>
