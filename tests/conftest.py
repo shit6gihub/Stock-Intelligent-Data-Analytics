@@ -86,6 +86,22 @@ def _ensure_db_schema():
     from src.web.database import Base, engine
 
     Base.metadata.create_all(engine)
+    # 与生产启动一致: 先跑迁移(旧 DB 缺 nickname/avatar 等列时, create_all
+    # 只建不存在的表、不会加列; 不迁移则真实 DB 用例报 no such column)
+    try:
+        from src.web.database import (
+            _migrate, _migrate_old_providers, _migrate_settings_to_models,
+            _migrate_positions_to_accounts, _migrate_remove_stock_enabled,
+            _migrate_add_user_id_columns,
+        )
+        _migrate(engine)
+        _migrate_old_providers(engine)
+        _migrate_settings_to_models(engine)
+        _migrate_positions_to_accounts(engine)
+        _migrate_remove_stock_enabled(engine)
+        _migrate_add_user_id_columns(engine)
+    except Exception:
+        pass  # 迁移失败不阻断测试(部分用例自建内存库)
     yield
 
 
