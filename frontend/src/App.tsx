@@ -46,7 +46,7 @@ const navItems = [
   { to: '/reports', icon: FileText, label: '报告' },
   { to: '/shadow', icon: Shield, label: '影子账户' },
   { to: '/history', icon: Clock, label: '历史' },
-  { to: '/datasources', icon: Database, label: '数据源' },
+  { to: '/datasources', icon: Database, label: '数据源', ownerOnly: true },
   { to: '/settings', icon: Settings, label: '设置' },
   { to: '/help', icon: HelpCircle, label: '帮助' },
   { to: '/audit', icon: ShieldCheck, label: '审计', ownerOnly: true },
@@ -396,7 +396,7 @@ function App() {
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/help" element={<HelpPage />} />
             <Route path="/audit" element={getJwtRole() === 'owner' ? <AuditPage /> : <Navigate to="/" replace />} />
-            <Route path="/datasources" element={<DataSourcesPage />} />
+            <Route path="/datasources" element={getJwtRole() === 'owner' ? <DataSourcesPage /> : <Navigate to="/" replace />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/analysis/:symbol/:date" element={<AnalysisDetailPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

@@ -2,6 +2,16 @@
 
 ## 2026-08-16
 
+### feature(rbac) — 设置页/导航权限细化(member 只见个人配置)
+
+- Settings 页 owner-only 区块(member 隐藏): AI 服务商&模型+场景分配、接口 Key、
+  同花顺登录、系统设置、配置包(导入/导出)、Hero 快捷按钮(导出配置包/配置 AI)
+  与服务商/模型统计徽标; member 保留个人配置: 通知渠道(per-user)、我的服务商
+  (BYOK)、定时报告订阅(per-user)、AI 调用统计、反馈
+- 侧栏「数据源」导航 owner-only(与审计页同模式): member 打开 /datasources
+  全部 API 403(manage_datasources), 页面本就不可用; 路由守卫跳首页
+- 后端写接口已有中间件拦截(manage_*), 本次为前端展示层对齐, 无需后端改动
+
 ### fix(rbac) — 机会页策略功能对 member 全 403(v0.2.47 迁移遗留)
 
 - v0.2.47 把策略库并入机会页(member 可见), 但 `/api/strategies` 仍在中间件
