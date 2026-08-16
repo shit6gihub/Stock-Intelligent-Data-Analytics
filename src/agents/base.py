@@ -67,8 +67,12 @@ def apply_scene_binding(context, scene: str, system_prompt: str) -> str:
             return system_prompt
         # 1) 场景模型绑定: 有绑定 → 整体重建 ai_client(base_url+api_key+model 一起换,
         #    只改 model 字符串会导致跨服务商绑定后仍发往原服务商 → 404 model not found)
+        #    用户级解析(2026-08-16): context.user 存在时走 BYOK/平台授权, 子用户
+        #    只能用到被授权的模型; 无 user(系统调度)保持全局解析。
         try:
-            bound_model = get_model_for_scene(db, scene)
+            bound_model = get_model_for_scene(
+                db, scene, user=getattr(context, "user", None)
+            )
             if bound_model is not None and getattr(context, "ai_client", None) is not None:
                 from src.web.models import AIService
 

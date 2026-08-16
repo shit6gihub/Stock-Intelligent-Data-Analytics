@@ -1339,7 +1339,7 @@ def _detect_repeat_question(history: list, threshold: int = 3) -> str | None:
     )
 
 
-async def _describe_image(image_data: str) -> str:
+async def _describe_image(image_data: str, user=None) -> str:
     """视觉代理: 用「vision 场景」绑定的多模态模型看图生成文字描述。
 
     主对话模型(deepseek)无视觉能力, 图片先由视觉模型描述成文本,
@@ -1356,7 +1356,7 @@ async def _describe_image(image_data: str) -> str:
             # 1) vision 场景绑定优先(设置页可换)
             base_url, api_key, model_name = None, None, None
             try:
-                model_obj = get_model_for_scene(db, "vision")
+                model_obj = get_model_for_scene(db, "vision", user=user)
                 if model_obj is not None:
                     svc = db.query(AIService).filter(AIService.id == model_obj.service_id).first()
                     if svc:
@@ -1628,30 +1628,42 @@ def _client_from_scene_cfg(db: Session, cfg) -> AIClient | None:
     return None
 
 
-def _get_ai_client(db: Session, model_id: int | None = None) -> AIClient:
+def _get_ai_client(db: Session, model_id: int | None = None, user=None) -> AIClient:
     """获取 AI 客户端实例。
 
-    模型选择优先级(2026-08-13 统一 LLM 配置中心):
-    1. 会话显式指定模型(conv.ai_model_id —— AI 裁判等经 ai_model_id 建会话时用)
-    2. ai_scene_bindings 的 chat 场景绑定(基础设施 A 子任务提供
-       ai_client.get_model_for_scene(db, "chat"); 未落地/异常时向后兼容回落)
-    3. AIModel 表 is_default
-    4. AIModel 表任意一条
-    5. Settings 默认配置
+    模型选择优先级(2026-08-13 统一 LLM 配置中心; 2026-08-16 接入用户级解析):
+    1. 会话显式指定模型(conv.ai_model_id —— AI 裁判等经 ai_model_id 建会话时用;
+       用户级 granted 授权时校验该模型在授权列表内, 不在则回落 ②)
+    2. 用户级解析 get_model_for_scene(db, "chat", user):
+       BYOK 自有服务商 → 平台授权(从授权列表挑) → 全局 chat 场景绑定
+    3. AIModel 表 is_default / 任意一条(无用户级配置时)
+    4. Settings 默认配置
     """
     model = None
     service = None
 
-    # 1) 会话显式模型(裁判场景绑定等传入 ai_model_id 创建会话)
-    if model_id:
+    # 用户级 granted 授权列表(用于校验 conv.ai_model_id); BYOK 用户不限制平台模型
+    granted_ids = None
+    if user is not None:
+        from src.core.ai_client import _get_model_access
+
+        access = _get_model_access(user)
+        if access is not None and access.get("mode") == "granted":
+            granted_ids = set(access.get("model_ids") or [])
+
+    # 1) 会话显式模型(裁判场景绑定等传入 ai_model_id 创建会话;
+    #    granted 授权下模型不在列表内 → 视为不可用, 走 ② 用户级解析)
+    if model_id and (granted_ids is None or model_id in granted_ids):
         model = db.query(AIModel).filter(AIModel.id == model_id).first()
 
-    # 2) chat 场景绑定优先(统一配置中心); 函数未落地 → ImportError 自然回落
+    # 2) 用户级解析(BYOK/平台授权/chat 场景绑定); 函数未落地 → ImportError 自然回落
     if not model:
         try:
             from src.core.ai_client import get_model_for_scene
 
-            scene_client = _client_from_scene_cfg(db, get_model_for_scene(db, "chat"))
+            scene_client = _client_from_scene_cfg(
+                db, get_model_for_scene(db, "chat", user=user)
+            )
             if scene_client is not None:
                 return scene_client
         except Exception as e:
@@ -2163,7 +2175,7 @@ async def send_message(
 
         # 多模态: 图片先由 agnes 视觉代理转成文字描述(在保存前处理, 保证 DB 历史连贯)
         if body.image_data:
-            desc = await _describe_image(body.image_data)
+            desc = await _describe_image(body.image_data, user=user)
             if desc:
                 body.content = f"[用户附图内容] {desc}\n\n{body.content}"
                 body.image_data = None  # 主模型用文本, 不传图片
@@ -2185,7 +2197,7 @@ async def send_message(
 
         # 构建消息列表 + 调用 AI（带 tool use，用于按需获取更多数据）
         messages_for_ai = await _build_ai_messages(db, conv, user, image_data=body.image_data)
-        ai_client = _get_ai_client(db, conv.ai_model_id)
+        ai_client = _get_ai_client(db, conv.ai_model_id, user=user)
         ai_response = ""
         async for _kind, payload in _run_tool_loop(ai_client, messages_for_ai, db):
             if _kind == "text":
@@ -2248,7 +2260,7 @@ async def send_message_stream(
 
             # 多模态: 图片先由 agnes 视觉代理转成文字描述(在保存前处理, 保证 DB 历史连贯)
             if body.image_data:
-                desc = await _describe_image(body.image_data)
+                desc = await _describe_image(body.image_data, user=user)
                 if desc:
                     body.content = f"[用户附图内容] {desc}\n\n{body.content}"
                     body.image_data = None
@@ -2272,12 +2284,12 @@ async def send_message_stream(
             yield _sse_event("stage", {"message": "正在准备上下文..."})
             # 多模态: 图片先由 agnes 视觉代理转成文字描述, 再交给主对话模型
             if body.image_data:
-                desc = await _describe_image(body.image_data)
+                desc = await _describe_image(body.image_data, user=user)
                 if desc:
                     body.content = f"[用户附图内容] {desc}\n\n{body.content}"
                     body.image_data = None
             messages_for_ai = await _build_ai_messages(db, conv, user, image_data=body.image_data)
-            ai_client = _get_ai_client(db, conv.ai_model_id)
+            ai_client = _get_ai_client(db, conv.ai_model_id, user=user)
 
             # 多轮 tool use: 每轮 tool 执行前推送阶段提示
             ai_response = ""

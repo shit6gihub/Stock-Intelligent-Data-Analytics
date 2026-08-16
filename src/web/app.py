@@ -112,6 +112,10 @@ _DEMO_ADMIN_PREFIXES = (
 
 # 管理区路径 → 所需权限点(2026-08-15 RBAC; /api/providers 原不在隔离列表,
 # 现纳入管理区, GET 仍可浏览)
+# 2026-08-16 调整: /api/agents GET 放行(member 个股 AI 分析页需要拉 Agent
+# 列表/能力, 只读无风险); /api/reports/generate 移出管理区 —— 报告生成走
+# 用户级模型授权(get_model_for_scene)控制实际用量, member 可为自己生成报告,
+# guest 仍被上方写操作统一拦截。
 _ADMIN_PREFIX_PERMISSIONS = {
     "/api/datasources": "manage_datasources",
     "/api/settings": "manage_settings",
@@ -124,10 +128,9 @@ _ADMIN_PREFIX_PERMISSIONS = {
     "/api/paper-trading": "manage_paper_trading",
     "/api/forecast/predict": "run_prediction",
     "/api/upload": "upload_files",
-    "/api/reports/generate": "manage_settings",
 }
 # 管理区中允许 GET 浏览的路径(敏感 key 已掩码, 只读无风险)
-_READABLE_ADMIN_PREFIXES = ("/api/settings", "/api/providers")
+_READABLE_ADMIN_PREFIXES = ("/api/settings", "/api/providers", "/api/agents")
 
 
 def _resolve_user_auth(username: str) -> tuple[str | None, set[str]]:

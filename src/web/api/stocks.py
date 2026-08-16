@@ -366,6 +366,7 @@ async def trigger_stock_agent(
     market: str = Query("CN"),
     name: str = Query(""),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """手动触发单只股票 Agent。
 
@@ -507,6 +508,7 @@ async def trigger_stock_agent(
                     suppress_notify=suppress_notify,
                     trace_id=trace_id,
                     force_refresh=force_refresh,
+                    user_id=user.id,
                 ))
                 if outcome.get("skipped"):
                     detail = str(outcome.get("content") or outcome.get("message") or "本次任务已跳过")
@@ -538,6 +540,7 @@ async def trigger_stock_agent(
             suppress_notify=suppress_notify,
             trace_id=trace_id,
             force_refresh=force_refresh,
+            user_id=user.id,
         )
         logger.info(f"Agent {agent_name} 执行完成 - {trigger_stock.symbol}")
         return {

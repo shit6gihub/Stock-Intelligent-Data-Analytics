@@ -1511,8 +1511,13 @@ async def trigger_agent_for_stock(
     suppress_notify: bool = False,
     trace_id: str | None = None,
     force_refresh: bool = False,
+    user_id: str | None = None,
 ) -> dict:
-    """手动触发 Agent 执行（单只股票）"""
+    """手动触发 Agent 执行（单只股票）
+
+    user_id: 触发用户 id(手动触发传入; 系统调度不传)。传入时注入 context.user,
+    Agent 场景绑定走用户级模型解析(BYOK/平台授权, 见 agents/base.apply_scene_binding)。
+    """
     start = time.monotonic()
     trace_id = trace_id or f"man-{agent_name}-{stock.symbol}-{int(time.time() * 1000)}"
     agent_cls = AGENT_REGISTRY.get(agent_name)
@@ -1557,6 +1562,36 @@ async def trigger_agent_for_stock(
     # AgentContext 不强制声明此字段,通过 setattr 注入,其他 agent 不受影响。
     setattr(context, "_trace_id", trace_id)
     setattr(context, "_force_refresh", force_refresh)
+
+    # 用户级模型解析(2026-08-16): 手动触发带 user_id → 注入 context.user,
+    # apply_scene_binding 走 BYOK/平台授权(子用户只能用被授权模型)。
+    # 后台线程执行, ORM 对象跨线程不安全 → 只传 id, 此处重新加载后立即关闭会话
+    # (permissions 为普通列, 加载后随实例走, 脱离会话可读)。
+    if user_id:
+        try:
+            from src.web.database import SessionLocal
+            from src.web.models import User as _User
+
+            _db = SessionLocal()
+            try:
+                context.user = _db.query(_User).filter(_User.id == user_id).first()
+                # 授权预检(2026-08-16): 解析器返回 None = 用户被禁用全部模型
+                # (deny_all / granted 空列表 / 授权模型已删 / demo)。
+                # 此时必须拦截 —— 否则 apply_scene_binding 无绑定会保留全局
+                # client, 被禁用户越权使用平台模型。
+                if context.user is not None:
+                    from src.core.ai_client import get_model_for_scene
+
+                    if get_model_for_scene(_db, "chat", user=context.user) is None:
+                        return {
+                            "skipped": True,
+                            "content": "管理员未给当前用户授权任何 AI 模型,无法执行 AI 分析。请联系管理员在「用户管理 → 模型授权」中配置。",
+                            "trace_id": trace_id,
+                        }
+            finally:
+                _db.close()
+        except Exception:
+            logger.exception(f"加载触发用户失败(忽略, 回落系统级模型): user_id={user_id}")
 
     # 创建 agent，支持手动触发参数。TradingAgents 等新 agent 从 AgentConfig 读 config。
     if agent_name == "intraday_monitor":

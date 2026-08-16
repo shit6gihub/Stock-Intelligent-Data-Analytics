@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-08-16
+
+### fix(rbac) — 子用户模型授权全链路失效(三层修复)
+
+- **granted 语义修复**(`src/core/ai_client.py`): 旧逻辑把授权列表当"全局场景模型白名单"
+  —— 场景绑定模型不在列表内即全场景 None,owner 授权了模型子用户也用不了;
+  新逻辑: 场景绑定模型在列表内优先用,否则从授权列表挑(is_default 优先/id 升序),
+  授权什么就能用什么; 空列表仍为显式全禁
+- **热路径接入用户级解析**: 聊天(`chat.py _get_ai_client` 传 user + 会话显式模型过
+  granted 校验)、Agent 触发(`stocks.py` → `trigger_agent_for_stock` 注入 context.user,
+  后台线程只传 id 重加载)、加仓评估/公告解读(insights 两端点)、图片描述(vision 场景)
+  全部走 BYOK/平台授权; 调度器系统级调用(无 user)行为不变
+- **越权拦截**: deny_all/granted 空列表用户手动触发 Agent 时预检直接返回
+  "管理员未给当前用户授权任何 AI 模型"(旧逻辑会静默保留全局 client 造成越权)
+- **中间件权限调整**(`src/web/app.py`): `GET /api/agents` 放行(member 个股 AI 分析页
+  需拉 Agent 列表, 旧配置连只读都 403); 移除死配置 `/api/reports/generate`(无对应路由)
+
+### test(rbac)
+
+- 新增 4 个 granted 行为用例: 从授权列表挑模型/多模型排序/空列表全禁/场景绑定在列表内优先
+- `test_chat_stream` mock 签名适配 `_get_ai_client(db, model_id, user)`
+
 ## 2026-08-15 (v0.2.38)
 
 ### feat(settings) — 设置页第二窗口改造(对齐 AI 服务商模式)

@@ -241,8 +241,10 @@ def get_model_for_scene(db, scene: str, user=None):
       ② 平台授权: users.permissions.model_access
          {"mode": "inherit"|"granted"|"deny_all", "model_ids": [AIModel.id...]}:
            - deny_all → None
-           - granted 且场景绑定模型不在 model_ids → None
-           - inherit / granted 命中 → 走全局解析逻辑
+           - granted: 场景绑定模型在 model_ids 内 → 用它;
+             否则从 model_ids 挑(is_default 优先, id 升序兜底);
+             model_ids 为空 = 显式全禁 → None
+           - inherit → 走全局解析逻辑
     无 user(系统调用): 原全局解析逻辑不变(场景绑定 → 默认模型 → 模型池第一个)。
 
     Returns:
@@ -270,12 +272,24 @@ def get_model_for_scene(db, scene: str, user=None):
                 return None
             if mode == "granted":
                 model_ids = set(model_access.get("model_ids") or [])
+                if not model_ids:
+                    return None  # granted 空列表 = 显式全禁
+                # 场景绑定模型在授权列表内 → 优先用它(保持平台场景编排)
                 model = _resolve_global_model(db, scene)
-                if model is None:
-                    return None
-                if model.id not in model_ids:
-                    return None
-                return model
+                if model is not None and model.id in model_ids:
+                    return model
+                # 否则从授权列表挑: is_default 优先, 其余按 id 升序
+                # (owner 授权了模型, 用户就一定能用其中之一, 不再因场景
+                #  绑定不在列表而全禁 —— 2026-08-16 修复)
+                from src.web.models import AIModel
+
+                granted = (
+                    db.query(AIModel)
+                    .filter(AIModel.id.in_(model_ids))
+                    .order_by(AIModel.is_default.desc(), AIModel.id.asc())
+                    .all()
+                )
+                return granted[0] if granted else None
             # mode == "inherit": 继承平台默认, 落到全局解析(不校验)
 
     # 无 user(系统调用) / inherit: 原全局解析逻辑

@@ -204,6 +204,84 @@ def test_model_scene_granted_allows_listed(scene_db):
     assert result is not None and result.id == m.id
 
 
+def test_model_scene_granted_picks_from_list(scene_db):
+    """granted 场景模型不在列表 → 从授权列表挑模型(2026-08-16 修复)。
+
+    旧逻辑: 场景默认模型 A 不在授权 [B] → 全场景 None(授权了也用不了)。
+    新逻辑: 返回授权列表内的 B —— owner 授权什么, 用户就能用什么。
+    """
+    from src.web.models import AIModel, AIService
+
+    m_default = _mk_platform_model(scene_db, name="A", model="model-a", is_default=True)
+    svc = AIService(name="S-B", base_url="https://sb", api_key="kb")
+    scene_db.add(svc)
+    scene_db.flush()
+    m_b = AIModel(name="B", service_id=svc.id, model="model-b", is_default=False)
+    scene_db.add(m_b)
+    scene_db.commit()
+
+    member = _mk_user(
+        scene_db, username="granted_pick",
+        permissions={"model_access": {"mode": "granted", "model_ids": [m_b.id]}},
+    )
+    result = get_model_for_scene(scene_db, "chat", user=member)
+    assert result is not None and result.id == m_b.id
+    # 授权模型非默认模型也不影响
+    assert result.id != m_default.id
+
+
+def test_model_scene_granted_default_in_list_preferred(scene_db):
+    """granted 多模型授权: 列表内 is_default 的优先, 否则 id 最小。"""
+    from src.web.models import AIModel, AIService
+
+    svc = AIService(name="S", base_url="https://s", api_key="k")
+    scene_db.add(svc)
+    scene_db.flush()
+    m1 = AIModel(name="M1", service_id=svc.id, model="m1", is_default=False)
+    m2 = AIModel(name="M2", service_id=svc.id, model="m2", is_default=False)
+    scene_db.add_all([m1, m2])
+    scene_db.commit()
+
+    member = _mk_user(
+        scene_db, username="granted_multi",
+        permissions={"model_access": {"mode": "granted", "model_ids": [m1.id, m2.id]}},
+    )
+    # 列表内无 default → id 升序第一个
+    assert get_model_for_scene(scene_db, "chat", user=member).id == m1.id
+
+
+def test_model_scene_granted_empty_list_denies(scene_db):
+    """granted model_ids=[] = 显式全禁 → None。"""
+    _mk_platform_model(scene_db)
+    member = _mk_user(
+        scene_db, username="granted_empty",
+        permissions={"model_access": {"mode": "granted", "model_ids": []}},
+    )
+    assert get_model_for_scene(scene_db, "chat", user=member) is None
+
+
+def test_model_scene_granted_prefers_scene_binding_in_list(scene_db):
+    """granted 且场景绑定模型恰在列表内 → 场景绑定优先(平台编排保留)。"""
+    from src.web.models import AIModel, AISceneBinding, AIService
+
+    m_default = _mk_platform_model(scene_db, name="A", model="model-a", is_default=True)
+    svc = AIService(name="S-B", base_url="https://sb", api_key="kb")
+    scene_db.add(svc)
+    scene_db.flush()
+    m_b = AIModel(name="B", service_id=svc.id, model="model-b", is_default=False)
+    scene_db.add(m_b)
+    scene_db.flush()
+    scene_db.add(AISceneBinding(scene="chat", model_id=m_b.id))
+    scene_db.commit()
+
+    member = _mk_user(
+        scene_db, username="granted_bind",
+        permissions={"model_access": {"mode": "granted", "model_ids": [m_default.id, m_b.id]}},
+    )
+    result = get_model_for_scene(scene_db, "chat", user=member)
+    assert result.id == m_b.id
+
+
 def test_model_scene_granted_denies_unlisted(scene_db):
     """mode=granted 且场景模型不在 model_ids → None。"""
     _mk_platform_model(scene_db)
