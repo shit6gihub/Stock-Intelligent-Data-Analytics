@@ -39,16 +39,15 @@ def log_audit(db: Session, user, action: str, detail: str = "", ip: str = "") ->
 @router.get("")
 def list_audit(
     limit: int = Query(200, ge=1, le=1000),
+    user: str = Query("", description="按用户名筛选, 空=全部用户"),
     owner=Depends(require_owner),
     db: Session = Depends(get_db),
 ):
-    """最近审计日志(仅 owner): 按时间倒序, 默认最近 200 条。"""
-    rows = (
-        db.query(AuditLog)
-        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
-        .limit(limit)
-        .all()
-    )
+    """最近审计日志(仅 owner): 按时间倒序, 默认最近 200 条; 可按用户名筛选。"""
+    q = db.query(AuditLog)
+    if user.strip():
+        q = q.filter(AuditLog.username == user.strip())
+    rows = q.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(limit).all()
     return {
         "logs": [
             {
@@ -63,4 +62,5 @@ def list_audit(
             for r in rows
         ],
         "total": len(rows),
+        "users": [u[0] for u in db.query(AuditLog.username).distinct().order_by(AuditLog.username).all() if u[0]],
     }

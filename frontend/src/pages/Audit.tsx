@@ -16,7 +16,8 @@ interface AuditEntry {
 
 interface AuditResponse {
   logs: AuditEntry[]
-  total: number
+  total?: number
+  users?: string[]
 }
 
 /** 操作类型 → 中文标签(与后端 AuditLog.action 约定一致) */
@@ -36,19 +37,23 @@ export default function AuditPage() {
   const [logs, setLogs] = useState<AuditEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [filterUser, setFilterUser] = useState('')
+  const [users, setUsers] = useState<string[]>([])
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const data = await fetchAPI<AuditResponse>('/audit?limit=200', { cacheMode: 'reload' })
+      const q = filterUser ? `&user=${encodeURIComponent(filterUser)}` : ''
+      const data = await fetchAPI<AuditResponse>(`/audit?limit=200${q}`, { cacheMode: 'reload' })
       setLogs(data?.logs || [])
+      if (data?.users) setUsers(data.users)
     } catch (e) {
       setError(e instanceof Error ? e.message : '加载失败')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [filterUser])
 
   useEffect(() => {
     load()
@@ -71,10 +76,23 @@ export default function AuditPage() {
             共 <span className="font-mono text-foreground/90">{logs.length}</span> 条
           </div>
         </div>
-        <Button variant="outline" size="sm" onClick={load} disabled={loading} className="w-fit">
-          <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
-          刷新
-        </Button>
+        <div className="flex items-center gap-2">
+          <select
+            value={filterUser}
+            onChange={e => setFilterUser(e.target.value)}
+            className="h-8 rounded-md border border-border/50 bg-background px-2 text-[12px] text-foreground focus:outline-none"
+            title="按用户筛选"
+          >
+            <option value="">全部用户</option>
+            {users.map(u => (
+              <option key={u} value={u}>{u}</option>
+            ))}
+          </select>
+          <Button variant="outline" size="sm" onClick={load} disabled={loading} className="w-fit">
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
+            刷新
+          </Button>
+        </div>
       </div>
 
       <div className="card overflow-hidden">
