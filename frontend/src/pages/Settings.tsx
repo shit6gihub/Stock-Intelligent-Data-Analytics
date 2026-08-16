@@ -2682,37 +2682,48 @@ function LlmUsageSection() {
             ))}
           </div>
 
-          {/* 明细表 */}
-          {data.items.length === 0 ? (
-            <div className="py-3 text-center text-[12px] text-muted-foreground">暂无调用记录</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-[12px]">
-                <thead>
-                  <tr className="text-left text-[10px] text-muted-foreground border-b border-border/40">
-                    <th className="py-1.5 pr-3 font-medium">时间</th>
-                    <th className="py-1.5 pr-3 font-medium">场景</th>
-                    <th className="py-1.5 pr-3 font-medium">模型</th>
-                    <th className="py-1.5 pr-3 font-medium text-right">Tokens</th>
-                    <th className="py-1.5 font-medium text-right">耗时</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.items.map((it, i) => (
-                    <tr key={i} className="border-b border-border/20 hover:bg-accent/30 transition-colors">
-                      <td className="py-1.5 pr-3 text-muted-foreground tabular-nums whitespace-nowrap">{it.time}</td>
-                      <td className="py-1.5 pr-3">
-                        <span className="rounded bg-accent/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">{it.scene}</span>
-                      </td>
-                      <td className="py-1.5 pr-3 font-mono text-[11px] text-muted-foreground">{it.model}</td>
-                      <td className="py-1.5 pr-3 text-right font-mono tabular-nums">{fmtNum(it.tokens)}</td>
-                      <td className="py-1.5 text-right text-muted-foreground tabular-nums">{it.latency}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          {/* 明细表(折叠: 默认收起, 点开才展示日志明细) */}
+          <details className="mt-3 group">
+            <summary className="flex cursor-pointer items-center gap-1.5 text-[12px] text-muted-foreground select-none hover:text-foreground transition-colors">
+              <span className="inline-block transition-transform group-open:rotate-90">▶</span>
+              调用明细
+              {data.items.length > 0 && (
+                <span className="text-[10px] text-muted-foreground/70">(最近 {data.items.length} 条)</span>
+              )}
+            </summary>
+            <div className="mt-2">
+              {data.items.length === 0 ? (
+                <div className="py-3 text-center text-[12px] text-muted-foreground">暂无调用记录</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[12px]">
+                    <thead>
+                      <tr className="text-left text-[10px] text-muted-foreground border-b border-border/40">
+                        <th className="py-1.5 pr-3 font-medium">时间</th>
+                        <th className="py-1.5 pr-3 font-medium">场景</th>
+                        <th className="py-1.5 pr-3 font-medium">模型</th>
+                        <th className="py-1.5 pr-3 font-medium text-right">Tokens</th>
+                        <th className="py-1.5 font-medium text-right">耗时</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.items.map((it, i) => (
+                        <tr key={i} className="border-b border-border/20 hover:bg-accent/30 transition-colors">
+                          <td className="py-1.5 pr-3 text-muted-foreground tabular-nums whitespace-nowrap">{it.time}</td>
+                          <td className="py-1.5 pr-3">
+                            <span className="rounded bg-accent/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">{it.scene}</span>
+                          </td>
+                          <td className="py-1.5 pr-3 font-mono text-[11px] text-muted-foreground">{it.model}</td>
+                          <td className="py-1.5 pr-3 text-right font-mono tabular-nums">{fmtNum(it.tokens)}</td>
+                          <td className="py-1.5 text-right text-muted-foreground tabular-nums">{it.latency}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
-          )}
+          </details>
 
           {data.note && (
             <p className="mt-2 text-[10px] text-muted-foreground">{data.note}</p>
