@@ -219,6 +219,12 @@ async def demo_isolation_middleware(request: Request, call_next):
     perms = set(get_role_permissions(role))
     perms |= extra_perms  # owner 给 member 开的白名单权限点
 
+    # 自查询例外(2026-08-16): /api/users/me/permissions 是登录用户查自己的
+    # 模块权限(前端导航过滤用), 只读且不暴露他人数据 → 任何登录用户放行,
+    # 不受 /api/users → manage_users 管理区限制。
+    if path.startswith("/api/users/me/permissions") and method in ("GET", "HEAD"):
+        return await call_next(request)
+
     for prefix, required in _ADMIN_PREFIX_PERMISSIONS.items():
         if path.startswith(prefix):
             if required in perms:

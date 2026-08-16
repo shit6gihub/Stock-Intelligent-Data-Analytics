@@ -431,6 +431,11 @@ def test_middleware_member_admin_403_readable_ok(client, monkeypatch):
     # 管理区 403
     assert client.get("/api/datasources", headers=H).status_code == 403
     assert client.post("/api/settings", headers=H, json={}).status_code == 403
+    # 自查询例外(2026-08-16): member 可查自己的模块权限(导航过滤用), 不受 manage_users 限制
+    r = client.get("/api/users/me/permissions", headers=H)
+    assert r.status_code == 200, "me/permissions 应 200"
+    data = r.json().get("data", {})
+    assert "effective" in data and "manage_datasources" not in data.get("effective", []), "member 默认不应有 manage_datasources"
     # 可浏览例外(与 demo 一致)
     assert client.get("/api/settings", headers=H).status_code != 403
     assert client.get("/api/providers", headers=H).status_code != 403
