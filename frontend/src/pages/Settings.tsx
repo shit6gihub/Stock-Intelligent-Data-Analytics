@@ -1200,13 +1200,16 @@ export default function SettingsPage() {
     return (s.description || '').toLowerCase().includes(q) || (s.key || '').toLowerCase().includes(q)
   })
 
+  // 权限细化(2026-08-16): 平台级管理区块仅 owner 可见, member 只见个人配置
+  const isOwner = currentUser?.role === 'owner'
+
   // 按“重要性”排序：常用优先，低频靠后
   const jumpItems: Array<{ id: string; label: string; hint?: string }> = [
-    { id: 'sec-ai', label: 'AI', hint: `${services.length} 服务 / ${allModels.length} 模型` },
+    ...(isOwner ? [{ id: 'sec-ai', label: 'AI', hint: `${services.length} 服务 / ${allModels.length} 模型` } as const] : []),
     { id: 'sec-notify', label: '通知', hint: `${enabledChannels.length}/${channels.length} 启用` },
-    { id: 'sec-keys', label: '接口Key', hint: `${settings.filter(s => SECRET_SETTING_KEYS.has(s.key) && s.value === SECRET_MASK).length}/${SECRET_SETTING_KEYS.size} 已配` },
-    { id: 'sec-system', label: '系统', hint: health?.timezone ? `TZ ${health.timezone}` : undefined },
-    { id: 'sec-pack', label: '配置包' },
+    ...(isOwner ? [{ id: 'sec-keys', label: '接口Key', hint: `${settings.filter(s => SECRET_SETTING_KEYS.has(s.key) && s.value === SECRET_MASK).length}/${SECRET_SETTING_KEYS.size} 已配` } as const] : []),
+    ...(isOwner ? [{ id: 'sec-system', label: '系统', hint: health?.timezone ? `TZ ${health.timezone}` : undefined } as const] : []),
+    ...(isOwner ? [{ id: 'sec-pack', label: '配置包' } as const] : []),
     { id: 'sec-feedback', label: '反馈' },
   ]
 
@@ -1242,16 +1245,20 @@ export default function SettingsPage() {
                 </span>
               </button>
               <span className="mx-1 hidden h-4 w-px bg-border/50 sm:block" />
-              <div className="px-2.5 py-1 rounded-full bg-background/70 border border-border/50 text-[11px] text-muted-foreground">
-                <span className="font-mono text-foreground/90">{services.length}</span> 服务商
-              </div>
-              <div className="px-2.5 py-1 rounded-full bg-background/70 border border-border/50 text-[11px] text-muted-foreground">
-                <span className="font-mono text-foreground/90">{allModels.length}</span> 模型
-              </div>
+              {isOwner && (
+                <>
+                  <div className="px-2.5 py-1 rounded-full bg-background/70 border border-border/50 text-[11px] text-muted-foreground">
+                    <span className="font-mono text-foreground/90">{services.length}</span> 服务商
+                  </div>
+                  <div className="px-2.5 py-1 rounded-full bg-background/70 border border-border/50 text-[11px] text-muted-foreground">
+                    <span className="font-mono text-foreground/90">{allModels.length}</span> 模型
+                  </div>
+                </>
+              )}
               <div className="px-2.5 py-1 rounded-full bg-background/70 border border-border/50 text-[11px] text-muted-foreground">
                 <span className="font-mono text-foreground/90">{enabledChannels.length}</span>/<span className="font-mono">{channels.length}</span> 渠道启用
               </div>
-              {defaultModel ? (
+              {isOwner && defaultModel ? (
                 <div className="px-2.5 py-1 rounded-full bg-background/70 border border-border/50 text-[11px] text-muted-foreground">
                   默认模型 <span className="font-mono text-foreground/90">{defaultModel.model}</span>
                 </div>
@@ -1264,14 +1271,16 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-2">
-            <Button variant="secondary" size="sm" className="h-9" onClick={exportTemplate} disabled={exporting}>
-              <Download className="w-3.5 h-3.5" /> 导出配置包
-            </Button>
-            <Button size="sm" className="h-9" onClick={() => scrollTo('sec-ai')}>
-              <Cpu className="w-3.5 h-3.5" /> 配置 AI
-            </Button>
-          </div>
+          {isOwner && (
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Button variant="secondary" size="sm" className="h-9" onClick={exportTemplate} disabled={exporting}>
+                <Download className="w-3.5 h-3.5" /> 导出配置包
+              </Button>
+              <Button size="sm" className="h-9" onClick={() => scrollTo('sec-ai')}>
+                <Cpu className="w-3.5 h-3.5" /> 配置 AI
+              </Button>
+            </div>
+          )}
         </div>
 
         {/* Jump pills */}
@@ -1291,6 +1300,7 @@ export default function SettingsPage() {
 
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* AI Services + Models Section */}
+        {isOwner && (
         <section id="sec-ai" className="card p-4 md:p-6 lg:col-span-7">
           <div className="flex items-start justify-between mb-4 md:mb-5 gap-3">
             <div>
@@ -1390,6 +1400,7 @@ export default function SettingsPage() {
             )}
           </div>
         </section>
+        )}
 
         {/* Notify Channel Section */}
         <section id="sec-notify" className="card p-4 md:p-6 lg:col-span-5">
@@ -1619,7 +1630,7 @@ export default function SettingsPage() {
         <LlmUsageSection />
 
         {/* General Settings */}
-        {settings.length > 0 && (
+        {isOwner && settings.length > 0 && (
           <>
           {/* 接口 Key 区块(数据源凭证维护) */}
           <section id="sec-keys" className="card p-4 md:p-6 lg:col-span-12">
@@ -1758,6 +1769,7 @@ export default function SettingsPage() {
         )}
 
         {/* Config Pack (Templates) */}
+        {isOwner && (
         <section id="sec-pack" className="card p-4 md:p-6 lg:col-span-7">
           <div className="flex items-start justify-between mb-4 gap-3">
             <div>
@@ -1839,6 +1851,7 @@ export default function SettingsPage() {
             </div>
           </div>
         </section>
+        )}
 
         {/* Feedback Stats */}
         <section id="sec-feedback" className="card p-4 md:p-6 lg:col-span-5">
