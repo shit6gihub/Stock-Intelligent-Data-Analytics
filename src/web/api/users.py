@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from src.web.database import get_db
 from src.web.api.auth import (
     create_user,
+    get_current_user,
     get_user_by_id,
     get_user_by_username,
     require_owner,
@@ -193,6 +194,32 @@ def _read_permission_list(perms) -> list[str]:
     if isinstance(perms, list):
         return [p for p in perms if isinstance(p, str)]
     return []
+
+
+@router.get("/me/permissions")
+def get_my_permissions(
+    user: User = Depends(get_current_user),
+):
+    """当前用户自己的模块权限(前端导航过滤用)。
+
+    返回 role_defaults(角色自带)+ granted(额外授权)的并集,
+    前端据此隐藏未授权模块的导航入口。
+    """
+    from src.core.permissions import PERMISSION_LABELS, get_role_permissions
+
+    role_defaults = sorted(get_role_permissions(user.role))
+    granted = _read_permission_list(user.permissions)
+    all_permissions = [
+        {"key": k, "label": v[0], "group": v[1]} for k, v in PERMISSION_LABELS.items()
+    ]
+    return {
+        "username": user.username,
+        "role": user.role,
+        "granted": granted,
+        "role_defaults": role_defaults,
+        "effective": sorted(set(role_defaults) | set(granted)),
+        "all_permissions": all_permissions,
+    }
 
 
 @router.get("/{uid}/permissions")

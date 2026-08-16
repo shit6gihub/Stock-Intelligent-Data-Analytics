@@ -3,7 +3,7 @@ import { Routes, Route, NavLink, useLocation, useNavigate, Navigate } from 'reac
 import { TrendingUp, Bot, ScrollText, Settings, List, Database, Clock, LayoutDashboard, Github, BellRing, Sparkles, Activity, LineChart, FileText, Shield, HelpCircle, ShieldCheck } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
 import { useHotkeys } from '@/hooks/use-hotkeys'
-import { appApi, fetchAPI, isAuthenticated } from '@panwatch/api'
+import { appApi, fetchAPI, getMyPermissions, isAuthenticated } from '@panwatch/api'
 // 2026-08-12 性能优化: 路由懒加载 — 17 个页面原本静态 import 打进单 bundle 1.2MB,
 // 点任意路由都要下载/解析整个应用。改为 React.lazy 按需加载, 首屏只下载登录页+当前页。
 const DashboardPage = lazy(() => import('@/pages/Dashboard'))
@@ -36,17 +36,17 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from '@panwatch/base-ui/components/ui/button'
 
 const navItems = [
-  { to: '/', icon: LayoutDashboard, label: '首页' },
-  { to: '/portfolio', icon: List, label: '持仓' },
-  { to: '/opportunities', icon: Sparkles, label: '机会' },
-  { to: '/forecast', icon: LineChart, label: '预测' },
-  { to: '/paper-trading', icon: Activity, label: '模拟盘' },
+  { to: '/', icon: LayoutDashboard, label: '首页', perm: 'view_dashboard' },
+  { to: '/portfolio', icon: List, label: '持仓', perm: 'edit_portfolio' },
+  { to: '/opportunities', icon: Sparkles, label: '机会', perm: 'view_opportunities' },
+  { to: '/forecast', icon: LineChart, label: '预测', perm: 'view_forecast' },
+  { to: '/paper-trading', icon: Activity, label: '模拟盘', perm: 'manage_paper_trading' },
   { to: '/alerts', icon: BellRing, label: '提醒' },
-  { to: '/agents', icon: Bot, label: 'Agent' },
-  { to: '/reports', icon: FileText, label: '报告' },
-  { to: '/shadow', icon: Shield, label: '影子账户' },
+  { to: '/agents', icon: Bot, label: 'Agent', perm: 'manage_agents' },
+  { to: '/reports', icon: FileText, label: '报告', perm: 'view_reports' },
+  { to: '/shadow', icon: Shield, label: '影子账户', perm: 'manage_shadow' },
   { to: '/history', icon: Clock, label: '历史' },
-  { to: '/datasources', icon: Database, label: '数据源' },
+  { to: '/datasources', icon: Database, label: '数据源', perm: 'manage_datasources' },
   { to: '/settings', icon: Settings, label: '设置' },
   { to: '/help', icon: HelpCircle, label: '帮助' },
   { to: '/audit', icon: ShieldCheck, label: '审计', ownerOnly: true },
@@ -90,6 +90,14 @@ const isNavHiddenForGuest = (to: string): boolean =>
 // owner 专属导航(审计页): 非 owner 一律隐藏(2026-08-15)
 const isNavHiddenForRole = (n: { to: string; ownerOnly?: boolean }): boolean =>
   !!n.ownerOnly && getJwtRole() !== 'owner'
+// 模块权限过滤(2026-08-16): 导航项带 perm 权限点 → 当前用户 effective 权限
+// 不含该点则隐藏(未授权模块前端也看不到, 不再"能点进去但数据403")。
+// 注意: 拉取失败(myPerms==null)或权限点未映射的项 → 不隐藏(回退角色判断, 不误伤)。
+const isNavHiddenForPerm = (n: { perm?: string }, myPerms: Set<string> | null): boolean => {
+  if (!n.perm) return false
+  if (!myPerms) return false
+  return !myPerms.has(n.perm)
+}
 const mobilePrimaryNavItems = navItems.filter(n => MOBILE_PRIMARY_TO.includes(n.to))
 const mobileMoreNavItems = navItems.filter(n => !MOBILE_PRIMARY_TO.includes(n.to))
 
@@ -129,6 +137,15 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// 模块权限路由守卫(2026-08-16): 未授权模块直接跳首页。
+// 配合后端 403 + 导航过滤, 三层防"未授权模块可见"。
+// myPerms 尚未加载(null)时不拦截(避免闪跳), 加载完成后才生效。
+function PermGuard({ perm, myPerms, children }: { perm?: string; myPerms: Set<string> | null; children: React.ReactNode }) {
+  if (!perm || !myPerms) return <>{children}</>
+  if (!myPerms.has(perm)) return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
 /** 懒加载路由的轻量占位(2026-08-12): 纯静态骨架, 不依赖任何懒加载模块 */
 function PageFallback() {
   return (
@@ -150,7 +167,16 @@ function App() {
   const [upgradeOpen, setUpgradeOpen] = useState(false)
   const [upgradeInfo, setUpgradeInfo] = useState<{ latest: string; url: string } | null>(null)
   const checkedUpdateRef = useRef(false)
+  // 当前用户模块权限(导航过滤: 未授权模块隐藏入口; 拉取失败回退角色判断)
+  const [myPerms, setMyPerms] = useState<Set<string> | null>(null)
   const repoUrl = 'https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics'
+
+  useEffect(() => {
+    if (!isAuthenticated()) return
+    getMyPermissions()
+      .then(p => p && setMyPerms(new Set(p.effective)))
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     appApi.version()
@@ -247,8 +273,8 @@ function App() {
             {/* Nav Links — 桌面端三组全平铺(行情/交易/系统), 组间 1px 分隔线, 不再 slice(0,5) */}
             <nav className="flex items-center gap-1 min-w-0 flex-1 justify-center overflow-x-auto">
               {desktopNavGroups.map((group, gi) => {
-                // guest(demo): 隐藏管理/个人页面导航(数据源/设置/Agent/策略/持仓等; 按角色计算)
-                const items = group.items.filter(n => (!isGuestUser() || !isNavHiddenForGuest(n.to)) && !isNavHiddenForRole(n))
+                // guest(demo): 隐藏管理/个人页面导航; 模块权限: 未授权模块隐藏入口
+                const items = group.items.filter(n => (!isGuestUser() || !isNavHiddenForGuest(n.to)) && !isNavHiddenForRole(n) && !isNavHiddenForPerm(n, myPerms))
                 if (items.length === 0) return null
                 return (
                 <Fragment key={group.key}>
@@ -343,7 +369,7 @@ function App() {
               <NotificationBell size="sm" />
               <AccountMenu
                 size="sm"
-                navItems={isGuestUser() ? mobileMoreNavItems.filter(n => !isNavHiddenForGuest(n.to) && !isNavHiddenForRole(n)) : mobileMoreNavItems.filter(n => !isNavHiddenForRole(n))}
+                navItems={isGuestUser() ? mobileMoreNavItems.filter(n => !isNavHiddenForGuest(n.to) && !isNavHiddenForRole(n) && !isNavHiddenForPerm(n, myPerms)) : mobileMoreNavItems.filter(n => !isNavHiddenForRole(n) && !isNavHiddenForPerm(n, myPerms))}
                 mode={mode}
                 onSetMode={setMode}
                 onOpenSelfCheck={() => setSelfCheckOpen(true)}
@@ -356,7 +382,7 @@ function App() {
       {/* Mobile Bottom Nav */}
       <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-card border-t border-border px-2 pb-[env(safe-area-inset-bottom)]">
         <div className="flex items-center justify-around h-14">
-          {mobilePrimaryNavItems.filter(n => (!isGuestUser() || !isNavHiddenForGuest(n.to)) && !isNavHiddenForRole(n)).map(({ to, icon: Icon, label }) => {
+          {mobilePrimaryNavItems.filter(n => (!isGuestUser() || !isNavHiddenForGuest(n.to)) && !isNavHiddenForRole(n) && !isNavHiddenForPerm(n, myPerms)).map(({ to, icon: Icon, label }) => {
             const isActive = to === '/' ? location.pathname === '/' : location.pathname.startsWith(to)
             return (
               <NavLink
@@ -381,22 +407,22 @@ function App() {
         <Suspense fallback={<PageFallback />}>
           <Routes>
             <Route path="/" element={<DashboardPage />} />
-            <Route path="/opportunities" element={<OpportunitiesPage />} />
-            <Route path="/forecast" element={<ForecastPage />} />
+            <Route path="/opportunities" element={<PermGuard perm="view_opportunities" myPerms={myPerms}><OpportunitiesPage /></PermGuard>} />
+            <Route path="/forecast" element={<PermGuard perm="view_forecast" myPerms={myPerms}><ForecastPage /></PermGuard>} />
             <Route path="/index/:symbol" element={<IndexDetailPage />} />
-            <Route path="/portfolio" element={<StocksPage />} />
+            <Route path="/portfolio" element={<PermGuard perm="edit_portfolio" myPerms={myPerms}><StocksPage /></PermGuard>} />
             <Route path="/stocks" element={<LegacyStocksRedirect />} />
-            <Route path="/agents" element={<AgentsPage />} />
+            <Route path="/agents" element={<PermGuard perm="manage_agents" myPerms={myPerms}><AgentsPage /></PermGuard>} />
             <Route path="/history" element={<HistoryPage />} />
-            <Route path="/reports" element={<ReportsPage />} />
-            <Route path="/shadow" element={<ShadowAccountPage />} />
-            <Route path="/paper-trading" element={<PaperTradingPage />} />
+            <Route path="/reports" element={<PermGuard perm="view_reports" myPerms={myPerms}><ReportsPage /></PermGuard>} />
+            <Route path="/shadow" element={<PermGuard perm="manage_shadow" myPerms={myPerms}><ShadowAccountPage /></PermGuard>} />
+            <Route path="/paper-trading" element={<PermGuard perm="manage_paper_trading" myPerms={myPerms}><PaperTradingPage /></PermGuard>} />
             <Route path="/alerts" element={<PriceAlertsPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/help" element={<HelpPage />} />
             <Route path="/audit" element={getJwtRole() === 'owner' ? <AuditPage /> : <Navigate to="/" replace />} />
-            <Route path="/datasources" element={<DataSourcesPage />} />
+            <Route path="/datasources" element={<PermGuard perm="manage_datasources" myPerms={myPerms}><DataSourcesPage /></PermGuard>} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/analysis/:symbol/:date" element={<AnalysisDetailPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
