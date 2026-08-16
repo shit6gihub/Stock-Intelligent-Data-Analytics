@@ -113,16 +113,16 @@ _DEMO_ADMIN_PREFIXES = (
 # 管理区路径 → 所需权限点(2026-08-15 RBAC; /api/providers 原不在隔离列表,
 # 现纳入管理区, GET 仍可浏览)
 # 2026-08-16 调整: /api/agents GET 放行(member 个股 AI 分析页需要拉 Agent
-# 列表/能力, 只读无风险); /api/reports/generate 移出管理区 —— 报告生成走
-# 用户级模型授权(get_model_for_scene)控制实际用量, member 可为自己生成报告,
-# guest 仍被上方写操作统一拦截。
+# 列表/能力, 只读无风险); /api/reports/generate、/api/strategies 移出管理区 ——
+# 前者无对应路由(死配置); 后者 v0.2.47 已把策略库并入机会页(member 可见),
+# 且该前缀下 list/get/scan/apply 全部为只读或纯计算端点(无写操作,
+# 策略写入在 /api/recommendations), member 机会页的策略筛选/扫描需要它们。
 _ADMIN_PREFIX_PERMISSIONS = {
     "/api/datasources": "manage_datasources",
     "/api/settings": "manage_settings",
     "/api/ai-services": "manage_ai_services",
     "/api/providers": "manage_ai_services",
     "/api/agents": "manage_agents",
-    "/api/strategies": "manage_strategies",
     "/api/users": "manage_users",
     "/api/shadow": "manage_shadow",
     "/api/paper-trading": "manage_paper_trading",

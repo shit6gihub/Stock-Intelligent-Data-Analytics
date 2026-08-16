@@ -2,6 +2,16 @@
 
 ## 2026-08-16
 
+### fix(rbac) — 机会页策略功能对 member 全 403(v0.2.47 迁移遗留)
+
+- v0.2.47 把策略库并入机会页(member 可见), 但 `/api/strategies` 仍在中间件
+  管理区(manage_strategies) → member 机会页策略筛选下拉永远为空、扫描按钮 403
+  (前端 catch 静默吞掉, 无任何提示); 该前缀下 list/get/scan/apply 全部为只读或
+  纯计算端点(无写操作, 策略写入在 /api/recommendations) → 移出管理区
+- `theme_launch_detector.py` 补 `AgentContext` 导入(其他 agent 均有,
+  缺失导致 IDE/mypy 解析注解报错; 运行时因 `from __future__ import annotations` 未炸)
+- demo(guest)隔离策略保持不变(只读演示定位)
+
 ### fix(rbac) — 子用户模型授权全链路失效(三层修复)
 
 - **granted 语义修复**(`src/core/ai_client.py`): 旧逻辑把授权列表当"全局场景模型白名单"

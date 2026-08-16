@@ -463,4 +463,7 @@ def test_middleware_member_whitelist_grant(client, monkeypatch):
 
     assert client.get("/api/datasources", headers=H).status_code != 403
     # 未授权的管理区仍 403
-    assert client.get("/api/strategies", headers=H).status_code == 403
+    assert client.get("/api/users", headers=H).status_code == 403
+    # /api/strategies 已移出管理区(2026-08-16: v0.2.47 策略库并入机会页,
+    # 该前缀下全是只读/纯计算端点, member 机会页需要)
+    assert client.get("/api/strategies/list", headers=H).status_code != 403
