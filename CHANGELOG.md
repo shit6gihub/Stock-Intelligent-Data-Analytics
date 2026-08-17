@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-17
+
+### feature(storage) — TimescaleDB hypertable 上线 + K线入库 worker (v0.2.54)
+
+- **PostgreSQL + TimescaleDB 2.29.1** 装在测试机 + 生产(3.6GB 内存 + B 档配置)
+- 新建 `klines` hypertable(按 ts 分块 / 7 天一块 / 30 天后自动压缩 / 5 年后自动 drop)
+- 新增 `src/collectors/klines_ingestor.py` 后台 worker: 腾讯/东财/新浪 三源并发拉 + 入库(幂等 ON CONFLICT)
+- 回测 `data_adapter.py` 改造: 优先查 PG klines 表(~70ms), fallback 联网拉
+- K线 API `klines.py` 改造: 同样优先查库, 标注 `source: "pg_klines_hypertable"`
+- 入库 5 只股 800 天 × 3 数据源 = 12,540 行, 写入 ~2,000 行/秒
+- 测试机: 124,800 行写入 6 秒; 单股 800 天查询 70ms; 聚合查询 45ms
+
+回测/前端 K线查询不再每次联网, 速度 ~5-10x 提升。
 ## 2026-08-16
 
 ### feature(rbac) — 设置页/导航权限细化(member 只见个人配置)

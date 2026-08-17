@@ -169,6 +169,52 @@ def get_klines(symbol: str, market: str = "CN", days: int = 60, interval: str = 
             _log_k.error(f"指数K线获取失败({symbol}/{tencent_code}): {e}")
             raise HTTPException(503, f"指数K线不可用({symbol}): {e}")
 
+    # 1. 优先查 PG klines hypertable(快, ~70ms)
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import create_engine, text
+    try:
+        from src.web.database import DB_URL as _DB_URL
+        engine = create_engine(_DB_URL, pool_pre_ping=True)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT ts, open, high, low, close, volume "
+                    "FROM klines "
+                    "WHERE symbol=:s AND market=:m AND period='1d' AND source='tencent' "
+                    "  AND ts >= :c "
+                    "ORDER BY ts ASC"
+                ),
+                {"s": symbol, "m": market_code.value, "c": cutoff},
+            ).fetchall()
+        engine.dispose()
+        if rows:
+            from src.collectors.kline_collector import KlineData
+            klines = [
+                KlineData(
+                    date=str(r[0])[:10],
+                    open=float(r[1]),
+                    high=float(r[2]),
+                    low=float(r[3]),
+                    close=float(r[4]),
+                    volume=float(r[5] or 0),
+                )
+                for r in rows
+            ]
+            klines = _aggregate_klines(klines, interval)
+            return {
+                "symbol": symbol,
+                "market": market_code.value,
+                "days": days,
+                "interval": interval,
+                "klines": _serialize_klines(klines),
+                "source": "pg_klines_hypertable",
+            }
+    except Exception as e:
+        # 库表可能不存在(SQLite/老库)或查询失败 → fallback 联网
+        pass
+
+    # 2. Fallback: 联网拉 KlineCollector
     collector = KlineCollector(market_code)
     klines = collector.get_klines(symbol, days=days)
     klines = _aggregate_klines(klines, interval)
