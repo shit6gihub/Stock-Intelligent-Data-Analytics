@@ -2,6 +2,19 @@
 
 ## 2026-08-17
 
+### polish(ui) — Settings 全局搜索 + 数据源失败显式标识 (v0.2.60)
+
+**Settings.tsx**:
+- 新增全局搜索框(Hero 下方):输入关键词,过滤 section(不匹配的隐藏)
+- "清空搜索"快捷按钮在 jump pills 右侧
+- section 默认全部展开(以后可以改成按需折叠)
+
+**ErrorBanner 组件 + Dashboard.tsx**:
+- 新建 `frontend/src/components/ErrorBanner.tsx`:接收 `{source, message}` 数组,显示具体哪个数据源挂了
+- 7 处 catch 改用 `pushError(source, message)` 收集具体源(大盘指数/资金流/异动池/热榜/报告/机会池/自选股)
+- 替换旧的统一"部分数据加载失败"横幅
+## 2026-08-17
+
 ### fix(kline) — server.py import 路径修复 (v0.2.59)
 
 - `schedule_one_off` 改用 `import server`(根 module), 不是 `src.web.server`(不存在)

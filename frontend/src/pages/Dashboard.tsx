@@ -37,6 +37,7 @@ import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
 import DiscoveryPanel from '@/components/DiscoveryPanel'
 import SkeletonRows from '@/components/SkeletonRows'
 import Sparkline from '@/components/Sparkline'
+import ErrorBanner from '@/components/ErrorBanner'
 import BenchChart from '@/components/BenchChart'
 import BenchmarkShareCard from '@/components/BenchmarkShareCard'
 import DiagnosticsShareCard from '@/components/DiagnosticsShareCard'
@@ -168,8 +169,16 @@ export default function DashboardPage() {
   const [hotStocks, setHotStocks] = useState<MarketHotStockItem[]>([])
   const [hotStocksLoading, setHotStocksLoading] = useState(true)
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null)
-  // 核心接口失败全局横幅(任一失败即提示,失败≠空态;重试=重新 load)
-  const [loadError, setLoadError] = useState<string | null>(null)
+  // 2026-08-17: 数据源失败显式标识 — 收集 {source, message},横幅展示具体哪个源挂了
+  const [sourceErrors, setSourceErrors] = useState<Array<{ source: string; message: string }>>([])
+  const pushError = (source: string, message: string) => {
+    setSourceErrors(prev => {
+      // 同一 source 5s 内只 push 一次(防重复)
+      const recent = prev.find(p => p.source === source)
+      if (recent) return prev
+      return [...prev, { source, message: message.slice(0, 200) }].slice(-5)
+    })
+  }
   // 分享卡开关:成绩单(基准)/ 组合体检 / 每日 digest
   const [shareBench, setShareBench] = useState(false)
   const [shareDiag, setShareDiag] = useState(false)
@@ -199,19 +208,19 @@ export default function DashboardPage() {
 
   const load = useCallback(async (opts?: { skipBench?: boolean }) => {
     setLoading(true)
-    setLoadError(null)
+    setSourceErrors([])  // 清空上次错误
     // 指数 pills:独立加载不阻塞首屏(spark 冷启动可能 ~1s,数据到了自然浮现)
-    dashboardApi.indices().then(setIndices).catch(() => setLoadError('部分数据加载失败'))
+    dashboardApi.indices().then(setIndices).catch((err) => pushError('大盘指数', err?.message || '服务不可用'))
     // 大盘资金流(同花顺源):独立加载,失败聚合到全局横幅
-    dashboardApi.marketCapitalFlow().then(setMarketFlow).catch(() => setLoadError('部分数据加载失败'))
+    dashboardApi.marketCapitalFlow().then(setMarketFlow).catch((err) => pushError('大盘资金流', err?.message || '服务不可用'))
     // 最新报告(Hermes cron):独立加载,失败静默;cacheMode reload 保证 30s 轮询必拿新数据
     setReportsLoading(true)
     reportsApi
       .list({ limit: 8, cacheMode: 'reload' })
       .then((r) => setReports((r.items || []).slice(0, 4)))
-      .catch(() => {
+      .catch((err) => {
         setReports([])
-        setLoadError('部分数据加载失败')
+        pushError('Hermes 报告', err?.message || '服务不可用')
       })
       .finally(() => setReportsLoading(false))
     // 异动池(东财):独立加载,失败静默(端点未就绪时优雅降级为空态)
@@ -219,9 +228,9 @@ export default function DashboardPage() {
     dashboardApi
       .anomalies({ limit: 10 })
       .then((r) => setAnomalies(pickList<MarketAnomalyItem>(r, 'items').slice(0, 10)))
-      .catch(() => {
+      .catch((err) => {
         setAnomalies([])
-        setLoadError('部分数据加载失败')
+        pushError('异动池 (东财)', err?.message || '服务不可用')
       })
       .finally(() => setAnomaliesLoading(false))
     // 热榜(同花顺):独立加载,失败静默
@@ -229,9 +238,9 @@ export default function DashboardPage() {
     dashboardApi
       .hotStocks({ period: 'hour', limit: 10 })
       .then((r) => setHotStocks(pickList<MarketHotStockItem>(r, 'items').slice(0, 10)))
-      .catch(() => {
+      .catch((err) => {
         setHotStocks([])
-        setLoadError('部分数据加载失败')
+        pushError('热榜 (同花顺)', err?.message || '服务不可用')
       })
       .finally(() => setHotStocksLoading(false))
     // 快车道:DB/轻量查询,先让首屏(要紧事/体检分布)尽快出来
@@ -249,7 +258,13 @@ export default function DashboardPage() {
     if (ht.status === 'fulfilled') setAlertHits(ht.value)
     if (td.status === 'fulfilled') setTodos(td.value.todos || [])
     if (ms.status === 'fulfilled') setMarketStatus(ms.value)
-    if ([sc, ov, dg, ht, td, ms].some((r) => r.status === 'rejected')) setLoadError('部分数据加载失败')
+    if ([sc, ov, dg, ht, td, ms].some((r) => r.status === 'rejected')) {
+      // 2026-08-17: 显示具体哪个接口失败(快车道 6 个接口任意失败)
+      const failed = [sc, ov, dg, ht, td, ms]
+        .map((r, i) => ({ r, name: ['盘中扫描', '首页概览', '组合体检', '今日告警', '待办', '市场状态'][i] }))
+        .filter(x => x.r.status === 'rejected')
+      failed.forEach(({ name, r }) => pushError(name, (r as PromiseRejectedResult).reason?.message || '服务不可用'))
+    }
     setLoading(false) // 首屏不再等基准/归因(要拉全持仓 K 线)
     setRefreshedAt(new Date())
 
@@ -258,7 +273,7 @@ export default function DashboardPage() {
       recommendationsApi
         .listStrategySignals({ status: 'active', limit: 5 })
         .then((r) => setOppFallback(r.items || []))
-        .catch(() => setLoadError('部分数据加载失败'))
+        .catch((err) => pushError('机会池兜底', err?.message || '服务不可用'))
     }
 
     // 慢车道:基准/归因需拉全持仓 K 线(分钟级),独立加载,就绪后回填超额/归因。
@@ -277,7 +292,7 @@ export default function DashboardPage() {
     // 自选股列表(判断盘前标的是否已加自选)
     stocksApi.list().then((rows) => {
       setWatchSymbols(new Set((rows || []).map((s) => `${s.market}:${s.symbol}`)))
-    }).catch(() => setLoadError('部分数据加载失败'))
+    }).catch((err) => pushError('自选股列表', err?.message || '服务不可用'))
   }, [loadBench])
 
   // 盘前标的快捷加入自选
@@ -479,18 +494,8 @@ export default function DashboardPage() {
       </div>
 
       {/* 核心接口失败横幅:失败≠空态,给出重试入口 */}
-      {loadError && (
-        <div className="mb-3 flex items-center gap-2 rounded-lg border border-border/60 bg-accent/30 px-3 py-2 text-[12px] text-muted-foreground">
-          <span>{loadError}</span>
-          <button
-            type="button"
-            onClick={() => load()}
-            className="ml-auto rounded-md px-2 py-0.5 text-[11px] text-primary transition-colors hover:bg-accent"
-          >
-            重试
-          </button>
-        </div>
-      )}
+      {/* 2026-08-17: 数据源失败显式标识 — ErrorBanner 组件,展示具体哪个源挂了 */}
+      <ErrorBanner errors={sourceErrors} onDismiss={(i) => setSourceErrors(prev => prev.filter((_, idx) => idx !== i))} retryAll={load} />
 
       {/* 最新报告:Hermes cron 盘前/盘后报告速览(最近 4 条, 30s 随首页自动刷新, 点击进报告页) */}
       <div className="card mb-3 p-4">

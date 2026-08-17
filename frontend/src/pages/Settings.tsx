@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Check, Eye, EyeOff, Plus, Pencil, Trash2, Star, Send, Cpu, Play, Download, Upload, FileJson, BarChart3, User, Radar, RefreshCw, QrCode, MonitorUp, MailCheck, Copy, KeyRound, Activity } from 'lucide-react'
+import { Check, Eye, EyeOff, Plus, Pencil, Trash2, Star, Send, Cpu, Play, Download, Upload, FileJson, BarChart3, User, Radar, RefreshCw, QrCode, MonitorUp, MailCheck, Copy, KeyRound, Activity, Search } from 'lucide-react'
 import { fetchAPI, listSceneBindings, setSceneBinding, wechatBindStart, wechatBindStatus, wechatBindUnbind, wechatBindGet, type AIService, type AIModel, type NotifyChannel, type SceneBinding, type UserInfo, type SubscriptionItem, type WechatBindStartResult, type WechatBindInfo, authApi } from '@panwatch/api'
 import { QRCodeSVG } from 'qrcode.react'
 import UserManagement from '@/components/UserManagement'
@@ -253,6 +253,13 @@ export default function SettingsPage() {
   const [thsLoading, setThsLoading] = useState(false)
 
   const [systemQuery, setSystemQuery] = useState('')
+  // 2026-08-17: 全局搜索(覆盖所有 section)
+  const [globalQuery, setGlobalQuery] = useState('')
+  // 2026-08-17: 全局搜索 trimmed
+  const trimmedGlobal = globalQuery.trim().toLowerCase()
+  const sectionMatches = (title: string, hint?: string) =>
+    !trimmedGlobal || title.toLowerCase().includes(trimmedGlobal) || (hint || '').toLowerCase().includes(trimmedGlobal)
+  // sectionMatches 移到 module 顶层(被 LlmUsageSection 复用)
 
   // 接口 Key 管理第二窗口(Dialog): 单个数据源凭证编辑
   const [keyDialogKey, setKeyDialogKey] = useState<string | null>(null)
@@ -1219,6 +1226,8 @@ export default function SettingsPage() {
     el.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
+  // 2026-08-17: 全局搜索过滤 section(不匹配的 section 直接隐藏) —
+
   return (
     <div>
       {/* Hero */}
@@ -1283,6 +1292,29 @@ export default function SettingsPage() {
           )}
         </div>
 
+        {/* Global Search: 2026-08-17 跨 section 搜索 — 同时跳到目标并自动展开 */}
+        <div className="relative mt-4">
+          <Input
+            value={globalQuery}
+            onChange={e => setGlobalQuery(e.target.value)}
+            placeholder="全局搜索设置项 / 数据源 / AI 服务..."
+            className="h-9 w-full md:max-w-md pl-9"
+          />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          {/* 2026-08-17: end 添加搜索图标与清空按钮 */}
+          {globalQuery.trim() && (
+            <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setGlobalQuery('')}
+                className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+              >
+                清空
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* Jump pills */}
         <div className="relative mt-4 flex flex-wrap gap-2">
           {jumpItems.map(it => (
@@ -1295,13 +1327,25 @@ export default function SettingsPage() {
               {it.hint ? <span className="opacity-60">{it.hint}</span> : null}
             </button>
           ))}
+          {/* 2026-08-17: 清空搜索 快捷按钮 */}
+          {trimmedGlobal && (
+            <div className="ml-auto flex items-center gap-2 text-[11px]">
+              <button
+                type="button"
+                onClick={() => setGlobalQuery('')}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                清空搜索 ×
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* AI Services + Models Section */}
         {isOwner && (
-        <section id="sec-ai" className="card p-4 md:p-6 lg:col-span-7">
+        <section id="sec-ai" className="card p-4 md:p-6 lg:col-span-7" style={{ display: sectionMatches('AI 服务商 模型') ? undefined : 'none' }}>
           <div className="flex items-start justify-between mb-4 md:mb-5 gap-3">
             <div>
               <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">AI 服务商 & 模型</h3>
@@ -1403,7 +1447,7 @@ export default function SettingsPage() {
         )}
 
         {/* Notify Channel Section */}
-        <section id="sec-notify" className="card p-4 md:p-6 lg:col-span-5">
+        <section id="sec-notify" className="card p-4 md:p-6 lg:col-span-5" style={{ display: sectionMatches('通知 渠道') ? undefined : 'none' }}>
           <div className="flex items-start justify-between mb-4 md:mb-5 gap-3">
             <div>
               <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">通知渠道</h3>
@@ -1530,7 +1574,7 @@ export default function SettingsPage() {
         </section>
 
         {/* 我的服务商(BYOK): 用户自定义 LLM 服务商, 用自己的 API Key(2026-08-15) */}
-        <section id="sec-my-services" className="card p-4 md:p-6 lg:col-span-12">
+        <section id="sec-my-services" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('服务商 BYOK') ? undefined : 'none' }}>
           <div className="flex items-start justify-between mb-4 md:mb-5 gap-3">
             <div>
               <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">我的服务商 (BYOK)</h3>
@@ -1587,7 +1631,7 @@ export default function SettingsPage() {
         </section>
 
         {/* 多用户: 定时报告订阅 + 用户管理(2026-08-10 阶段5) */}
-        <section id="sec-subscriptions" className="card p-4 md:p-6 lg:col-span-12">
+        <section id="sec-subscriptions" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('订阅 报告') ? undefined : 'none' }}>
           <div className="mb-3 flex items-center gap-2">
             <h2 className="flex items-center gap-2 text-sm font-semibold">
               <MailCheck className="h-4 w-4 text-primary" />
@@ -1621,7 +1665,7 @@ export default function SettingsPage() {
         </section>
 
         {currentUser?.role === 'owner' && (
-          <section id="sec-users" className="card p-4 md:p-6 lg:col-span-12">
+          <section id="sec-users" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('用户 多用户') ? undefined : 'none' }}>
             <UserManagement currentUser={currentUser} />
           </section>
         )}
@@ -1633,7 +1677,7 @@ export default function SettingsPage() {
         {isOwner && settings.length > 0 && (
           <>
           {/* 接口 Key 区块(数据源凭证维护) */}
-          <section id="sec-keys" className="card p-4 md:p-6 lg:col-span-12">
+          <section id="sec-keys" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('接口 Key 凭证') ? undefined : 'none' }}>
             <div className="flex items-start justify-between mb-4 gap-3">
               <div>
                 <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">接口 Key</h3>
@@ -1681,7 +1725,7 @@ export default function SettingsPage() {
             </div>
           </section>
           {/* 同花顺登录区块 */}
-          <section id="sec-ths" className="card p-4 md:p-6 lg:col-span-12">
+          <section id="sec-ths" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('同花顺 登录') ? undefined : 'none' }}>
             <div className="flex items-start justify-between mb-4 gap-3">
               <div>
                 <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">同花顺登录</h3>
@@ -1720,7 +1764,7 @@ export default function SettingsPage() {
               )}
             </div>
           </section>
-          <section id="sec-system" className="card p-4 md:p-6 lg:col-span-12">
+          <section id="sec-system" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('系统 偏好') ? undefined : 'none' }}>
             <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 mb-4 md:mb-5">
               <div>
                 <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">系统</h3>
@@ -1770,7 +1814,7 @@ export default function SettingsPage() {
 
         {/* Config Pack (Templates) */}
         {isOwner && (
-        <section id="sec-pack" className="card p-4 md:p-6 lg:col-span-7">
+        <section id="sec-pack" className="card p-4 md:p-6 lg:col-span-7" style={{ display: sectionMatches('配置包 导入 导出') ? undefined : 'none' }}>
           <div className="flex items-start justify-between mb-4 gap-3">
             <div>
               <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">配置包</h3>
@@ -1854,7 +1898,7 @@ export default function SettingsPage() {
         )}
 
         {/* Feedback Stats */}
-        <section id="sec-feedback" className="card p-4 md:p-6 lg:col-span-5">
+        <section id="sec-feedback" className="card p-4 md:p-6 lg:col-span-5" style={{ display: sectionMatches('反馈') ? undefined : 'none' }}>
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">建议反馈</h3>
