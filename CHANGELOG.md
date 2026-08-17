@@ -2,6 +2,16 @@
 
 ## 2026-08-17
 
+### fix(kline) — K线入库去重 + 加股 60s 快速 backfill (v0.2.56)
+
+- **`get_default_symbols()` 加 set 去重** — 多用户各加同一股时, 拉取次数从 52 → 38(0 网络浪费)
+- **`stocks` 表加 UNIQUE 约束 `(user_id, symbol, market)`** — 根除重复
+- **加股 60s 快速 backfill** — 用户加自选股后 60s 延迟入库, 不必等 18:00 cron
+  - `_global_scheduler` 单例, server.py lifespan 启动时赋值
+  - `schedule_one_off(symbol, market, delay=60)` API
+  - 失败静默, 18:00 cron 兜底
+## 2026-08-17
+
 ### feature(scheduler) — K线每日 backfill cron 18:00 (v0.2.55)
 
 - 新增 `src/core/kline_backfill_scheduler.py`: 收盘后 18:00 自动入库

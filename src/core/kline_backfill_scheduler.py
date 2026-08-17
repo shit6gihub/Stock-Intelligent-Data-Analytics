@@ -19,11 +19,16 @@ from datetime import datetime, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from src.collectors.klines_ingestor import ingest_batch, get_default_symbols
+from src.collectors.klines_ingestor import ingest_batch, get_default_symbols, ingest_symbol
+from src.models.market import MarketCode
 from src.web.database import create_engine
 from src.web.database import DB_URL
 
 logger = logging.getLogger(__name__)
+
+
+# 全局单例(server.py lifespan 启动后赋值, 加股 API 复用)
+_global_scheduler: "KlineBackfillScheduler | None" = None
 
 
 # 18:00 daily, 交易日(周一到周五) 拉最近 2 天(覆盖当日 + 周末)
@@ -79,6 +84,14 @@ def _backfill_in_worker(days: int) -> dict:
         engine.dispose()
 
 
+def _ingest_one_in_worker(engine, symbol: str, market: MarketCode) -> dict:
+    """单股 backfill worker — 线程里跑, 避免阻塞 asyncio。
+
+    2026-08-17: 加股 60s 后触发此函数, 拉这 1 只股的 800 天 K 线。
+    """
+    return asyncio.run(ingest_symbol(engine, symbol, market, period="1d", days=800))
+
+
 class KlineBackfillScheduler:
     """K线每日 backfill 调度器, 18:00 收盘后自动入库。"""
 
@@ -107,6 +120,9 @@ class KlineBackfillScheduler:
             self._running = False
 
     def start(self):
+        global _global_scheduler
+        _global_scheduler = self  # 注册到全局, 加股 API 复用
+
         self.scheduler.add_job(
             self._backfill_job,
             "cron",
@@ -138,3 +154,63 @@ class KlineBackfillScheduler:
     def trigger_now(self) -> dict:
         """手动触发一次 backfill(管理界面或测试用)。"""
         return _backfill_in_worker(BACKFILL_DAYS)
+
+    def schedule_one_off(self, symbol: str, market: str, delay_seconds: int = 60) -> None:
+        """加股快速 backfill(2026-08-17):
+        - 用户加自选股后 60 秒延迟入库
+        - 60 秒延迟合并 1 分钟内多次 add(用户连续点不会重复拉)
+        - 失败静默 — 18:00 cron 会兜底
+        """
+        run_date = datetime.now(timezone.utc).replace(microsecond=0)
+        from datetime import timedelta
+        run_date = run_date + timedelta(seconds=delay_seconds)
+
+        job_id = f"kline_backfill_oneoff_{symbol}_{market}"
+        try:
+            # 用 lambda 包装 — APScheduler 调 add_job 时,传 func 是 callable
+            # 但 func 不能是 bound method with positional args
+            # 所以用 lambda 闭包 symbol/market
+            self.scheduler.add_job(
+                lambda: asyncio.create_task(
+                    self._backfill_one_symbol(symbol, market)
+                ),
+                "date",
+                run_date=run_date,
+                id=job_id,
+                replace_existing=True,
+                misfire_grace_time=300,
+            )
+            logger.info(
+                f"[kline oneoff] 已调度 {symbol}.{market} "
+                f"在 {run_date.strftime('%H:%M:%S')} UTC 拉取"
+            )
+        except Exception as e:
+            logger.warning(f"[kline oneoff] 调度失败 {symbol}.{market}: {e}")
+
+    async def _backfill_one_symbol(self, symbol: str, market: str):
+        """加股 60s 后: 拉这 1 只股的 800 天 K线"""
+        if self._running:
+            logger.debug(f"[kline oneoff] 上轮还在跑, 跳过 {symbol}")
+            return
+        self._running = True
+        try:
+            engine = create_engine(DB_URL, pool_pre_ping=True)
+            try:
+                mc = MarketCode(market)
+            except ValueError:
+                logger.warning(f"[kline oneoff] 不支持的市场: {market}")
+                return
+            result = await asyncio.to_thread(
+                _ingest_one_in_worker, engine, symbol, mc
+            )
+            if result and result.get("ingested", 0) > 0:
+                logger.info(
+                    f"[kline oneoff] {symbol}.{market} 入库完成: "
+                    f"{result['ingested']} 行"
+                )
+            else:
+                logger.info(f"[kline oneoff] {symbol}.{market} 无新数据(可能已存在)")
+        except Exception as e:
+            logger.exception(f"[kline oneoff] {symbol}.{market} 异常: {e}")
+        finally:
+            self._running = False

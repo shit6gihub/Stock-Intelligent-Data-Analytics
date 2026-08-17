@@ -147,14 +147,29 @@ async def ingest_batch(
 
 
 def get_default_symbols() -> list[tuple[str, str]]:
-    """从 data_sources / 业务逻辑拿标的列表。当前默认:52 只 CN 自选股 + 7 只 HK 关注。"""
-    # 临时:从 users.stocks 表读 — 后续可改为配置中心
+    """从 users.stocks 表读所有用户的自选股,按 (symbol, market) 去重后返回。
+
+    2026-08-17 修复: 多用户场景下(每用户各自加自选), 同一 (symbol, market) 会出现多行。
+    K线是全局数据(主键不含 user_id), 入库会去重 — 但 get_default_symbols 拉取前
+    应该先去重, 避免每天 18:00 cron 重复拉同一股 14 次(网络浪费)。
+    """
     from src.web.database import SessionLocal
     from src.web.models import Stock
 
     with SessionLocal() as db:
         rows = db.query(Stock.symbol, Stock.market).all()
-        return [(r.symbol, r.market.value if hasattr(r.market, "value") else str(r.market)) for r in rows]
+        # 用 (symbol, market) 集合去重 — 不同 user 各自加的同一股只算一次
+        seen: set[tuple[str, str]] = set()
+        result: list[tuple[str, str]] = []
+        for r in rows:
+            sym = r.symbol
+            mkt = r.market.value if hasattr(r.market, "value") else str(r.market)
+            key = (sym, mkt)
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(key)
+        return result
 
 
 async def main_async(args):

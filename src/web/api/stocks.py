@@ -244,6 +244,32 @@ def create_stock(stock: StockCreate, db: Session = Depends(get_db), user: User =
     db.add(db_stock)
     db.commit()
     db.refresh(db_stock)
+
+    # 2026-08-17 加股快速 backfill(60s 内): 用户加股后立即拉 K线, 不必等 18:00 cron
+    # 60s 延迟是为了合并 1 分钟内多次 add(用户连续点不会重复拉)
+    from src.core.kline_backfill_scheduler import KlineBackfillScheduler
+    try:
+        # 复用 server.py lifespan 已启动的 scheduler(单例), 不要新建
+        # 因为新建会创建第二个 AsyncIOScheduler, schedule_one_off 的 job
+        # 跟 18:00 cron 不在同一线程, 启动后没人 start() 会死锁
+        import src.core.kline_backfill_scheduler as _kbs_mod
+
+        if _kbs_mod._global_scheduler is None:
+            # 单例不存在(测试环境 / server 未启动) — 走 18:00 cron 兜底
+            logger.warning(
+                "K线入库调度器未启动, 加股 backfill 跳过(18:00 cron 兜底)"
+            )
+        else:
+            _kbs_mod._global_scheduler.schedule_one_off(
+                symbol=db_stock.symbol,
+                market=str(db_stock.market.value),
+            )
+            logger.info(
+                f"已为新加自选 {db_stock.symbol}.{db_stock.market} 调度 60s 后 backfill"
+            )
+    except Exception as e:
+        logger.warning(f"调度新加股 backfill 失败: {e}")
+
     return _stock_to_response(db_stock)
 
 
