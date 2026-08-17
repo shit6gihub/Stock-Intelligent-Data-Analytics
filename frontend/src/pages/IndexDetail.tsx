@@ -5,6 +5,7 @@ import { fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import InteractiveKline from '@panwatch/biz-ui/components/InteractiveKline'
 import ErrorBanner from '@/components/ErrorBanner'
+import { describeApiError } from '@/lib/api-error'
 
 interface MarketFlow {
   total_main_flow?: number
@@ -84,7 +85,8 @@ export default function IndexDetailPage() {
       if (d?.error) setError(d.error)
       else setData(d)
     } catch (e: any) {
-      setError(e?.message || '加载失败')
+      // 2026-08-17: 错误分类 (B 报告 P1-9) — TIMEOUT / HTTP_5xx / NETWORK 分别给文案
+      setError(describeApiError(e))
     } finally {
       setLoading(false)
     }

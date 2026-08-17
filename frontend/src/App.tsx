@@ -34,6 +34,7 @@ import AccountMenu from '@/components/AccountMenu'
 import SelfCheckModal from '@/components/SelfCheckModal'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@panwatch/base-ui/components/ui/dialog'
 import { Button } from '@panwatch/base-ui/components/ui/button'
+import AppErrorBoundary from '@/components/ErrorBoundary'
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: '首页', perm: 'view_dashboard' },
@@ -405,7 +406,8 @@ function App() {
       {/* Content */}
       <main className="px-4 md:px-6 py-4 md:py-6 w-full">
         <Suspense fallback={<PageFallback />}>
-          <Routes>
+          <AppErrorBoundary>
+
             <Route path="/" element={<DashboardPage />} />
             <Route path="/opportunities" element={<PermGuard perm="view_opportunities" myPerms={myPerms}><OpportunitiesPage /></PermGuard>} />
             <Route path="/forecast" element={<PermGuard perm="view_forecast" myPerms={myPerms}><ForecastPage /></PermGuard>} />
@@ -426,7 +428,8 @@ function App() {
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/analysis/:symbol/:date" element={<AnalysisDetailPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          </AppErrorBoundary>
+
         </Suspense>
       </main>
       <ChatWidget />

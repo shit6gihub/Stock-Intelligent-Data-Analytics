@@ -1325,7 +1325,7 @@ export default function SettingsPage() {
             onChange={e => setGlobalQuery(e.target.value)}
             placeholder="全局搜索设置项 / 数据源 / AI 服务..."
             className="h-9 w-full md:max-w-md pl-9"
-          />
+           aria-label="全局搜索设置项 / 数据源 / AI 服务..."/>
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
           {/* 2026-08-17: end 添加搜索图标与清空按钮 */}
           {globalQuery.trim() && (
@@ -1826,7 +1826,7 @@ export default function SettingsPage() {
                   onChange={e => setSystemQuery(e.target.value)}
                   placeholder="搜索设置项（描述 / key）"
                   className="h-9 w-full md:w-[320px]"
-                />
+                 aria-label="搜索设置项（描述 / key）"/>
                 {health?.timezone ? (
                   <div className="hidden md:flex px-2.5 h-9 items-center rounded-lg border border-border/50 bg-accent/20 text-[11px] text-muted-foreground">
                     TZ <span className="ml-1 font-mono text-foreground/90">{health.timezone}</span>
@@ -2013,7 +2013,7 @@ export default function SettingsPage() {
                 value={serviceForm.name}
                 onChange={e => setServiceForm({ ...serviceForm, name: e.target.value })}
                 placeholder="如 OpenAI、智谱、DeepSeek"
-              />
+               aria-label="如 OpenAI、智谱、DeepSeek"/>
             </div>
             <div>
               <Label>Base URL</Label>
@@ -2022,7 +2022,7 @@ export default function SettingsPage() {
                 onChange={e => setServiceForm({ ...serviceForm, base_url: e.target.value })}
                 placeholder="https://api.openai.com/v1"
                 className="font-mono"
-              />
+               aria-label="https://api.openai.com/v1"/>
             </div>
             <div>
               <Label>API Key</Label>
@@ -2033,7 +2033,7 @@ export default function SettingsPage() {
                   onChange={e => setServiceForm({ ...serviceForm, api_key: e.target.value })}
                   placeholder="sk-..."
                   className="font-mono pr-10"
-                />
+                 aria-label="sk-..."/>
                 <Button
                   type="button" variant="ghost" size="icon"
                   className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8"
@@ -2067,7 +2067,7 @@ export default function SettingsPage() {
                 value={mySvcForm.name}
                 onChange={e => setMySvcForm({ ...mySvcForm, name: e.target.value })}
                 placeholder="如 OpenAI、DeepSeek"
-              />
+               aria-label="如 OpenAI、DeepSeek"/>
             </div>
             <div>
               <Label>Base URL</Label>
@@ -2076,7 +2076,7 @@ export default function SettingsPage() {
                 onChange={e => setMySvcForm({ ...mySvcForm, base_url: e.target.value })}
                 placeholder="https://api.openai.com/v1"
                 className="font-mono"
-              />
+               aria-label="https://api.openai.com/v1"/>
             </div>
             <div>
               <Label>API Key</Label>
@@ -2106,7 +2106,7 @@ export default function SettingsPage() {
                   onChange={e => setMySvcForm({ ...mySvcForm, model: e.target.value })}
                   placeholder="gpt-4o / deepseek-chat"
                   className="font-mono"
-                />
+                 aria-label="gpt-4o / deepseek-chat"/>
               </div>
               <div>
                 <Label>显示名称 <span className="text-muted-foreground font-normal">(选填，默认同模型标识)</span></Label>
@@ -2114,7 +2114,7 @@ export default function SettingsPage() {
                   value={mySvcForm.model_name}
                   onChange={e => setMySvcForm({ ...mySvcForm, model_name: e.target.value })}
                   placeholder="不填则使用模型标识"
-                />
+                 aria-label="不填则使用模型标识"/>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -2209,7 +2209,7 @@ export default function SettingsPage() {
                 value={modelForm.name}
                 onChange={e => setModelForm({ ...modelForm, name: e.target.value })}
                 placeholder="不填则使用模型标识"
-              />
+               aria-label="不填则使用模型标识"/>
             </div>
             <div>
               <Label>模型标识 <span className="text-muted-foreground font-normal">(可用服务商上的「嗅探」批量发现)</span></Label>
@@ -2469,7 +2469,7 @@ export default function SettingsPage() {
                   value={channelForm.name}
                   onChange={e => setChannelForm({ ...channelForm, name: e.target.value })}
                   placeholder="如 我的 Telegram"
-                />
+                 aria-label="如 我的 Telegram"/>
               </div>
             )}
             <div>

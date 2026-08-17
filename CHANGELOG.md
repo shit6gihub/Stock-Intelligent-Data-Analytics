@@ -2,6 +2,27 @@
 
 ## 2026-08-17
 
+### polish(ui/ux) — 协议 P1/P2 闭环第三轮 (v0.2.64)
+
+**a11y (B 报告 P1-1/4 + P1-10)**:
+- **toast**: 加 `role="region"` + `aria-live="polite"` + button `aria-label="关闭通知"`; 单一 toast 按 type 加 `role="alert|status"` 和 `aria-label` (B P1-4)
+- **toast 对比度**: `text-emerald-500/red-500` → `600` 级 (B P1-3)
+- **Settings.tsx**: 11 个 Input 加 `aria-label` (复用 placeholder 文案) (B P1-1)
+- **AppErrorBoundary**: 新建 + App.tsx 包装主路由 (B P1-10) — 任何 subtree 抛错降级 UI 而非整页崩溃
+
+**错误系统强化 (B 报告 P1-5/6 + A 报告 P2-1)**:
+- **ErrorBanner**: 新增 `makeErrorId()`, `onDismiss` 按 id 而非 index (B P1-6 — 并发 push 时 index 会错位)
+- **ErrorBanner**: 加 maxDisplay=3 折叠 — "还有 N 个源失败" 防横幅占满 (B P1-5)
+- **Dashboard pushError**: 同 source 已存在则合并更新 (不是 push) — 防横幅重复堆积
+- **api-error.ts**: 新建, `classifyApiError` + `describeApiError` 区分 TIMEOUT/HTTP_5xx/HTTP_4xx/NETWORK (B P1-9)
+- **IndexDetail**: 接入 describeApiError — 用户看到"请求超时, 请重试"而非统一"加载失败"
+
+**累计 v0.2.60 → v0.2.64**:
+- 4 commits (含 v0.2.63 协议第 2 轮)
+- 共 ~26 文件改动, ~330 insertions, ~180 deletions
+- 3 轮协议(3 + 6 + 6 = 15 P0/P1 修复)
+## 2026-08-17
+
 ### polish(ui) — 协议闭环第二轮 (v0.2.63)
 
 **新增/优化(B 方案积累)**:

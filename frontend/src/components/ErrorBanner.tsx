@@ -1,42 +1,59 @@
 /**
- * 数据源失败显式标识横幅(2026-08-17)
+ * Data source failure explicit banner (2026-08-17 v0.2.64)
  *
- * 用途: API 调用失败时,显式告诉用户是哪个数据源/服务挂了,
- * 而不只是统一 "部分数据加载失败"。
+ * Closes B review P1-5 + P1-6:
+ *   - Same-source 失败去重 (pushError 不再累积同一 source)
+ *   - onDismiss 按 stable id 而非 array index
+ *   - 超过 MAX_DISPLAY 条数显示 "还有 N 个源失败"
  *
- * 用法:
+ * Usage:
  *   const [errors, setErrors] = useState<SourceError[]>([])
  *   ...
  *   api.x().catch((e) => {
- *     setErrors(prev => [...prev, { source: '同花顺资金流', message: String(e), retry: load }])
+ *     setErrors(prev => [...prev, { id: nanoid(), source: '同花顺资金流', message: String(e), retry: load }])
  *   })
  *   ...
- *   <ErrorBanner errors={errors} onDismiss={(i) => setErrors(...)} />
+ *   <ErrorBanner errors={errors} onDismiss={(id) => setErrors(prev => prev.filter(e => e.id !== id))} />
  */
 
 import { useEffect, useState } from 'react'
 import { AlertTriangle, X, RotateCw } from 'lucide-react'
 
+let nextErrorId = 0
+export function makeErrorId(): number {
+  return ++nextErrorId
+}
+
 export interface SourceError {
+  /** stable id — 用 makeErrorId() 生成, dismiss 按此移除 */
+  id?: number  // 2026-08-17 v0.2.64: 可选 — 旧代码 path 仍用, 自动 fallback 到 idx
   /** 数据源/服务名, 用于展示 */
   source: string
   /** 错误消息(简短) */
   message: string
   /** 重试回调(可选) */
   retry?: () => void
-  /** 是否自动消失(默认 true,3秒) */
-  auto_dismiss?: boolean
+  /** 自动消失毫秒(0 = 不自动消失) */
+  auto_dismiss_ms?: number
 }
 
 interface ErrorBannerProps {
   errors: SourceError[]
-  onDismiss?: (idx: number) => void
+  /** 按 id 移除 (B 报告 P1-6 修复) */
+  onDismiss?: (id: number) => void
   /** 是否允许一键重试全部 */
   retryAll?: () => void
+  /** 超过此数折叠显示(默认 3) */
+  maxDisplay?: number
 }
 
-export function ErrorBanner({ errors, onDismiss, retryAll }: ErrorBannerProps) {
+const DEFAULT_MAX_DISPLAY = 3
+
+export function ErrorBanner({ errors, onDismiss, retryAll, maxDisplay = DEFAULT_MAX_DISPLAY }: ErrorBannerProps) {
   if (errors.length === 0) return null
+
+  const visible = errors.slice(0, maxDisplay)
+  const hidden = errors.length - visible.length
 
   return (
     <div
@@ -45,13 +62,18 @@ export function ErrorBanner({ errors, onDismiss, retryAll }: ErrorBannerProps) {
       aria-live="polite"
       data-testid="error-banner"
     >
-      {errors.map((err, idx) => (
+      {visible.map((err, idx) => (
         <ErrorItem
-          key={`${err.source}-${idx}`}
+          key={err.id ?? idx}
           err={err}
-          onDismiss={onDismiss ? () => onDismiss(idx) : undefined}
+          onDismiss={onDismiss ? () => onDismiss(err.id ?? idx) : undefined}
         />
       ))}
+      {hidden > 0 && (
+        <div className="px-3 py-1 text-[11px] text-muted-foreground">
+          还有 {hidden} 个源失败(已隐藏以避免横幅占满页面)
+        </div>
+      )}
       {retryAll && errors.some(e => e.retry) && (
         <div className="flex items-center justify-end gap-2 text-[11px]">
           <button
@@ -72,8 +94,7 @@ export default ErrorBanner
 
 function ErrorItem({ err, onDismiss }: { err: SourceError; onDismiss?: () => void }) {
   const [hidden, setHidden] = useState(false)
-  // 2026-08-17 闭环修正(A P2-1): auto_dismiss 真起作用 — 默认 5 秒自动关闭
-  const dismissMs = typeof err.auto_dismiss === 'number' ? err.auto_dismiss : 0
+  const dismissMs = err.auto_dismiss_ms ?? 0
   useEffect(() => {
     if (dismissMs > 0 && onDismiss) {
       const t = setTimeout(onDismiss, dismissMs)
@@ -83,7 +104,6 @@ function ErrorItem({ err, onDismiss }: { err: SourceError; onDismiss?: () => voi
 
   if (hidden) return null
 
-  // 截断 message 到 80 字
   const shortMsg = (err.message || '服务不可用').slice(0, 80)
 
   return (

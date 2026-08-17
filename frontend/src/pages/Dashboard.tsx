@@ -170,14 +170,21 @@ export default function DashboardPage() {
   const [hotStocksLoading, setHotStocksLoading] = useState(true)
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null)
   // 2026-08-17: 数据源失败显式标识 — 收集 {source, message},横幅展示具体哪个源挂了
-  const [sourceErrors, setSourceErrors] = useState<Array<{ source: string; message: string; retry?: () => void }>>([])
+  const [sourceErrors, setSourceErrors] = useState<Array<{ id: number; source: string; message: string; retry?: () => void }>>([])
   // 2026-08-17: pushError 加 retry 参数(闭环修正 v0.2.60 回归 — ErrorBanner 重试按钮之前永不渲染)
   const pushError = (source: string, message: string, retry?: () => void) => {
     setSourceErrors(prev => {
-      // 同一 source 5s 内只 push 一次(防重复)
-      const recent = prev.find(p => p.source === source)
-      if (recent) return prev
-      return [...prev, { source, message: message.slice(0, 200), ...(retry ? { retry } : {}) }].slice(-5)
+      // 2026-08-17 v0.2.64 (B 报告 P1-5): 同一 source 已存在则合并更新 message + retry (避免横幅风暴)
+      const existing = prev.find(p => p.source === source)
+      if (existing) {
+        return prev.map(p =>
+          p.source === source
+            ? { ...p, message: message.slice(0, 200), ...(retry ? { retry } : {}) }
+            : p
+        )
+      }
+      // 新 source — 加 id (B 报告 P1-6)
+      return [...prev, { id: Date.now() + Math.random(), source, message: message.slice(0, 200), ...(retry ? { retry } : {}) }].slice(-8)
     })
   }
   // 分享卡开关:成绩单(基准)/ 组合体检 / 每日 digest
@@ -496,7 +503,7 @@ export default function DashboardPage() {
 
       {/* 核心接口失败横幅:失败≠空态,给出重试入口 */}
       {/* 2026-08-17: 数据源失败显式标识 — ErrorBanner 组件,展示具体哪个源挂了 */}
-      <ErrorBanner errors={sourceErrors} onDismiss={(i) => setSourceErrors(prev => prev.filter((_, idx) => idx !== i))} retryAll={load} />
+      <ErrorBanner errors={sourceErrors} onDismiss={(id) => setSourceErrors(prev => prev.filter(e => e.id !== id))} retryAll={load} />
 
       {/* 最新报告:Hermes cron 盘前/盘后报告速览(最近 4 条, 30s 随首页自动刷新, 点击进报告页) */}
       <div className="card mb-3 p-4">
