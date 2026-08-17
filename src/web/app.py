@@ -50,7 +50,7 @@ from src.web.api import (
 )
 from src.web.api import factors
 from src.web.api import notifications
-from src.web.api import health
+from src.web.api import health as health_router
 from src.web.api import insights
 from src.web.api import wechat_bind
 from src.web.api.auth import get_current_user
@@ -496,15 +496,10 @@ app.include_router(
 )
 
 
-@app.get("/api/health")
-async def health():
-    return {"status": "ok"}
-
-
 @app.get("/api/version")
 async def version():
     """获取应用版本号（公开接口）"""
     return {"version": get_app_version()}
 
 # 2026-08-17 v0.2.65: 深度健康检查 + Prometheus 指标(挂 /api 前缀, 跟其他路由一致)
-app.include_router(health.router, prefix="/api")
+app.include_router(health_router.router, prefix="/api")
