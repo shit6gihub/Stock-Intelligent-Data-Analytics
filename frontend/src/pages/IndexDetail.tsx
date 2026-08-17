@@ -4,6 +4,7 @@ import { ArrowLeft, TrendingUp, RefreshCw, Activity, BarChart3, Flame, Droplets 
 import { fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import InteractiveKline from '@panwatch/biz-ui/components/InteractiveKline'
+import ErrorBanner from '@/components/ErrorBanner'
 
 interface MarketFlow {
   total_main_flow?: number
@@ -118,7 +119,10 @@ export default function IndexDetailPage() {
       {loading ? (
         <div className="text-center text-muted-foreground py-12">加载中...</div>
       ) : error ? (
-        <div className="text-center text-red-600 py-12">{error}</div>
+        <ErrorBanner
+          errors={[{ source: '指数详情', message: error, retry: () => void load() }]}
+          onDismiss={() => setError('')}
+        />
       ) : data ? (
         <>
           {/* 实时行情卡片(同个股详情风格) */}

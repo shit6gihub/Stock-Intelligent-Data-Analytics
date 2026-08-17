@@ -14,6 +14,7 @@ import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Switch } from '@panwatch/base-ui/components/ui/switch'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@panwatch/base-ui/components/ui/dialog'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
+import ErrorBanner from '@/components/ErrorBanner'
 
 const EXIT_REASON_MAP: Record<string, string> = {
   stop_loss: '止损',
@@ -112,6 +113,7 @@ export default function PaperTradingPage() {
   const [equityCurve, setEquityCurve] = useState<EquityCurvePoint[]>([])
   const [strategyPerf, setStrategyPerf] = useState<StrategyPerformanceItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)  // 2026-08-17 闭环修正:错误态系统统一
   const [scanning, setScanning] = useState(false)
   const [tradesPage, setTradesPage] = useState(0)
   const tradesPageSize = 20
@@ -153,8 +155,9 @@ export default function PaperTradingPage() {
       setTradesTotal(tradeData.total)
       setEquityCurve(metrics.equity_curve)
       setStrategyPerf(metrics.strategy_performance || [])
-    } catch {
-      toast('加载失败', 'error')
+    } catch (e) {
+      console.error(e)
+      setLoadError(e instanceof Error ? e.message : '加载失败')
     } finally {
       setLoading(false)
     }
@@ -321,6 +324,11 @@ export default function PaperTradingPage() {
 
   return (
     <div className="space-y-5">
+      {/* 2026-08-17 闭环修正(B 报告 P0-3):错误态系统统一 */}
+      <ErrorBanner
+        errors={loadError ? [{ source: '模拟盘', message: loadError, retry: () => void loadData() }] : []}
+        onDismiss={() => setLoadError(null)}
+      />
       {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-2">

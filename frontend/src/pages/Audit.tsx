@@ -3,6 +3,7 @@ import { ScrollText, RefreshCw } from 'lucide-react'
 import { fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { formatFullDateTime } from '@/lib/utils'
+import ErrorBanner from '@/components/ErrorBanner'
 
 interface AuditEntry {
   id: number
@@ -142,9 +143,7 @@ export default function AuditPage() {
         {!loading && !error && logs.length === 0 && (
           <div className="p-10 text-center text-[13px] text-muted-foreground">暂无审计记录</div>
         )}
-        {!loading && error && (
-          <div className="p-10 text-center text-[13px] text-rose-600 dark:text-rose-400">{error}</div>
-        )}
+        <ErrorBanner errors={!loading && error ? [{ source: '审计日志', message: error, retry: () => void load() }] : []} onDismiss={() => setError('')} />
       </div>
     </div>
   )

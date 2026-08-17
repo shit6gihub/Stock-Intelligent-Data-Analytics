@@ -6,6 +6,7 @@ import { Input } from '@panwatch/base-ui/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@panwatch/base-ui/components/ui/dialog'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import ErrorBanner from '@/components/ErrorBanner'
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n}B`
@@ -134,16 +135,10 @@ export default function ReportsPage() {
           <Loader2 className="w-5 h-5 animate-spin mr-2" /> 加载中...
         </div>
       ) : loadError ? (
-        <div className="card-subtle p-8 text-center text-sm text-muted-foreground">
-          加载失败{loadError ? `: ${loadError}` : ''}
-          <button
-            type="button"
-            onClick={() => void load()}
-            className="ml-2 rounded-md px-2 py-1 text-[11px] text-primary transition-colors hover:bg-accent"
-          >
-            重试
-          </button>
-        </div>
+        <ErrorBanner
+          errors={loadError ? [{ source: '报告列表', message: loadError, retry: () => void load() }] : []}
+          onDismiss={() => setLoadError(null)}
+        />
       ) : grouped.size === 0 ? (
         <div className="card-subtle p-8 text-center text-sm text-muted-foreground">
           暂无报告

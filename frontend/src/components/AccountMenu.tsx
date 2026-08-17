@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { Moon, Sun, Monitor, Check, LogOut, User, Stethoscope, KeyRound, UserCog, type LucideIcon } from 'lucide-react'
-import { isAuthenticated, logout, authApi } from '@panwatch/api'
+import { isAuthenticated, logout } from '@panwatch/api'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@panwatch/base-ui/components/ui/dialog'
 import { Input } from '@panwatch/base-ui/components/ui/input'
 import { Button } from '@panwatch/base-ui/components/ui/button'
@@ -9,6 +9,7 @@ import { Label } from '@panwatch/base-ui/components/ui/label'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import type { ThemeMode } from '@/hooks/use-theme'
 import { useAvatar } from '@/hooks/use-avatar'
+import { submitChangePassword } from '@/lib/change-password'
 
 export interface AccountNavItem {
   to: string
@@ -72,28 +73,19 @@ export default function AccountMenu({
   }
 
   const handleChangePassword = async () => {
-    if (newPwd.length < 8) {
-      setPwdError('新密码至少 8 位')
-      return
-    }
-    if (newPwd !== confirmPwd) {
-      setPwdError('两次输入的密码不一致')
-      return
-    }
-    setSubmitting(true)
-    setPwdError(null)
-    try {
-      await authApi.changePassword(oldPwd, newPwd)
-      toast('密码已更新', 'success')
-      setChangePwdOpen(false)
-      setOldPwd('')
-      setNewPwd('')
-      setConfirmPwd('')
-    } catch (e) {
-      setPwdError(e instanceof Error ? e.message : '修改失败,请重试')
-    } finally {
-      setSubmitting(false)
-    }
+    // 2026-08-17: 改用公共 helper (关闭 A P1-8 双份实现)
+    await submitChangePassword({
+      oldPwd, newPwd, confirmPwd,
+      onError: setPwdError,
+      onSuccess: () => {
+        toast('密码已更新', 'success')
+        setChangePwdOpen(false)
+        setOldPwd('')
+        setNewPwd('')
+        setConfirmPwd('')
+      },
+      onLoadingChange: setSubmitting,
+    })
   }
 
   // 点击外部关闭

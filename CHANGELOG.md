@@ -2,6 +2,26 @@
 
 ## 2026-08-17
 
+### polish(ui) — 协议闭环第二轮 (v0.2.63)
+
+**新增/优化(B 方案积累)**:
+
+- **B-1 错误态系统统一**(A P0-3): 6 个高频页面接入 ErrorBanner
+  - Reports (代替原 灰色加载失败块)
+  - Agents (新增, 解决 P0 静默吞错)
+  - PaperTrading (新增, 解决 10 个空 catch 中主页面静默)
+  - IndexDetail (代替原 红色裸文字)
+  - Notifications (代替原 红色横条)
+  - Audit (代替原 红色裸文字)
+- **B-2 ErrorBanner auto_dismiss 真起作用**(A P2-1): 死代码变成 5 秒自动关闭
+- **B-3 改密码抽公共 helper**(A P1-8): 新建 `src/lib/change-password.ts`, AccountMenu + Profile 改用 `submitChangePassword` (消除双份实现)
+- **B-4 UserManagement 5 个 icon button 加 aria-label**(B P0-4): 配置 AI/模块/重置密码/启禁用/删除
+
+**协议驱动**: A 轨 P0-3 + P1-8 + P2-1 / B 轨 P0-4 — 闭环第二轮
+
+**累计未发版改动**: v0.2.60 → v0.2.63 共有 13 文件改动
+## 2026-08-17
+
 ### fix(regression) — ErrorBanner 重试按钮回归修复 (v0.2.62)
 
 - **v0.2.60 回归**: Dashboard `pushError()` 8 处调用都没传 `retry` 回调, ErrorBanner 的"重试"按钮永不渲染

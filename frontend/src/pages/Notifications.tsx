@@ -20,6 +20,7 @@ import { fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import SkeletonRows from '@/components/SkeletonRows'
 import { parseServerTime } from '@/lib/utils'
+import ErrorBanner from '@/components/ErrorBanner'
 
 interface NotificationItem {
   id: number
@@ -335,9 +336,7 @@ export default function NotificationsPage() {
         </div>
       </div>
 
-      {error && (
-        <div className="rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-[12px] text-rose-600 dark:text-rose-600">{error}</div>
-      )}
+      <ErrorBanner errors={error ? [{ source: '通知', message: error, retry: () => void load() }] : []} onDismiss={() => setError('')} />
 
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/50 bg-card/70 p-1.5">
         <div className="flex shrink-0 items-center gap-1 rounded-lg bg-background/45 p-1">

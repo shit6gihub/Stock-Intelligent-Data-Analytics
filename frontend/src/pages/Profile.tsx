@@ -1,12 +1,13 @@
+import { fetchAPI } from '@panwatch/api'
 import { useEffect, useRef, useState } from 'react'
 import { UserCog, Target, Star, Briefcase, UserRound, Upload, X, KeyRound, Check, ShieldCheck } from 'lucide-react'
-import { fetchAPI, authApi } from '@panwatch/api'
 import { Input } from '@panwatch/base-ui/components/ui/input'
 import { Label } from '@panwatch/base-ui/components/ui/label'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import { fileToAvatarDataUrl } from '@/hooks/use-avatar'
 import { formatDateTime } from '@/lib/utils'
+import { submitChangePassword } from '@/lib/change-password'
 
 interface ProfileInfo {
   username: string
@@ -185,27 +186,18 @@ export function Profile() {
   }
 
   const handleChangePassword = async () => {
-    if (newPwd.length < 8) {
-      setPwdError('新密码至少 8 位')
-      return
-    }
-    if (newPwd !== confirmPwd) {
-      setPwdError('两次输入的密码不一致')
-      return
-    }
-    setChangingPwd(true)
-    setPwdError(null)
-    try {
-      await authApi.changePassword(oldPwd, newPwd)
-      toast('密码已更新', 'success')
-      setOldPwd('')
-      setNewPwd('')
-      setConfirmPwd('')
-    } catch (e) {
-      setPwdError(e instanceof Error ? e.message : '修改失败, 请重试')
-    } finally {
-      setChangingPwd(false)
-    }
+    // 2026-08-17: 改用公共 helper (关闭 A P1-8 双份实现)
+    await submitChangePassword({
+      oldPwd, newPwd, confirmPwd,
+      onError: setPwdError,
+      onSuccess: () => {
+        toast('密码已更新', 'success')
+        setOldPwd('')
+        setNewPwd('')
+        setConfirmPwd('')
+      },
+      onLoadingChange: setChangingPwd,
+    })
   }
 
   if (loading && !profile) {

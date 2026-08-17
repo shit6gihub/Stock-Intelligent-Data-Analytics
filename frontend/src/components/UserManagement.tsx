@@ -286,6 +286,7 @@ export default function UserManagement({ currentUser }: Props) {
                 <button
                   className="flex items-center gap-1 rounded border border-border/50 px-1.5 py-1 text-[11px] text-muted-foreground hover:border-primary/30 hover:text-primary"
                   title="配置该用户可用的 AI 模型"
+                  aria-label={`配置 ${u.username} 可用的 AI 模型`}
                   onClick={() => void openModelAccess(u)}
                 >
                   <Boxes className="h-3 w-3" /> 模型授权
@@ -293,6 +294,7 @@ export default function UserManagement({ currentUser }: Props) {
                 <button
                   className="flex items-center gap-1 rounded border border-border/50 px-1.5 py-1 text-[11px] text-muted-foreground hover:border-primary/30 hover:text-primary"
                   title="配置该用户可用的功能模块"
+                  aria-label={`配置 ${u.username} 可用的功能模块`}
                   onClick={() => void openPermissionAccess(u)}
                 >
                   <ShieldCheck className="h-3 w-3" /> 模块权限
@@ -304,6 +306,7 @@ export default function UserManagement({ currentUser }: Props) {
                   <button
                     className="rounded p-1.5 text-muted-foreground hover:bg-accent"
                     title="重置密码"
+                    aria-label={`重置 ${u.username} 的密码`}
                     onClick={() => setResetTarget(u)}
                   >
                     <KeyRound className="h-3.5 w-3.5" />
@@ -311,6 +314,7 @@ export default function UserManagement({ currentUser }: Props) {
                   <button
                     className="rounded p-1.5 text-muted-foreground hover:bg-accent"
                     title={u.is_active ? '禁用' : '启用'}
+                    aria-label={u.is_active ? `禁用 ${u.username}` : `启用 ${u.username}`}
                     onClick={() => handleToggleActive(u)}
                   >
                     {u.is_active ? <Ban className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
@@ -318,6 +322,7 @@ export default function UserManagement({ currentUser }: Props) {
                   <button
                     className="rounded p-1.5 text-rose-500/70 hover:bg-rose-500/10"
                     title="删除"
+                    aria-label={`删除 ${u.username}`}
                     onClick={() => handleDelete(u)}
                   >
                     <Trash2 className="h-3.5 w-3.5" />

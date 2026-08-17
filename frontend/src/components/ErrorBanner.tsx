@@ -14,7 +14,7 @@
  *   <ErrorBanner errors={errors} onDismiss={(i) => setErrors(...)} />
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AlertTriangle, X, RotateCw } from 'lucide-react'
 
 export interface SourceError {
@@ -71,11 +71,15 @@ export function ErrorBanner({ errors, onDismiss, retryAll }: ErrorBannerProps) {
 export default ErrorBanner
 
 function ErrorItem({ err, onDismiss }: { err: SourceError; onDismiss?: () => void }) {
-  // 自动消失 3s(可选)
   const [hidden, setHidden] = useState(false)
-  if (err.auto_dismiss !== false && err.auto_dismiss !== undefined) {
-    // 不在这里自动消失 — 用 onDismiss
-  }
+  // 2026-08-17 闭环修正(A P2-1): auto_dismiss 真起作用 — 默认 5 秒自动关闭
+  const dismissMs = typeof err.auto_dismiss === 'number' ? err.auto_dismiss : 0
+  useEffect(() => {
+    if (dismissMs > 0 && onDismiss) {
+      const t = setTimeout(onDismiss, dismissMs)
+      return () => clearTimeout(t)
+    }
+  }, [dismissMs, onDismiss])
 
   if (hidden) return null
 
