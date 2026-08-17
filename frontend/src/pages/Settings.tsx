@@ -233,6 +233,21 @@ const DATA_SOURCE_KEYS: Array<{ key: string; name: string; desc: string }> = [
 
 const STOCK_LINK_OPTIONS: Record<string, string> = { xueqiu: '雪球' }
 
+// 2026-08-17: 全局搜索 — 各 section 可被搜的关键词(闭环修正 P0-1:用户搜'openai'应命中 AI 区块)
+const sectionSearchHints: Record<string, string[]> = {
+  'sec-ai': ['AI', '服务商', '模型', 'openai', 'deepseek', 'chatgpt', 'claude', 'gpt'],
+  'sec-notify': ['通知', '渠道', '微信', 'pushplus', 'server酱', 'webhook', '邮箱'],
+  'sec-my-services': ['BYOK', '我的服务商', '自配', 'API Key'],
+  'sec-subscriptions': ['订阅', '报告订阅', '定时', 'cron'],
+  'sec-users': ['用户', '多用户', '权限', '管理员', 'owner', 'member'],
+  'sec-keys': ['接口Key', '凭证', 'api key', 'token', 'key'],
+  'sec-ths': ['同花顺', 'ths', '扫码', '登录'],
+  'sec-system': ['系统', '偏好', '主题', '深色', '密度'],
+  'sec-pack': ['配置包', '导入', '导出', '模板', '备份'],
+  'sec-feedback': ['反馈', '有用', '没用'],
+  'sec-llm-usage': ['LLM', '用量', 'token', '费用', 'API 用量'],
+}
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Setting[]>([])
   const [keyDataSources, setKeyDataSources] = useState<KeyDataSource[]>([])
@@ -255,10 +270,20 @@ export default function SettingsPage() {
   const [systemQuery, setSystemQuery] = useState('')
   // 2026-08-17: 全局搜索(覆盖所有 section)
   const [globalQuery, setGlobalQuery] = useState('')
-  // 2026-08-17: 全局搜索 trimmed
+  // 2026-08-17: 全局搜索 trimmed — 标题/hint/子内容匹配 + 命中数反馈(闭环修正 P0-1)
   const trimmedGlobal = globalQuery.trim().toLowerCase()
-  const sectionMatches = (title: string, hint?: string) =>
-    !trimmedGlobal || title.toLowerCase().includes(trimmedGlobal) || (hint || '').toLowerCase().includes(trimmedGlobal)
+  const hasGlobalQuery = trimmedGlobal.length > 0
+  // 哪些 section id 匹配 — 由各 section 声明, 默认 fallback 只看标题
+  const matchedSections = new Set<string>(
+    (Object.keys(sectionSearchHints) as string[]).filter(id => {
+      if (!hasGlobalQuery) return true
+      const hints = sectionSearchHints[id] || []
+      return hints.some(h => h.toLowerCase().includes(trimmedGlobal))
+    })
+  )
+  const sectionMatches = (id: string) =>
+    !hasGlobalQuery || matchedSections.has(id)
+  const matchCount = hasGlobalQuery ? matchedSections.size : Object.keys(sectionSearchHints).length
   // sectionMatches 移到 module 顶层(被 LlmUsageSection 复用)
 
   // 接口 Key 管理第二窗口(Dialog): 单个数据源凭证编辑
@@ -597,6 +622,7 @@ export default function SettingsPage() {
       await saveAvatar(dataUrl)
       toast('头像已更新', 'success')
     } catch (err) {
+      console.error('[Settings] 头像保存失败:', err)  // 2026-08-17: 闭环修正 P0-5 — 留痕便于排障
       toast(err instanceof Error ? err.message : '头像保存失败', 'error')
     } finally {
       setAvatarSaving(false)
@@ -1337,15 +1363,39 @@ export default function SettingsPage() {
               >
                 清空搜索 ×
               </button>
+              {hasGlobalQuery && (
+                <span className="ml-1 text-[11px] text-muted-foreground/70">
+                  · {matchCount} 个区块匹配
+                </span>
+              )}
             </div>
           )}
         </div>
       </div>
 
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* 2026-08-17 全局搜索空态: 有搜索但 0 命中(闭环修正 P0-1) */}
+        {hasGlobalQuery && matchCount === 0 && (
+          <div className="col-span-full card p-8 md:p-10 text-center">
+            <Search className="mx-auto h-7 w-7 text-muted-foreground/50 mb-3" />
+            <p className="text-[13px] text-muted-foreground">
+              未找到匹配 &ldquo;<span className="text-foreground font-medium">{globalQuery}</span>&rdquo; 的设置项
+            </p>
+            <p className="text-[11px] text-muted-foreground/70 mt-2">
+              试试搜索关键词,如 openai / 微信 / 凭证 / 主题
+            </p>
+            <button
+              type="button"
+              onClick={() => setGlobalQuery('')}
+              className="mt-3 text-[11px] text-primary hover:text-primary/80 transition-colors"
+            >
+              清空搜索
+            </button>
+          </div>
+        )}
         {/* AI Services + Models Section */}
         {isOwner && (
-        <section id="sec-ai" className="card p-4 md:p-6 lg:col-span-7" style={{ display: sectionMatches('AI 服务商 模型') ? undefined : 'none' }}>
+        <section id="sec-ai" className="card p-4 md:p-6 lg:col-span-7" style={{ display: sectionMatches('sec-ai') ? undefined : 'none' }}>
           <div className="flex items-start justify-between mb-4 md:mb-5 gap-3">
             <div>
               <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">AI 服务商 & 模型</h3>
@@ -1447,7 +1497,7 @@ export default function SettingsPage() {
         )}
 
         {/* Notify Channel Section */}
-        <section id="sec-notify" className="card p-4 md:p-6 lg:col-span-5" style={{ display: sectionMatches('通知 渠道') ? undefined : 'none' }}>
+        <section id="sec-notify" className="card p-4 md:p-6 lg:col-span-5" style={{ display: sectionMatches('sec-notify') ? undefined : 'none' }}>
           <div className="flex items-start justify-between mb-4 md:mb-5 gap-3">
             <div>
               <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">通知渠道</h3>
@@ -1574,7 +1624,7 @@ export default function SettingsPage() {
         </section>
 
         {/* 我的服务商(BYOK): 用户自定义 LLM 服务商, 用自己的 API Key(2026-08-15) */}
-        <section id="sec-my-services" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('服务商 BYOK') ? undefined : 'none' }}>
+        <section id="sec-my-services" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('sec-my-services') ? undefined : 'none' }}>
           <div className="flex items-start justify-between mb-4 md:mb-5 gap-3">
             <div>
               <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">我的服务商 (BYOK)</h3>
@@ -1631,7 +1681,7 @@ export default function SettingsPage() {
         </section>
 
         {/* 多用户: 定时报告订阅 + 用户管理(2026-08-10 阶段5) */}
-        <section id="sec-subscriptions" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('订阅 报告') ? undefined : 'none' }}>
+        <section id="sec-subscriptions" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('sec-subscriptions') ? undefined : 'none' }}>
           <div className="mb-3 flex items-center gap-2">
             <h2 className="flex items-center gap-2 text-sm font-semibold">
               <MailCheck className="h-4 w-4 text-primary" />
@@ -1665,7 +1715,7 @@ export default function SettingsPage() {
         </section>
 
         {currentUser?.role === 'owner' && (
-          <section id="sec-users" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('用户 多用户') ? undefined : 'none' }}>
+          <section id="sec-users" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('sec-users') ? undefined : 'none' }}>
             <UserManagement currentUser={currentUser} />
           </section>
         )}
@@ -1677,7 +1727,7 @@ export default function SettingsPage() {
         {isOwner && settings.length > 0 && (
           <>
           {/* 接口 Key 区块(数据源凭证维护) */}
-          <section id="sec-keys" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('接口 Key 凭证') ? undefined : 'none' }}>
+          <section id="sec-keys" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('sec-keys') ? undefined : 'none' }}>
             <div className="flex items-start justify-between mb-4 gap-3">
               <div>
                 <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">接口 Key</h3>
@@ -1725,7 +1775,7 @@ export default function SettingsPage() {
             </div>
           </section>
           {/* 同花顺登录区块 */}
-          <section id="sec-ths" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('同花顺 登录') ? undefined : 'none' }}>
+          <section id="sec-ths" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('sec-ths') ? undefined : 'none' }}>
             <div className="flex items-start justify-between mb-4 gap-3">
               <div>
                 <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">同花顺登录</h3>
@@ -1764,7 +1814,7 @@ export default function SettingsPage() {
               )}
             </div>
           </section>
-          <section id="sec-system" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('系统 偏好') ? undefined : 'none' }}>
+          <section id="sec-system" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('sec-system') ? undefined : 'none' }}>
             <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 mb-4 md:mb-5">
               <div>
                 <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">系统</h3>
@@ -1814,7 +1864,7 @@ export default function SettingsPage() {
 
         {/* Config Pack (Templates) */}
         {isOwner && (
-        <section id="sec-pack" className="card p-4 md:p-6 lg:col-span-7" style={{ display: sectionMatches('配置包 导入 导出') ? undefined : 'none' }}>
+        <section id="sec-pack" className="card p-4 md:p-6 lg:col-span-7" style={{ display: sectionMatches('sec-pack') ? undefined : 'none' }}>
           <div className="flex items-start justify-between mb-4 gap-3">
             <div>
               <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">配置包</h3>
@@ -1898,7 +1948,7 @@ export default function SettingsPage() {
         )}
 
         {/* Feedback Stats */}
-        <section id="sec-feedback" className="card p-4 md:p-6 lg:col-span-5" style={{ display: sectionMatches('反馈') ? undefined : 'none' }}>
+        <section id="sec-feedback" className="card p-4 md:p-6 lg:col-span-5" style={{ display: sectionMatches('sec-feedback') ? undefined : 'none' }}>
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">建议反馈</h3>

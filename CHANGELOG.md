@@ -2,6 +2,23 @@
 
 ## 2026-08-17
 
+### 5+1 skill 协议评审闭环 (v0.2.61)
+
+**协议执行**: 5+1 skill 协议全栈评审(A 设计 + B 技术双轨独立)
+
+**A 轨(设计评审)**: 6 维评分 3.4/5,3 P0 + 10 P1 + 10 P2
+**B 轨(技术审查)**: 7 维评分 2.4/5,6 P0 + 12 P1 + 6 P2
+
+**闭环修正(本版)**:
+- **P0-1 Settings 全局搜索空态**: sectionMatches 升级为 sectionSearchHints 关键词字典;空态卡片 + 'N 个区块匹配' 计数(260/1348)
+- **P0-2 AnalysisDetail 标题层级倒挂**: H1 16px → 20-22px; text-[12.5px] → 12px(280/284/293)
+- **P0-3 错误状态体系分裂**: Stocks 失败横幅接入 ErrorBanner(1858)
+- **P0-4 全仓对比度**: text-rose-500/emerald-500/amber-400/blue-500 → 600/700 级(Stocks 29 + 4 文件 25 = **54 处**文本对比度修复)
+- **P0-5 Settings 头像保存 catch 留痕**: 加 console.error(625)
+- **P0-6 PriceAlerts 11px 字号**: text-[11px] → text-[12px](10 处)
+- **ErrorBanner 接入 Stocks 失败横幅**
+## 2026-08-17
+
 ### polish(ui) — Settings 全局搜索 + 数据源失败显式标识 (v0.2.60)
 
 **Settings.tsx**:

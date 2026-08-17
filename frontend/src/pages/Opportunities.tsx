@@ -111,7 +111,7 @@ const toneClass = (item: StrategySignalItem) => {
 const actionBadgeClass = (action?: string) => {
   const key = (action || '').toLowerCase()
   if (key === 'buy') return 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border border-rose-500/35'
-  if (key === 'add') return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/35'
+  if (key === 'add') return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-700 border border-emerald-500/35'
   if (key === 'hold') return 'bg-blue-500/15 text-blue-700 dark:text-blue-400 border border-blue-500/35'
   return 'bg-accent text-muted-foreground border border-border/50'
 }
@@ -225,7 +225,7 @@ const formatEntryDisplay = (action: string | undefined, entryLow: number | null,
 }
 
 const regimeToneClass = (regime?: string) => {
-  if (regime === 'bullish') return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30'
+  if (regime === 'bullish') return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-700 border border-emerald-500/30'
   if (regime === 'bearish') return 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border border-rose-500/30'
   return 'bg-amber-500/12 text-amber-700 dark:text-amber-300 border border-amber-500/25'
 }
@@ -934,7 +934,7 @@ export default function OpportunitiesPage() {
                                   <span
                                     className={
                                       String(chg).startsWith('-')
-                                        ? 'text-emerald-700 dark:text-emerald-400'
+                                        ? 'text-emerald-700 dark:text-emerald-700'
                                         : 'text-rose-700 dark:text-rose-400'
                                     }
                                   >
@@ -1258,7 +1258,7 @@ export default function OpportunitiesPage() {
                     {item.ai_score != null && (
                       <div className="mt-1 flex items-center justify-end gap-1">
                         <span className="text-[10px] text-muted-foreground">AI</span>
-                        <span className={`inline-flex items-center justify-center min-w-[18px] px-1.5 py-0.5 rounded text-[11px] font-semibold ${item.ai_score >= 8 ? 'bg-green-500/20 text-green-700 dark:text-green-400' : item.ai_score >= 6 ? 'bg-primary/20 text-primary' : item.ai_score >= 4 ? 'bg-amber-500/20 text-amber-700 dark:text-amber-400' : 'bg-red-500/20 text-red-700 dark:text-red-400'}`}>
+                        <span className={`inline-flex items-center justify-center min-w-[18px] px-1.5 py-0.5 rounded text-[11px] font-semibold ${item.ai_score >= 8 ? 'bg-green-500/20 text-green-700 dark:text-green-400' : item.ai_score >= 6 ? 'bg-primary/20 text-primary' : item.ai_score >= 4 ? 'bg-amber-500/20 text-amber-700 dark:text-amber-600' : 'bg-red-500/20 text-red-700 dark:text-red-400'}`}>
                           {item.ai_score}
                         </span>
                       </div>
@@ -1308,7 +1308,7 @@ export default function OpportunitiesPage() {
                   </div>
                 )}
                 {item.constrained && (
-                  <div className="mt-1.5 text-[10px] text-amber-700 dark:text-amber-400">
+                  <div className="mt-1.5 text-[10px] text-amber-700 dark:text-amber-600">
                     组合约束: {(item.constraint_reasons || []).join('；') || '已自动降级'}
                   </div>
                 )}

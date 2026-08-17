@@ -20,6 +20,7 @@ import { DeepAnalysisModal } from '@panwatch/biz-ui/components/deep-analysis-mod
 import StockPriceAlertPanel from '@panwatch/biz-ui/components/stock-price-alert-panel'
 import { useNavigate } from 'react-router-dom'
 import StockContextMenu, { type StockContextMenuState, type StockContextTarget } from '@/components/StockContextMenu'
+import ErrorBanner from '@/components/ErrorBanner'
 
 interface AgentResult {
   success?: boolean
@@ -1854,19 +1855,11 @@ export default function StocksPage() {
       </div>
 
       {/* Portfolio Total Summary */}
-      {/* 初始加载失败横幅:失败≠空态,给出重试入口 */}
-      {loadError && (
-        <div className="mb-4 flex items-center gap-2 rounded-lg border border-border/60 bg-accent/30 px-3 py-2 text-[12px] text-muted-foreground">
-          <span>加载失败{loadError ? `: ${loadError}` : ''}</span>
-          <button
-            type="button"
-            onClick={() => { void load(); void loadPortfolio() }}
-            className="ml-auto rounded-md px-2 py-0.5 text-[11px] text-primary transition-colors hover:bg-accent"
-          >
-            重试
-          </button>
-        </div>
-      )}
+      {/* 2026-08-17: 加载失败横幅统一为 ErrorBanner(闭环修正 P0-3: 错误体系统一) */}
+      <ErrorBanner
+        errors={loadError ? [{ source: '持仓/账户', message: loadError, retry: () => { void load(); void loadPortfolio() } }] : []}
+        onDismiss={() => setLoadError && setLoadError(null)}
+      />
       {portfolioLoading && !portfolio ? (
         // 首次加载时显示骨架屏
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
@@ -1894,13 +1887,13 @@ export default function StocksPage() {
           <div className="card p-4">
             <div className="flex items-center gap-2 text-muted-foreground mb-1">
               {portfolio.total.total_pnl >= 0 ? (
-                <ArrowUpRight className="w-4 h-4 text-rose-500" />
+                <ArrowUpRight className="w-4 h-4 text-rose-600" />
               ) : (
-                <ArrowDownRight className="w-4 h-4 text-emerald-500" />
+                <ArrowDownRight className="w-4 h-4 text-emerald-700" />
               )}
               <span className="text-[12px]">总盈亏</span>
             </div>
-            <div className={`text-[20px] font-bold font-num tabular-nums ${portfolio.total.total_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+            <div className={`text-[20px] font-bold font-num tabular-nums ${portfolio.total.total_pnl >= 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
               {portfolio.total.total_pnl >= 0 ? '+' : ''}{formatMoney(portfolio.total.total_pnl)}
               <span className="text-[13px] ml-1.5">
                 ({portfolio.total.total_pnl_pct >= 0 ? '+' : ''}{portfolio.total.total_pnl_pct.toFixed(2)}%)
@@ -1918,9 +1911,9 @@ export default function StocksPage() {
               <div className="card p-4">
                 <div className="flex flex-wrap items-center gap-2 text-muted-foreground mb-1">
                   {isUp ? (
-                    <ArrowUpRight className="w-4 h-4 text-rose-500" />
+                    <ArrowUpRight className="w-4 h-4 text-rose-600" />
                   ) : (
-                    <ArrowDownRight className="w-4 h-4 text-emerald-500" />
+                    <ArrowDownRight className="w-4 h-4 text-emerald-700" />
                   )}
                   <span className="text-[12px]">{dailyPnlDisplayLabel(portfolio.total)}</span>
                   {portfolioMarketStatusLabel && (
@@ -1929,7 +1922,7 @@ export default function StocksPage() {
                     </span>
                   )}
                 </div>
-                <div className={`text-[20px] font-bold font-mono tabular-nums ${isUp ? 'text-rose-500' : 'text-emerald-500'}`}>
+                <div className={`text-[20px] font-bold font-mono tabular-nums ${isUp ? 'text-rose-600' : 'text-emerald-700'}`}>
                   {isUp ? '+' : ''}{formatMoney(dayPnl)}
                   <span className="text-[13px] ml-1.5">({pct >= 0 ? '+' : ''}{pct.toFixed(2)}%)</span>
                 </div>
@@ -2129,7 +2122,7 @@ export default function StocksPage() {
                     </div>
                     <div className="text-left md:text-right">
                       <div className="text-[10px] md:text-[11px] text-muted-foreground">盈亏</div>
-                      <div className={`text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap tabular-nums ${account.total_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                      <div className={`text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap tabular-nums ${account.total_pnl >= 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
                         {account.total_pnl >= 0 ? '+' : ''}{formatMoney(account.total_pnl)}
                         <span className="text-[10px] md:text-[11px] ml-1 hidden md:inline">({account.total_pnl_pct >= 0 ? '+' : ''}{account.total_pnl_pct.toFixed(2)}%)</span>
                       </div>
@@ -2141,7 +2134,7 @@ export default function StocksPage() {
                       >
                         {dailyPnlDisplayLabel(account, true)}
                       </div>
-                      <div className={`text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap tabular-nums ${account.total_daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                      <div className={`text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap tabular-nums ${account.total_daily_pnl >= 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
                         {account.total_daily_pnl >= 0 ? '+' : ''}{formatMoney(account.total_daily_pnl)}
                       </div>
                     </div>
@@ -2200,10 +2193,10 @@ export default function StocksPage() {
                               const badge = marketBadge(pos.market)
                               const isForeign = pos.market === 'HK' || pos.market === 'US'
                               const changeColor = pos.change_pct != null
-                                ? (pos.change_pct > 0 ? 'text-rose-500' : pos.change_pct < 0 ? 'text-emerald-500' : 'text-muted-foreground')
+                                ? (pos.change_pct > 0 ? 'text-rose-600' : pos.change_pct < 0 ? 'text-emerald-700' : 'text-muted-foreground')
                                 : 'text-muted-foreground'
                               const pnlColor = pos.pnl != null
-                                ? (pos.pnl > 0 ? 'text-rose-500' : pos.pnl < 0 ? 'text-emerald-500' : 'text-muted-foreground')
+                                ? (pos.pnl > 0 ? 'text-rose-600' : pos.pnl < 0 ? 'text-emerald-700' : 'text-muted-foreground')
                                 : 'text-muted-foreground'
                               return (
                                 <tr
@@ -2295,7 +2288,7 @@ export default function StocksPage() {
                                     ) : '—'}
                                   </td>
                                   <td
-                                    className={`px-4 py-2.5 text-right font-mono tabular-nums text-[12px] ${pos.daily_pnl != null ? (pos.daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500') : ''}`}
+                                    className={`px-4 py-2.5 text-right font-mono tabular-nums text-[12px] ${pos.daily_pnl != null ? (pos.daily_pnl >= 0 ? 'text-rose-600' : 'text-emerald-700') : ''}`}
                                     title={pos.quote_time ? `行情时间：${pos.quote_time}` : undefined}
                                   >
                                     {pos.daily_pnl != null ? (
@@ -2378,10 +2371,10 @@ export default function StocksPage() {
                           const stock = stocks.find(s => s.id === pos.stock_id)
                           const badge = marketBadge(pos.market)
                           const changeColor = pos.change_pct != null
-                            ? (pos.change_pct > 0 ? 'text-rose-500' : pos.change_pct < 0 ? 'text-emerald-500' : 'text-muted-foreground')
+                            ? (pos.change_pct > 0 ? 'text-rose-600' : pos.change_pct < 0 ? 'text-emerald-700' : 'text-muted-foreground')
                             : 'text-muted-foreground'
                           const pnlColor = pos.pnl != null
-                            ? (pos.pnl > 0 ? 'text-rose-500' : pos.pnl < 0 ? 'text-emerald-500' : 'text-muted-foreground')
+                            ? (pos.pnl > 0 ? 'text-rose-600' : pos.pnl < 0 ? 'text-emerald-700' : 'text-muted-foreground')
                             : 'text-muted-foreground'
                           return (
                             <div
@@ -2484,7 +2477,7 @@ export default function StocksPage() {
                                       { period: pos.daily_pnl_period, date: pos.quote_date },
                                     ]), true)}
                                   </div>
-                                  <div className={`font-mono whitespace-nowrap tabular-nums ${pos.daily_pnl != null ? (pos.daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500') : 'text-muted-foreground'}`}>
+                                  <div className={`font-mono whitespace-nowrap tabular-nums ${pos.daily_pnl != null ? (pos.daily_pnl >= 0 ? 'text-rose-600' : 'text-emerald-700') : 'text-muted-foreground'}`}>
                                     {pos.daily_pnl != null ? `${pos.daily_pnl >= 0 ? '+' : ''}${formatMoney(pos.daily_pnl)}` : '—'}
                                   </div>
                                 </div>
@@ -2616,7 +2609,7 @@ export default function StocksPage() {
                 .map((stock) => {
                 const quote = getStockQuote(`${stock.market}:${stock.symbol}`)
                 const changeColor = quote?.change_pct != null
-                  ? (quote.change_pct > 0 ? 'text-rose-500' : quote.change_pct < 0 ? 'text-emerald-500' : 'text-muted-foreground')
+                  ? (quote.change_pct > 0 ? 'text-rose-600' : quote.change_pct < 0 ? 'text-emerald-700' : 'text-muted-foreground')
                   : 'text-muted-foreground'
                 const { suggestion, kline } = getSuggestionForStock(stock.symbol, stock.market, false)
                 return (
@@ -3281,7 +3274,7 @@ export default function StocksPage() {
         <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Newspaper className="w-5 h-5 text-blue-500" />
+              <Newspaper className="w-5 h-5 text-blue-600" />
               相关资讯
             </DialogTitle>
             <DialogDescription>
@@ -3345,14 +3338,14 @@ export default function StocksPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1.5">
                           <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                            item.source === 'eastmoney' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400' :
-                            item.source === 'eastmoney_news' ? 'bg-blue-500/10 text-blue-500' :
-                            'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                            item.source === 'eastmoney' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-600' :
+                            item.source === 'eastmoney_news' ? 'bg-blue-500/10 text-blue-600' :
+                            'bg-emerald-500/10 text-emerald-600 dark:text-emerald-700'
                           }`}>
                             {item.source_label}
                           </span>
                           {item.importance >= 2 && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-500">
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-600">
                               重要
                             </span>
                           )}
