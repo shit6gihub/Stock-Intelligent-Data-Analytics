@@ -2,6 +2,37 @@
 
 ## 2026-08-17
 
+### feat(infra) — 基础设施层 Phase 1 (v0.2.65)
+
+参考架构方案落地第一批 5 件:
+- ✅ **Redis 7**: 缓存 + 限流 token bucket + Redis Streams 任务队列
+- ✅ **Prometheus**: /metrics 端点 + 业务指标
+- ✅ **Grafana**: 预置 Prometheus + Loki 数据源 (35099 端口)
+- ✅ **Loki**: 日志聚合 (7 天保留)
+- ✅ **Promtail**: 收 panwatch stdout 送 Loki (结构化 JSON)
+- ✅ **统一网关中间件**: JWT decode + 限流 (Redis 优先 + 内存降级) + 请求日志
+- ✅ **深度 /health**: PG / Redis / 调度器 / 限流 状态分别报告
+- ✅ **Redis Streams**: kline_backfill 任务 publish (替代部分 APScheduler 职责)
+
+**核心模块**:
+- `src/web/cache/redis_client.py` (230 行): 单例 + 降级策略
+- `src/web/cache/streams.py` (70 行): Stream publish + stats
+- `src/web/middleware.py` (250 行): JWT/限流/日志 3 个中间件
+- `src/web/api/health.py` (180 行): /health + /metrics (合并了原 /health)
+- `deploy/*.yml`: 4 个监控配置
+
+**降级**:
+- Redis 不可达 → 缓存降级到源数据 / 限流降级到进程内 dict (仍生效)
+- /health 返回 200 + body.status="degraded" 表示有组件故障
+
+**docker-compose.yml**: 加 infra profile (Redis/Prom/Loki/Promtail/Grafana)
+- 默认 `docker compose up -d` 不启动
+- 启用: `docker compose --profile infra up -d`
+- Grafana: http://localhost:35099 (admin/xz.170530)
+
+**累计改动**: v0.2.60 → v0.2.65 = 5 commits
+## 2026-08-17
+
 ### polish(ui/ux) — 协议 P1/P2 闭环第三轮 (v0.2.64)
 
 **a11y (B 报告 P1-1/4 + P1-10)**:

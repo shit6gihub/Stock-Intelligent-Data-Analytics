@@ -84,6 +84,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 2026-08-17 v0.2.65 (Phase 1): 统一网关中间件
+# - JWTDecodeMiddleware: 解析 JWT 放 request.state.user(给限流/日志用)
+# - RateLimitMiddleware: 基于 IP/user_id 限流(Redis 优先, 内存降级)
+# - RequestLoggerMiddleware: 结构化 JSON 日志(给 Loki 聚合)
+# 顺序: CORS(最外层) → 日志(看所有) → 限流 → JWT(最内, 共享给业务依赖)
+from src.web.middleware import JWTDecodeMiddleware, RateLimitMiddleware, RequestLoggerMiddleware
+app.add_middleware(RequestLoggerMiddleware)
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(JWTDecodeMiddleware)
+
 
 # ════════════════════════════════════════════════════════════════════
 # 账号权限控制(2026-08-15 RBAC): 角色权限驱动, 替代 username==demo 硬编码
@@ -495,3 +505,6 @@ async def health():
 async def version():
     """获取应用版本号（公开接口）"""
     return {"version": get_app_version()}
+
+# 2026-08-17 v0.2.65: 深度健康检查 + Prometheus 指标(挂 /api 前缀, 跟其他路由一致)
+app.include_router(health.router, prefix="/api")

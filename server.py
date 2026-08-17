@@ -1794,6 +1794,13 @@ async def lifespan(app):
     except Exception as e:
         logger.error(f"微信数智分析BOT worker 启动失败: {e}")
     yield
+    # 2026-08-17 v0.2.65: Redis 客户端关闭
+    try:
+        from src.web.cache.redis_client import redis_client as _redis_close
+        await _redis_close.close()
+    except Exception:
+        pass
+
     if scheduler:
         scheduler.shutdown()
         logger.info("Agent 调度器已关闭")

@@ -14,6 +14,11 @@ uvicorn>=0.24.0
 sqlalchemy>=2.0.0
 # PostgreSQL adapter(SQLite→PG 切换需要,2026-08-17)
 psycopg2-binary>=2.9.9
+
+# Redis 客户端 (Phase 1 架构升级 2026-08-17: 缓存 + 限流 + Redis Streams)
+redis>=5.0.0
+# 监控指标导出 (Phase 1: Prometheus /metrics 端点)
+prometheus-client>=0.20.0
 playwright==1.57.0
 PyJWT>=2.8.0
 # 详情报告导出 PDF(后台直出,不依赖 Chromium):

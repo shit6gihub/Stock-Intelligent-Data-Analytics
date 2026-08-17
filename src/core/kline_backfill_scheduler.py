@@ -23,6 +23,7 @@ from src.collectors.klines_ingestor import ingest_batch, get_default_symbols, in
 from src.models.market import MarketCode
 from src.web.database import create_engine
 from src.web.database import DB_URL
+from src.web.cache.streams import publish_kline_backfill  # 2026-08-17 v0.2.65 (Phase 1)
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +157,18 @@ class KlineBackfillScheduler:
         return _backfill_in_worker(BACKFILL_DAYS)
 
     def schedule_one_off(self, symbol: str, market: str, delay_seconds: int = 60) -> None:
+        # 2026-08-17 v0.2.65: 发布任务到 Redis Stream (fire-and-forget, 不阻塞主流程)
+        try:
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(publish_kline_backfill(symbol, market, days=800))
+            except RuntimeError:
+                asyncio.run(publish_kline_backfill(symbol, market, days=800))
+        except Exception as e:
+            logger.debug(f"[kline_backfill] stream publish skipped: {e}")
+
+
             """加股快速 backfill(2026-08-17):
             - 用户加自选股后 60 秒延迟入库
             - 60 秒延迟合并 1 分钟内多次 add(用户连续点不会重复拉)
