@@ -415,7 +415,7 @@ app.include_router(
     dependencies=protected,
 )
 app.include_router(
-    health.router,
+    health_router.router,
     prefix="/api/health",
     tags=["health"],
     dependencies=protected,
