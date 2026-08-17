@@ -170,13 +170,14 @@ export default function DashboardPage() {
   const [hotStocksLoading, setHotStocksLoading] = useState(true)
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null)
   // 2026-08-17: 数据源失败显式标识 — 收集 {source, message},横幅展示具体哪个源挂了
-  const [sourceErrors, setSourceErrors] = useState<Array<{ source: string; message: string }>>([])
-  const pushError = (source: string, message: string) => {
+  const [sourceErrors, setSourceErrors] = useState<Array<{ source: string; message: string; retry?: () => void }>>([])
+  // 2026-08-17: pushError 加 retry 参数(闭环修正 v0.2.60 回归 — ErrorBanner 重试按钮之前永不渲染)
+  const pushError = (source: string, message: string, retry?: () => void) => {
     setSourceErrors(prev => {
       // 同一 source 5s 内只 push 一次(防重复)
       const recent = prev.find(p => p.source === source)
       if (recent) return prev
-      return [...prev, { source, message: message.slice(0, 200) }].slice(-5)
+      return [...prev, { source, message: message.slice(0, 200), ...(retry ? { retry } : {}) }].slice(-5)
     })
   }
   // 分享卡开关:成绩单(基准)/ 组合体检 / 每日 digest
@@ -210,9 +211,9 @@ export default function DashboardPage() {
     setLoading(true)
     setSourceErrors([])  // 清空上次错误
     // 指数 pills:独立加载不阻塞首屏(spark 冷启动可能 ~1s,数据到了自然浮现)
-    dashboardApi.indices().then(setIndices).catch((err) => pushError('大盘指数', err?.message || '服务不可用'))
+    dashboardApi.indices().then(setIndices).catch((err) => pushError('大盘指数', err?.message || '服务不可用', load))
     // 大盘资金流(同花顺源):独立加载,失败聚合到全局横幅
-    dashboardApi.marketCapitalFlow().then(setMarketFlow).catch((err) => pushError('大盘资金流', err?.message || '服务不可用'))
+    dashboardApi.marketCapitalFlow().then(setMarketFlow).catch((err) => pushError('大盘资金流', err?.message || '服务不可用', load))
     // 最新报告(Hermes cron):独立加载,失败静默;cacheMode reload 保证 30s 轮询必拿新数据
     setReportsLoading(true)
     reportsApi
@@ -220,7 +221,7 @@ export default function DashboardPage() {
       .then((r) => setReports((r.items || []).slice(0, 4)))
       .catch((err) => {
         setReports([])
-        pushError('Hermes 报告', err?.message || '服务不可用')
+        pushError('Hermes 报告', err?.message || '服务不可用', load)
       })
       .finally(() => setReportsLoading(false))
     // 异动池(东财):独立加载,失败静默(端点未就绪时优雅降级为空态)
@@ -230,7 +231,7 @@ export default function DashboardPage() {
       .then((r) => setAnomalies(pickList<MarketAnomalyItem>(r, 'items').slice(0, 10)))
       .catch((err) => {
         setAnomalies([])
-        pushError('异动池 (东财)', err?.message || '服务不可用')
+        pushError('异动池 (东财)', err?.message || '服务不可用', load)
       })
       .finally(() => setAnomaliesLoading(false))
     // 热榜(同花顺):独立加载,失败静默
@@ -240,7 +241,7 @@ export default function DashboardPage() {
       .then((r) => setHotStocks(pickList<MarketHotStockItem>(r, 'items').slice(0, 10)))
       .catch((err) => {
         setHotStocks([])
-        pushError('热榜 (同花顺)', err?.message || '服务不可用')
+        pushError('热榜 (同花顺)', err?.message || '服务不可用', load)
       })
       .finally(() => setHotStocksLoading(false))
     // 快车道:DB/轻量查询,先让首屏(要紧事/体检分布)尽快出来
@@ -263,7 +264,7 @@ export default function DashboardPage() {
       const failed = [sc, ov, dg, ht, td, ms]
         .map((r, i) => ({ r, name: ['盘中扫描', '首页概览', '组合体检', '今日告警', '待办', '市场状态'][i] }))
         .filter(x => x.r.status === 'rejected')
-      failed.forEach(({ name, r }) => pushError(name, (r as PromiseRejectedResult).reason?.message || '服务不可用'))
+      failed.forEach(({ name, r }) => pushError(name, (r as PromiseRejectedResult).reason?.message || '服务不可用', load))
     }
     setLoading(false) // 首屏不再等基准/归因(要拉全持仓 K 线)
     setRefreshedAt(new Date())
@@ -273,7 +274,7 @@ export default function DashboardPage() {
       recommendationsApi
         .listStrategySignals({ status: 'active', limit: 5 })
         .then((r) => setOppFallback(r.items || []))
-        .catch((err) => pushError('机会池兜底', err?.message || '服务不可用'))
+        .catch((err) => pushError('机会池兜底', err?.message || '服务不可用', load))
     }
 
     // 慢车道:基准/归因需拉全持仓 K 线(分钟级),独立加载,就绪后回填超额/归因。
@@ -292,7 +293,7 @@ export default function DashboardPage() {
     // 自选股列表(判断盘前标的是否已加自选)
     stocksApi.list().then((rows) => {
       setWatchSymbols(new Set((rows || []).map((s) => `${s.market}:${s.symbol}`)))
-    }).catch((err) => pushError('自选股列表', err?.message || '服务不可用'))
+    }).catch((err) => pushError('自选股列表', err?.message || '服务不可用', load))
   }, [loadBench])
 
   // 盘前标的快捷加入自选
