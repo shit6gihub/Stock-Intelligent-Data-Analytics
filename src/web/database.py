@@ -11,29 +11,49 @@ from src.web.migrations import has_pending_migrations, run_versioned_migrations
 
 logger = logging.getLogger(__name__)
 
+# 数据库连接(2026-08-17: 双方言兼容改造)
+# - 默认 SQLite(现状), 通过环境变量 SIDA_DB_URL 切换 PostgreSQL
+# - 例: SIDA_DB_URL="postgresql+psycopg2://sida:xxx@127.0.0.1:5432/sida"
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "panwatch.db")
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-engine = create_engine(
-    f"sqlite:///{DB_PATH}",
-    echo=False,
-    connect_args={
-        "timeout": 30,
-        "check_same_thread": False,
-    },
-    poolclass=NullPool,
-)
+DB_URL = os.environ.get("SIDA_DB_URL", f"sqlite:///{DB_PATH}")
+
+IS_PG = DB_URL.startswith("postgresql")
+
+if IS_PG:
+    engine = create_engine(
+        DB_URL,
+        echo=False,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10,
+        pool_timeout=30,
+    )
+else:
+    engine = create_engine(
+        DB_URL,
+        echo=False,
+        connect_args={
+            "timeout": 30,
+            "check_same_thread": False,
+        },
+        poolclass=NullPool,
+    )
 
 
 @event.listens_for(engine, "connect")
-def _set_sqlite_pragma(dbapi_conn, connection_record):
+def _set_db_pragma(dbapi_conn, connection_record):
     cursor = dbapi_conn.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA busy_timeout=60000")
-    cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.execute("PRAGMA foreign_keys=ON")
-    # 积极 checkpoint: 减少 WAL 膨胀, 降低锁竞争窗口
-    cursor.execute("PRAGMA wal_autocheckpoint=1000")
+    if IS_PG:
+        cursor.execute("SET statement_timeout = 30000")  # 30s 语句超时
+    else:
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=60000")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        # 积极 checkpoint: 减少 WAL 膨胀, 降低锁竞争窗口
+        cursor.execute("PRAGMA wal_autocheckpoint=1000")
     cursor.close()
 
 
@@ -52,7 +72,12 @@ _sqlite_write_lock = _threading.Semaphore(1)
 
 
 def acquire_write():
-    """写操作前调用: 排队等待写锁(最多30s, 与busy_timeout一致)。"""
+    """写操作前调用: SQLite 排队等写锁(最多30s); PG 模式 MVCC 行级锁, 无需排队。"""
+    if IS_PG:
+        class _Noop:
+            def release(self):
+                pass
+        return _Noop()
     acquired = _sqlite_write_lock.acquire(timeout=30)
     if not acquired:
         raise TimeoutError("数据库写入繁忙, 请稍后重试")
@@ -85,6 +110,12 @@ def _has_column(conn, table: str, column: str) -> bool:
         conn.execute(text(f"SELECT {column} FROM {table} LIMIT 1"))
         return True
     except Exception:
+        # PG: 失败语句会让事务进入 aborted, 必须 rollback 才能继续后续语句。
+        # SQLite: rollback 无副作用(没有未提交事务时等价 no-op)。
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return False
 
 
@@ -93,6 +124,10 @@ def _has_table(conn, table: str) -> bool:
         conn.execute(text(f"SELECT 1 FROM {table} LIMIT 1"))
         return True
     except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return False
 
 
@@ -127,6 +162,13 @@ def _drop_dangling_ai_provider_fk(conn, table: str) -> None:
             conn.commit()
         except Exception:
             pass
+
+
+def _ddl_autoincrement(sql_template: str) -> str:
+    """方言化建表 SQL: PostgreSQL 用 SERIAL/TIMESTAMP, SQLite 用 AUTOINCREMENT/DATETIME。"""
+    if IS_PG:
+        return sql_template.format(pk="SERIAL PRIMARY KEY", ts="TIMESTAMP")
+    return sql_template.format(pk="INTEGER PRIMARY KEY AUTOINCREMENT", ts="DATETIME")
 
 
 def _backup_db_before_migration() -> None:
@@ -274,18 +316,18 @@ def _migrate(engine):
             conn.execute(text("UPDATE positions SET sort_order = id WHERE sort_order IS NULL OR sort_order = 0"))
             conn.commit()
 
-        # Create new tables if missing (SQLite)
+        # Create new tables if missing (双方言: SQLite / PostgreSQL)
         if not _has_table(conn, "suggestion_feedback"):
             conn.execute(
                 text(
-                    """
-CREATE TABLE IF NOT EXISTS suggestion_feedback (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    _ddl_autoincrement(
+                        """CREATE TABLE IF NOT EXISTS suggestion_feedback (
+  id {pk},
   suggestion_id INTEGER NOT NULL REFERENCES stock_suggestions(id) ON DELETE CASCADE,
   useful INTEGER DEFAULT 1,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-"""
+  created_at {ts} DEFAULT CURRENT_TIMESTAMP
+);"""
+                    )
                 )
             )
             conn.execute(
@@ -305,14 +347,14 @@ CREATE TABLE IF NOT EXISTS suggestion_feedback (
         if not _has_table(conn, "ai_scene_bindings"):
             conn.execute(
                 text(
-                    """
-CREATE TABLE IF NOT EXISTS ai_scene_bindings (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    _ddl_autoincrement(
+                        """CREATE TABLE IF NOT EXISTS ai_scene_bindings (
+  id {pk},
   scene VARCHAR(64) NOT NULL UNIQUE,
   model_id INTEGER REFERENCES ai_models(id) ON DELETE SET NULL,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-"""
+  updated_at {ts} DEFAULT CURRENT_TIMESTAMP
+);"""
+                    )
                 )
             )
             conn.commit()
@@ -322,17 +364,17 @@ CREATE TABLE IF NOT EXISTS ai_scene_bindings (
         if not _has_table(conn, "user_ai_services"):
             conn.execute(
                 text(
-                    """
-CREATE TABLE IF NOT EXISTS user_ai_services (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    _ddl_autoincrement(
+                        """CREATE TABLE IF NOT EXISTS user_ai_services (
+  id {pk},
   user_id VARCHAR(36) NOT NULL,
   name VARCHAR NOT NULL,
   base_url VARCHAR NOT NULL,
   api_key VARCHAR DEFAULT '',
   models_json TEXT NOT NULL DEFAULT '[]',
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-"""
+  created_at {ts} DEFAULT CURRENT_TIMESTAMP
+);"""
+                    )
                 )
             )
             conn.execute(

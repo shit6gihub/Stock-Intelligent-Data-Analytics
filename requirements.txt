@@ -12,6 +12,8 @@ tenacity>=8.2.0
 fastapi>=0.104.0
 uvicorn>=0.24.0
 sqlalchemy>=2.0.0
+# PostgreSQL adapter(SQLite→PG 切换需要,2026-08-17)
+psycopg2-binary>=2.9.9
 playwright==1.57.0
 PyJWT>=2.8.0
 # 详情报告导出 PDF(后台直出,不依赖 Chromium):
