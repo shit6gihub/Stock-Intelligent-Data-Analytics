@@ -58,6 +58,12 @@ context_maintenance_scheduler: ContextMaintenanceScheduler | None = None
 report_scheduler: ReportScheduler | None = None
 kline_backfill_scheduler: KlineBackfillScheduler | None = None
 
+# 2026-08-17 加股 60s 快速 backfill:
+# APScheduler 跑在它自己的后台线程(没 asyncio loop),
+# 但 server.py 跑在 uvicorn 的 asyncio loop 里,
+# 需要把 loop 暴露给 kline_backfill_scheduler 用于跨线程调度。
+_kline_oneoff_loop: asyncio.AbstractEventLoop | None = None
+
 
 def apply_proxy_env(proxy: str | None) -> None:
     """统一更新进程环境变量代理,让所有 httpx 默认 Client (trust_env=True) 走该代理。
@@ -1724,7 +1730,8 @@ async def lifespan(app):
 
     threading.Thread(target=refresh_stock_cache, daemon=True).start()
 
-    global scheduler, price_alert_scheduler, paper_trading_scheduler, context_maintenance_scheduler, kline_backfill_scheduler
+    global scheduler, price_alert_scheduler, paper_trading_scheduler, context_maintenance_scheduler, kline_backfill_scheduler, _kline_oneoff_loop
+    _kline_oneoff_loop = asyncio.get_running_loop()  # 跨线程调度用
     scheduler = build_scheduler()
     scheduler.start()
     logger.info("Agent 调度器已启动")

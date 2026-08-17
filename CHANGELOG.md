@@ -2,6 +2,15 @@
 
 ## 2026-08-17
 
+### fix(kline) — 加股 60s backfill 真触发(跨线程调度) (v0.2.58)
+
+- `kline_backfill_scheduler.schedule_one_off()` 改用 `loop.call_soon_threadsafe` 跨线程
+  - APScheduler 跑在自己线程(无 event loop)
+  - server 跑在 uvicorn 的 asyncio loop
+  - 必须用 call_soon_threadsafe 把 coroutine 派发到 uvicorn loop
+- server.py 暴露 `_kline_oneoff_loop` 全局
+## 2026-08-17
+
 ### fix(kline) — 加股 backfill 修复 (v0.2.57)
 
 - `create_stock()` 修复 `db_stock.market.value` / `db_stock.symbol.value` 类型问题
