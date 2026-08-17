@@ -2,6 +2,17 @@
 
 ## 2026-08-17
 
+### feature(scheduler) — K线每日 backfill cron 18:00 (v0.2.55)
+
+- 新增 `src/core/kline_backfill_scheduler.py`: 收盘后 18:00 自动入库
+  - 拉最近 2 天日 K(覆盖当日 + 周末/节假日补齐)
+  - 工作日(Mon-Fri) 18:00 触发, 复用 `klines_ingestor.ingest_batch`
+  - 失败 retry(0 行入库 → 7 天兜底)
+  - 静默时段跳过非交易日
+- server.py 启动/关停这个 scheduler(同 PriceAlertScheduler 模式)
+- 手动触发 API: `sched.trigger_now()`(测试用)
+## 2026-08-17
+
 ### feature(storage) — TimescaleDB hypertable 上线 + K线入库 worker (v0.2.54)
 
 - **PostgreSQL + TimescaleDB 2.29.1** 装在测试机 + 生产(3.6GB 内存 + B 档配置)

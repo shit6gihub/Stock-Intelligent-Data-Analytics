@@ -29,6 +29,7 @@ from src.core.price_alert_scheduler import PriceAlertScheduler
 from src.core.paper_trading_scheduler import PaperTradingScheduler
 from src.core.context_scheduler import ContextMaintenanceScheduler
 from src.core.report_scheduler import ReportScheduler
+from src.core.kline_backfill_scheduler import KlineBackfillScheduler
 from src.core.agent_runs import record_agent_run
 from src.core.log_context import install_log_record_factory, log_context
 from src.core.agent_catalog import (
@@ -55,6 +56,7 @@ price_alert_scheduler: PriceAlertScheduler | None = None
 paper_trading_scheduler: PaperTradingScheduler | None = None
 context_maintenance_scheduler: ContextMaintenanceScheduler | None = None
 report_scheduler: ReportScheduler | None = None
+kline_backfill_scheduler: KlineBackfillScheduler | None = None
 
 
 def apply_proxy_env(proxy: str | None) -> None:
@@ -1722,7 +1724,7 @@ async def lifespan(app):
 
     threading.Thread(target=refresh_stock_cache, daemon=True).start()
 
-    global scheduler, price_alert_scheduler, paper_trading_scheduler, context_maintenance_scheduler
+    global scheduler, price_alert_scheduler, paper_trading_scheduler, context_maintenance_scheduler, kline_backfill_scheduler
     scheduler = build_scheduler()
     scheduler.start()
     logger.info("Agent 调度器已启动")
@@ -1766,6 +1768,15 @@ async def lifespan(app):
         logger.info("SIDA 报告调度器已启动")
     except Exception as e:
         logger.error(f"SIDA 报告调度器启动失败: {e}")
+    # K线每日 backfill(收盘后 18:00, 周一至五, 拉最近 2 天)
+    try:
+        settings = Settings()
+        kline_backfill_scheduler = KlineBackfillScheduler(
+            timezone=settings.app_timezone
+        )
+        kline_backfill_scheduler.start()
+    except Exception as e:
+        logger.error(f"K线入库调度器启动失败: {e}")
 
     # 微信数智分析BOT worker: 长轮询 getupdates, 微信消息 → AI 回复 → 回微信
     try:
@@ -1791,6 +1802,8 @@ async def lifespan(app):
     if report_scheduler:
         report_scheduler.shutdown()
         logger.info("SIDA 报告调度器已关闭")
+    if kline_backfill_scheduler:
+        kline_backfill_scheduler.shutdown()
 
 
 # 模块级 app 实例，供 uvicorn reload 使用
