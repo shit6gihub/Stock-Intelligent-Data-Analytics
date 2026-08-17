@@ -2,6 +2,12 @@
 
 ## 2026-08-17
 
+### fix(kline) — server.py import 路径修复 (v0.2.59)
+
+- `schedule_one_off` 改用 `import server`(根 module), 不是 `src.web.server`(不存在)
+- 加 None 检查: server 未启动时优雅跳过
+## 2026-08-17
+
 ### fix(kline) — 加股 60s backfill 真触发(跨线程调度) (v0.2.58)
 
 - `kline_backfill_scheduler.schedule_one_off()` 改用 `loop.call_soon_threadsafe` 跨线程

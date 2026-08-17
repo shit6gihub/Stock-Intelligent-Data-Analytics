@@ -164,7 +164,7 @@ class KlineBackfillScheduler:
             # APScheduler 跑在它自己的后台线程(没有 asyncio loop)
             # 但 server.py 跑在 uvicorn 的 asyncio loop 里
             # 所以要从 apscheduler 线程 → uvicorn 线程用 run_coroutine_threadsafe
-            from src.web.server import _kline_oneoff_loop
+            import server as _server_mod
 
             run_date = datetime.now(timezone.utc).replace(microsecond=0)
             from datetime import timedelta
@@ -172,8 +172,15 @@ class KlineBackfillScheduler:
 
             job_id = f"kline_backfill_oneoff_{symbol}_{market}"
             try:
+                loop = _server_mod._kline_oneoff_loop
+                if loop is None:
+                    logger.warning(
+                        f"[kline oneoff] server.py lifespan 未设置 _kline_oneoff_loop, "
+                        f"跳过 {symbol}.{market}(18:00 cron 兜底)"
+                    )
+                    return
                 self.scheduler.add_job(
-                    lambda: _kline_oneoff_loop.call_soon_threadsafe(
+                    lambda: loop.call_soon_threadsafe(
                         asyncio.ensure_future,
                         self._backfill_one_symbol(symbol, market),
                     ),
