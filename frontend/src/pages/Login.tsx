@@ -16,8 +16,8 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [isSetup, setIsSetup] = useState(false)
-  // 2026-08-15 注册功能: 登录/注册 双模式切换(注册是否开放由后端 allow_register 控制)
-  const [registerMode, setRegisterMode] = useState(false)
+  // 2026-08-17 注册功能已关闭(只允许 owner 手动建号, 后端 app_settings.allow_register=false)
+  const registerMode = false
   const [checking, setChecking] = useState(true)
 
   useEffect(() => {
@@ -34,7 +34,7 @@ export default function LoginPage() {
     e.preventDefault()
     if (!username || !password) return
 
-    if (registerMode) {
+    if (false) { // 注册模式已永久关闭
       if (password !== confirmPassword) {
         toast('两次密码不一致', 'error')
         return
@@ -56,16 +56,13 @@ export default function LoginPage() {
 
     setLoading(true)
     try {
-      if (registerMode) {
+      if (false) { // 注册模式已永久关闭
         // 注册(member 账号); 失败时 fetchAPI 抛出后端 message(如 403 注册未开放)
         const data = await fetchAPI<{ message?: string }>('/auth/register', {
           method: 'POST',
           body: JSON.stringify({ username, password }),
         })
         toast(data?.message || '注册成功, 请登录', 'success')
-        setRegisterMode(false)
-        setPassword('')
-        setConfirmPassword('')
         return
       }
 
@@ -187,22 +184,7 @@ export default function LoginPage() {
             </Button>
           </form>
 
-          {/* 2026-08-15 注册入口: 登录/注册 模式切换(仅非首次初始化时显示) */}
-          {!isSetup && (
-            <div className="mt-4 text-center">
-              <button
-                type="button"
-                onClick={() => {
-                  setRegisterMode(!registerMode)
-                  setPassword('')
-                  setConfirmPassword('')
-                }}
-                className="text-[13px] text-primary hover:underline"
-              >
-                {registerMode ? '返回登录' : '注册账号'}
-              </button>
-            </div>
-          )}
+          {/* 2026-08-17: 注册入口已关闭(只允许 owner 手动建号),后端 app_settings.allow_register=false */}
         </div>
 
         <p className="text-center text-xs text-muted-foreground mt-6">
