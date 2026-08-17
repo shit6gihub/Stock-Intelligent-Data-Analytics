@@ -260,9 +260,19 @@ def create_stock(stock: StockCreate, db: Session = Depends(get_db), user: User =
                 "K线入库调度器未启动, 加股 backfill 跳过(18:00 cron 兜底)"
             )
         else:
+            market_str = (
+                db_stock.market.value
+                if hasattr(db_stock.market, "value")
+                else str(db_stock.market)
+            )
+            symbol_str = (
+                db_stock.symbol.value
+                if hasattr(db_stock.symbol, "value")
+                else str(db_stock.symbol)
+            )
             _kbs_mod._global_scheduler.schedule_one_off(
-                symbol=db_stock.symbol,
-                market=str(db_stock.market.value),
+                symbol=symbol_str,
+                market=market_str,
             )
             logger.info(
                 f"已为新加自选 {db_stock.symbol}.{db_stock.market} 调度 60s 后 backfill"

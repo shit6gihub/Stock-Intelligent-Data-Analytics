@@ -2,6 +2,12 @@
 
 ## 2026-08-17
 
+### fix(kline) — 加股 backfill 修复 (v0.2.57)
+
+- `create_stock()` 修复 `db_stock.market.value` / `db_stock.symbol.value` 类型问题
+  (market/symbol 是字符串不是 Enum, 直接用 str() 即可)
+## 2026-08-17
+
 ### fix(kline) — K线入库去重 + 加股 60s 快速 backfill (v0.2.56)
 
 - **`get_default_symbols()` 加 set 去重** — 多用户各加同一股时, 拉取次数从 52 → 38(0 网络浪费)
