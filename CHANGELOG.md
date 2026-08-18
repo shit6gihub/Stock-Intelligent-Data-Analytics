@@ -2,6 +2,14 @@
 
 ## 2026-08-18
 
+### feat — AuditMiddleware 操作审计全覆盖 (v0.2.65.5)
+
+- 所有 2xx 写操作(POST/PUT/PATCH/DELETE)自动落 audit_logs, 补齐渠道/服务商/数据源/设置/用户等管理操作审计
+- 内部自行 decode JWT, 独立 session 异步落库, 失败静默不阻塞
+- 排除 auth(已有埋点)/静态/health/webhook
+
+## 2026-08-18
+
 ### fix — 生产稳定性 + 微信通道重构 (v0.2.65.4)
 
 **ths_web 403 熔断(修复生产 42s 卡死 + 403 风暴)**:
@@ -254,6 +262,14 @@
 
 # Changelog
 
+## 2026-08-18
+
+### feat — AuditMiddleware 操作审计全覆盖 (v0.2.65.5)
+
+- 所有 2xx 写操作(POST/PUT/PATCH/DELETE)自动落 audit_logs, 补齐渠道/服务商/数据源/设置/用户等管理操作审计
+- 内部自行 decode JWT, 独立 session 异步落库, 失败静默不阻塞
+- 排除 auth(已有埋点)/静态/health/webhook
+
 ## 2026-08-14 (v0.2.37)
 
 ### feat(wechat) — 个人微信 iLink 直连全链路(零 OpenClaw 依赖)
@@ -462,6 +478,14 @@
 
 # Changelog
 
+## 2026-08-18
+
+### feat — AuditMiddleware 操作审计全覆盖 (v0.2.65.5)
+
+- 所有 2xx 写操作(POST/PUT/PATCH/DELETE)自动落 audit_logs, 补齐渠道/服务商/数据源/设置/用户等管理操作审计
+- 内部自行 decode JWT, 独立 session 异步落库, 失败静默不阻塞
+- 排除 auth(已有埋点)/静态/health/webhook
+
 ## 2026-08-13 (v0.2.24)
 
 ### fix(ai) — 场景绑定跨服务商 404 "model is not found"
@@ -481,6 +505,14 @@ agent_configs 里 premarket_outlook/daily_report 绑定商汤 deepseek-v4-flash,
 
 # Changelog
 
+## 2026-08-18
+
+### feat — AuditMiddleware 操作审计全覆盖 (v0.2.65.5)
+
+- 所有 2xx 写操作(POST/PUT/PATCH/DELETE)自动落 audit_logs, 补齐渠道/服务商/数据源/设置/用户等管理操作审计
+- 内部自行 decode JWT, 独立 session 异步落库, 失败静默不阻塞
+- 排除 auth(已有埋点)/静态/health/webhook
+
 ## 2026-08-13 (v0.2.23)
 
 ### refactor(settings) — 删除多余模型引擎配置(统一 LLM 配置中心)
@@ -495,6 +527,14 @@ agent_configs 里 premarket_outlook/daily_report 绑定商汤 deepseek-v4-flash,
 - 后端 settings 相关测试 17 passed
 
 # Changelog
+
+## 2026-08-18
+
+### feat — AuditMiddleware 操作审计全覆盖 (v0.2.65.5)
+
+- 所有 2xx 写操作(POST/PUT/PATCH/DELETE)自动落 audit_logs, 补齐渠道/服务商/数据源/设置/用户等管理操作审计
+- 内部自行 decode JWT, 独立 session 异步落库, 失败静默不阻塞
+- 排除 auth(已有埋点)/静态/health/webhook
 
 ## 2026-08-13 (v0.2.22)
 
