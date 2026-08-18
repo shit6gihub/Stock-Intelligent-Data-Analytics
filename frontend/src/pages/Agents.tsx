@@ -207,10 +207,10 @@ export default function AgentsPage() {
     setLoadError(null)
     try {
       const [agentData, stockData, servicesData, channelData] = await Promise.all([
-        fetchAPI<AgentConfig[]>('/agents'),
-        fetchAPI<StockConfig[]>('/stocks'),
-        fetchAPI<AIService[]>('/providers/services'),
-        fetchAPI<NotifyChannel[]>('/channels'),
+        fetchAPI<AgentConfig[]>('/agents', { cacheMode: 'reload' }),
+        fetchAPI<StockConfig[]>('/stocks', { cacheMode: 'reload' }),
+        fetchAPI<AIService[]>('/providers/services', { cacheMode: 'reload' }),
+        fetchAPI<NotifyChannel[]>('/channels', { cacheMode: 'reload' }),
       ])
       setAgents(agentData)
       setStocks(stockData)

@@ -421,9 +421,9 @@ export default function SettingsPage() {
     try {
       const [settingsData, keyDataSourcesData, servicesData, channelsData, versionData, healthData, sceneBindingsData, myServicesData] = await Promise.all([
         fetchAPI<Setting[]>('/settings'),
-        fetchAPI<KeyDataSource[]>('/datasources'),
-        fetchAPI<AIService[]>('/providers/services'),
-        fetchAPI<NotifyChannel[]>('/channels'),
+        fetchAPI<KeyDataSource[]>('/datasources', { cacheMode: 'reload' }),
+        fetchAPI<AIService[]>('/providers/services', { cacheMode: 'reload' }),
+        fetchAPI<NotifyChannel[]>('/channels', { cacheMode: 'reload' }),
         fetchAPI<{ version: string }>('/settings/version'),
         fetchAPI<AgentsHealth>('/agents/health'),
         listSceneBindings(),

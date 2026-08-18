@@ -105,9 +105,9 @@ export default function PriceAlertsPage() {
     setLoading(true)
     try {
       const [ruleData, stockData, channelData] = await Promise.all([
-        fetchAPI<AlertRule[]>('/price-alerts'),
+        fetchAPI<AlertRule[]>('/price-alerts', { cacheMode: 'reload' }),
         stocksApi.list(),
-        fetchAPI<NotifyChannel[]>('/channels'),
+        fetchAPI<NotifyChannel[]>('/channels', { cacheMode: 'reload' }),
       ])
       setRules(ruleData || [])
       setStocks(stockData || [])

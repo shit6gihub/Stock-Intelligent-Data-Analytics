@@ -639,8 +639,8 @@ export default function StocksPage() {
     try {
       const [agentData, servicesData, channelsData] = await Promise.all([
         fetchAPI<AgentConfig[]>('/agents'),
-        fetchAPI<AIService[]>('/providers/services'),
-        fetchAPI<NotifyChannel[]>('/channels'),
+        fetchAPI<AIService[]>('/providers/services', { cacheMode: 'reload' }),
+        fetchAPI<NotifyChannel[]>('/channels', { cacheMode: 'reload' }),
       ])
       setAgents(agentData)
       setServices(servicesData)
@@ -655,8 +655,8 @@ export default function StocksPage() {
     try {
       // 核心数据（立即需要）
       const [stockData, accountData] = await Promise.all([
-        fetchAPI<Stock[]>('/stocks'),
-        fetchAPI<Account[]>('/accounts'),
+        fetchAPI<Stock[]>('/stocks', { cacheMode: 'reload' }),
+        fetchAPI<Account[]>('/accounts', { cacheMode: 'reload' }),
       ])
       setStocks(stockData)
       setAccounts(accountData)

@@ -178,7 +178,7 @@ export default function NotificationsPage() {
     setLoading(true)
     setError('')
     try {
-      const result = await fetchAPI<{ items: NotificationItem[]; unread: number; configured_channels: ConfiguredChannel[] }>('/notifications?limit=200')
+      const result = await fetchAPI<{ items: NotificationItem[]; unread: number; configured_channels: ConfiguredChannel[] }>('/notifications?limit=200', { cacheMode: 'reload' })
       const next = result?.items || []
       setItems(next)
       setConfiguredChannels(result?.configured_channels || [])

@@ -118,7 +118,7 @@ export default function DataSourcesPage() {
 
   const load = async () => {
     try {
-      const data = await fetchAPI<DataSource[]>('/datasources')
+      const data = await fetchAPI<DataSource[]>('/datasources', { cacheMode: 'reload' })
       setSources(data)
     } catch (e) {
       console.error(e)
