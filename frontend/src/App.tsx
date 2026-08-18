@@ -407,27 +407,29 @@ function App() {
       <main className="px-4 md:px-6 py-4 md:py-6 w-full">
         <Suspense fallback={<PageFallback />}>
           <AppErrorBoundary>
+            <Routes>
 
-            <Route path="/" element={<DashboardPage />} />
-            <Route path="/opportunities" element={<PermGuard perm="view_opportunities" myPerms={myPerms}><OpportunitiesPage /></PermGuard>} />
-            <Route path="/forecast" element={<PermGuard perm="view_forecast" myPerms={myPerms}><ForecastPage /></PermGuard>} />
-            <Route path="/index/:symbol" element={<IndexDetailPage />} />
-            <Route path="/portfolio" element={<PermGuard perm="edit_portfolio" myPerms={myPerms}><StocksPage /></PermGuard>} />
-            <Route path="/stocks" element={<LegacyStocksRedirect />} />
-            <Route path="/agents" element={<PermGuard perm="manage_agents" myPerms={myPerms}><AgentsPage /></PermGuard>} />
-            <Route path="/history" element={<HistoryPage />} />
-            <Route path="/reports" element={<PermGuard perm="view_reports" myPerms={myPerms}><ReportsPage /></PermGuard>} />
-            <Route path="/shadow" element={<PermGuard perm="manage_shadow" myPerms={myPerms}><ShadowAccountPage /></PermGuard>} />
-            <Route path="/paper-trading" element={<PermGuard perm="manage_paper_trading" myPerms={myPerms}><PaperTradingPage /></PermGuard>} />
-            <Route path="/alerts" element={<PriceAlertsPage />} />
-            <Route path="/notifications" element={<NotificationsPage />} />
-            <Route path="/profile" element={<ProfilePage />} />
-            <Route path="/help" element={<HelpPage />} />
-            <Route path="/audit" element={getJwtRole() === 'owner' ? <AuditPage /> : <Navigate to="/" replace />} />
-            <Route path="/datasources" element={<PermGuard perm="manage_datasources" myPerms={myPerms}><DataSourcesPage /></PermGuard>} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/analysis/:symbol/:date" element={<AnalysisDetailPage />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
+              <Route path="/" element={<DashboardPage />} />
+              <Route path="/opportunities" element={<PermGuard perm="view_opportunities" myPerms={myPerms}><OpportunitiesPage /></PermGuard>} />
+              <Route path="/forecast" element={<PermGuard perm="view_forecast" myPerms={myPerms}><ForecastPage /></PermGuard>} />
+              <Route path="/index/:symbol" element={<IndexDetailPage />} />
+              <Route path="/portfolio" element={<PermGuard perm="edit_portfolio" myPerms={myPerms}><StocksPage /></PermGuard>} />
+              <Route path="/stocks" element={<LegacyStocksRedirect />} />
+              <Route path="/agents" element={<PermGuard perm="manage_agents" myPerms={myPerms}><AgentsPage /></PermGuard>} />
+              <Route path="/history" element={<HistoryPage />} />
+              <Route path="/reports" element={<PermGuard perm="view_reports" myPerms={myPerms}><ReportsPage /></PermGuard>} />
+              <Route path="/shadow" element={<PermGuard perm="manage_shadow" myPerms={myPerms}><ShadowAccountPage /></PermGuard>} />
+              <Route path="/paper-trading" element={<PermGuard perm="manage_paper_trading" myPerms={myPerms}><PaperTradingPage /></PermGuard>} />
+              <Route path="/alerts" element={<PriceAlertsPage />} />
+              <Route path="/notifications" element={<NotificationsPage />} />
+              <Route path="/profile" element={<ProfilePage />} />
+              <Route path="/help" element={<HelpPage />} />
+              <Route path="/audit" element={getJwtRole() === 'owner' ? <AuditPage /> : <Navigate to="/" replace />} />
+              <Route path="/datasources" element={<PermGuard perm="manage_datasources" myPerms={myPerms}><DataSourcesPage /></PermGuard>} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/analysis/:symbol/:date" element={<AnalysisDetailPage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
           </AppErrorBoundary>
 
         </Suspense>
