@@ -269,9 +269,10 @@ class AuditMiddleware(BaseHTTPMiddleware):
                     from src.web.api.auth import decode_token as _decode_token
                     payload = _decode_token(auth[7:])
                     if payload:
+                        # JWT payload: user_id 在 sub 字段, username 平级
                         user = {
-                            "user_id": payload.get("user_id"),
-                            "username": payload.get("username"),
+                            "user_id": payload.get("sub") or payload.get("user_id"),
+                            "username": payload.get("username") or "",
                         }
                 except Exception:
                     pass
