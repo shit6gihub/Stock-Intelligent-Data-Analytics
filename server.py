@@ -1682,6 +1682,12 @@ async def lifespan(app):
     except Exception:
         pass
     init_db()
+    # 2026-08-18: 主动连 Redis (之前只在 close() 路径释放,健康检查报 down)
+    try:
+        from src.web.cache.redis_client import redis_client as _rc
+        await _rc.connect()
+    except Exception as e:
+        logger.warning(f"[Redis] 启动连接失败,降级运行: {e}")
     setup_logging()
     setup_proxy()  # 设置进程 env 代理(HTTP_PROXY/NO_PROXY);所有 httpx(trust_env=True)据此走代理
     setup_ssl()
@@ -1838,6 +1844,10 @@ if os.path.exists(static_dir):
 
     @app.get("/{path:path}")
     async def serve_spa(path: str):
+        # /api/* 未注册的端点 → 返 404 JSON 而非 SPA HTML(避免前端 JSON.parse(HTML) 触发 ErrorBoundary)
+        if path.startswith("api/"):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=404, content={"code": 404, "success": False, "data": None, "message": f"API endpoint not found: /{path}"})
         file_path = os.path.join(static_dir, path)
         if os.path.isfile(file_path):
             return FileResponse(file_path)

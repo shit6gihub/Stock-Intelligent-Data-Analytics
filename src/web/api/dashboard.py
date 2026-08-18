@@ -530,3 +530,18 @@ def _extract_stocks(text: str) -> list[dict]:
             elif re.fullmatch(r"\d{6}", cells[i]) and re.fullmatch(r"[\u4e00-\u9fa5A-Za-z]{2,12}", cells[i + 1]):
                 _add(cells[i + 1], cells[i])
     return out
+
+
+# 2026-08-18: 根路径 alias (前端 fetch /api/dashboard 直接转发到 overview)
+@router.get("")
+def get_dashboard_root(
+    market: str = Query("ALL"),
+    action_limit: int = Query(6, ge=3, le=20),
+    risk_limit: int = Query(6, ge=3, le=20),
+    days: int = Query(45, ge=7, le=365),
+    db: Session = Depends(get_db),
+):
+    return get_dashboard_overview(
+        market=market, action_limit=action_limit,
+        risk_limit=risk_limit, days=days, db=db,
+    )

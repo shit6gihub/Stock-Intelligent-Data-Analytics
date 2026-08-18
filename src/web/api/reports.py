@@ -9,7 +9,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
+from sqlalchemy.orm import Session
+from src.web.database import get_db
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -183,3 +185,9 @@ async def get_report_content(
 
     content = _strip_meta(raw)
     return {"job_id": job_id, "file": file, "content": content}
+
+
+# 2026-08-18: 根路径 alias (前端 fetch /api/reports 直接转发到 /list)
+@router.get("")
+async def get_reports_root():
+    return await list_reports(limit=200)

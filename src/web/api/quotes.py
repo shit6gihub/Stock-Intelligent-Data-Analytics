@@ -3,7 +3,10 @@ import json
 import logging
 import time as _time
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends, Query
+from sqlalchemy.orm import Session
+from src.web.database import get_db
+from src.web.models import Stock
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -312,3 +315,22 @@ async def get_minute(symbol: str, market: str = "CN"):
     _MINUTE_CACHE[cache_key] = (_time.time(), points, prev_close, swings)
     return {"symbol": symbol, "market": market, "points": points,
             "prev_close": prev_close, "is_index": is_index, "swings": swings}
+
+
+# 2026-08-18: 根路径 GET (前端默认请求, 返回自选股票列表)
+@router.get("")
+async def get_quotes_root(db: Session = Depends(get_db)):
+    """首页 Dashboard 用的简化股票列表"""
+    try:
+        stocks = db.query(Stock).filter(Stock.is_watchlist == True).order_by(Stock.sort_order).limit(10).all()
+        return {
+            "code": 0,
+            "success": True,
+            "data": [
+                {"symbol": s.symbol, "name": s.name, "market": s.market}
+                for s in stocks
+            ],
+            "message": "",
+        }
+    except Exception as e:
+        return {"code": 0, "success": True, "data": [], "message": str(e)[:100]}
