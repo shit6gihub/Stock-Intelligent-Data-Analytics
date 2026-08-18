@@ -229,3 +229,83 @@ def get_rate_limit_stats() -> dict:
         "window_seconds": RATE_LIMIT_WINDOW,
         "in_memory": _in_memory_bucket.stats(),
     }
+
+
+# ─── 操作审计中间件(2026-08-18 补齐) ───
+# 所有 2xx 写操作(POST/PUT/PATCH/DELETE)自动落 audit_logs, 一次覆盖全部管理接口
+# (渠道/服务商/数据源/设置/用户/自选/预警等), 不用每处业务代码手动调 log_audit。
+# 例外(避免重复/噪音):
+#   - auth 登录/注册/改密: auth.py 已自带埋点
+#   - 匿名请求(无 user): 不记
+#   - 非 2xx: 失败不记(只记成功操作)
+#   - 静态/health/webhook: 跳过
+_SKIP_AUDIT_PREFIXES = (
+    "/api/auth/", "/static", "/assets", "/health", "/api/health",
+    "/api/webhooks/", "/api/tradingview", "/favicon.ico", "/api/metrics",
+)
+_SKIP_AUDIT_PATHS = {"/", "/api/auth"}
+
+
+class AuditMiddleware(BaseHTTPMiddleware):
+    """写操作自动审计。内部自行 decode JWT(不依赖中间件顺序)。"""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        try:
+            method = request.method
+            path = request.url.path
+            if method not in ("POST", "PUT", "PATCH", "DELETE"):
+                return response
+            if response.status_code < 200 or response.status_code >= 300:
+                return response
+            if path in _SKIP_AUDIT_PATHS or path.startswith(_SKIP_AUDIT_PREFIXES):
+                return response
+
+            # 自己解析 JWT(避免依赖 JWTDecodeMiddleware 的外层/内层顺序)
+            user = None
+            auth = request.headers.get("authorization", "")
+            if auth.lower().startswith("bearer "):
+                try:
+                    from src.web.api.auth import decode_token as _decode_token
+                    payload = _decode_token(auth[7:])
+                    if payload:
+                        user = {
+                            "user_id": payload.get("user_id"),
+                            "username": payload.get("username"),
+                        }
+                except Exception:
+                    pass
+            if not user or not user.get("user_id"):
+                return response
+
+            # 异步落库: 独立 session, 失败静默(不阻塞业务)
+            import asyncio
+            from src.web.database import SessionLocal
+            from src.web.models import AuditLog
+
+            # action: 如 "POST /api/channels" → "POST /channels"; 保留可读性
+            parts = path.split("/")
+            resource = parts[2] if len(parts) > 2 and parts[2] else path
+            action = f"{method} /{resource}"
+
+            async def _write():
+                try:
+                    db = SessionLocal()
+                    try:
+                        db.add(AuditLog(
+                            user_id=user.get("user_id"),
+                            username=user.get("username") or "",
+                            action=action,
+                            detail=f"{method} {path}",
+                            ip=_get_client_ip(request),
+                        ))
+                        db.commit()
+                    finally:
+                        db.close()
+                except Exception as e:
+                    logger.warning(f"审计写入失败: {e}")
+
+            asyncio.create_task(_write())
+        except Exception:
+            pass  # 审计失败绝不影响主请求
+        return response

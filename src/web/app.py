@@ -88,11 +88,18 @@ app.add_middleware(
 # - JWTDecodeMiddleware: 解析 JWT 放 request.state.user(给限流/日志用)
 # - RateLimitMiddleware: 基于 IP/user_id 限流(Redis 优先, 内存降级)
 # - RequestLoggerMiddleware: 结构化 JSON 日志(给 Loki 聚合)
-# 顺序: CORS(最外层) → 日志(看所有) → 限流 → JWT(最内, 共享给业务依赖)
-from src.web.middleware import JWTDecodeMiddleware, RateLimitMiddleware, RequestLoggerMiddleware
+# - AuditMiddleware (2026-08-18): 写操作自动审计(依赖 JWTDecode 先填充 state.user)
+# 顺序: CORS(最外层) → 日志(看所有) → 限流 → JWT(最内, 共享给业务依赖) → 审计(最内, 拿 user)
+from src.web.middleware import (
+    JWTDecodeMiddleware,
+    RateLimitMiddleware,
+    RequestLoggerMiddleware,
+    AuditMiddleware,
+)
 app.add_middleware(RequestLoggerMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(JWTDecodeMiddleware)
+app.add_middleware(AuditMiddleware)
 
 
 # ════════════════════════════════════════════════════════════════════
