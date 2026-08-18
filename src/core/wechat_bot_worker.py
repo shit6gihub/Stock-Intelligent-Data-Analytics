@@ -1,6 +1,6 @@
 """微信数智分析BOT 双向对话 worker。
 
-后台常驻协程: 对每个已绑定 openclaw 渠道(iLink 微信账号)长轮询 getupdates,
+后台常驻协程: 对每个已绑定 wechat_ilink 渠道(iLink 微信账号)长轮询 getupdates,
 收到用户消息 → 调 SIDA 对话助手(8000, 带数据工具)→ sendmessage 回复微信。
 
 由 server.py lifespan 启动(容器内自运行, 零外部依赖)。
@@ -107,7 +107,7 @@ def _persist_cfg(channel_id: int, **fields):
 
 
 def _load_accounts() -> list[tuple[int, str, dict]]:
-    """读取所有启用的 openclaw 渠道(扫码绑定的微信账号), 返回 (channel_id, user_id, config)。"""
+    """读取所有启用的 wechat_ilink 渠道(扫码绑定的微信账号), 返回 (channel_id, user_id, config)。"""
     try:
         from src.web.database import SessionLocal
         from src.web.models import NotifyChannel
@@ -116,7 +116,7 @@ def _load_accounts() -> list[tuple[int, str, dict]]:
         try:
             rows = (
                 db.query(NotifyChannel)
-                .filter(NotifyChannel.type == "openclaw", NotifyChannel.enabled.is_(True))
+                .filter(NotifyChannel.type == "wechat_ilink", NotifyChannel.enabled.is_(True))
                 .all()
             )
             result = []

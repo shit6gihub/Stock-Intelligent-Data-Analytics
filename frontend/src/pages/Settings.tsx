@@ -114,7 +114,7 @@ interface ChannelFieldDef {
   required?: boolean
 }
 
-const CHANNEL_TYPE_FIELDS: Record<string, { label: string; fields: ChannelFieldDef[] }> = {
+const CHANNEL_TYPE_FIELDS: Record<string, { label: string; fields: ChannelFieldDef[]; hint?: string }> = {
   telegram: {
     label: 'Telegram',
     fields: [
@@ -164,12 +164,10 @@ const CHANNEL_TYPE_FIELDS: Record<string, { label: string; fields: ChannelFieldD
       { key: 'topic', label: '群组编码', placeholder: '选填，群组推送时填写' },
     ],
   },
-  openclaw: {
+  wechat_ilink: {
     label: '个人微信(iLink 直连)',
-    fields: [
-      { key: 'webhook_url', label: 'Webhook 地址', placeholder: 'http://<hermes地址>:8644/webhooks/<订阅名>', required: true },
-      { key: 'secret', label: 'HMAC 密钥', placeholder: '订阅创建时返回的 Secret', secret: true, required: true },
-    ],
+    fields: [],
+    hint: '个人微信直通(腾讯官方 iLink 通道)。前往「设置 → 个人微信」扫码绑定即可，无需手填。',
   },
   discord: {
     label: 'Discord',
@@ -2462,7 +2460,7 @@ export default function SettingsPage() {
             <DialogDescription>配置通知推送方式</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 mt-2">
-            {channelForm.type !== 'openclaw' && (
+            {channelForm.type !== 'wechat_ilink' && (
               <div>
                 <Label>名称</Label>
                 <Input
@@ -2488,7 +2486,7 @@ export default function SettingsPage() {
                 </SelectContent>
               </Select>
             </div>
-            {channelForm.type === 'openclaw' ? (
+            {channelForm.type === 'wechat_ilink' ? (
               <div className="rounded-xl border border-border/50 bg-accent/20 p-4">
                 <div className="flex items-start gap-2.5">
                   <QrCode className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
@@ -2534,7 +2532,7 @@ export default function SettingsPage() {
             )}
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="ghost" onClick={() => setChannelDialogOpen(false)}>取消</Button>
-              {channelForm.type === 'openclaw' ? (
+              {channelForm.type === 'wechat_ilink' ? (
                 <Button onClick={() => void startWechatBind()} disabled={wechatBindStarting}>
                   {wechatBindStarting ? '发起中…' : '绑定个人微信'}
                 </Button>

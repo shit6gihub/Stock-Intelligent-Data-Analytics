@@ -89,7 +89,7 @@ const CHANNEL_TYPE_LABELS: Record<string, string> = {
   dingtalk: '钉钉',
   wecom: '企业微信',
   hermes: 'Hermes',
-  openclaw: '个人微信',
+  wechat_ilink: '个人微信',
   lark: '飞书',
   serverchan: 'Server酱',
   discord: 'Discord',

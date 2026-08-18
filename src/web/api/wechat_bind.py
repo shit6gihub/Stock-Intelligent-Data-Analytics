@@ -1,7 +1,7 @@
 """SIDA 扫码绑定个人微信(腾讯官方 iLink 直连) API。
 
 链路: 设置页扫码 -> fetch_qr() 出二维码 -> 微信扫码确认 -> poll_qr() 轮询
-      -> 凭证(token/base_url/user_id)存 notify_channels(type=openclaw) -> 推送走 _send_openclaw
+      -> 凭证(token/base_url/user_id)存 notify_channels(type=wechat_ilink) -> 推送走 _send_wechat_ilink
 
 凭证落 notify_channels.config: {account_id, token, base_url, user_id}
 不建新表。
@@ -21,12 +21,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/notify/wechat-bind")
 
-CHANNEL_TYPE = "openclaw"
+CHANNEL_TYPE = "wechat_ilink"
 CHANNEL_NAME = "个人微信(扫码绑定)"
 
 
 def _find_bound_channel(db: Session, user: User) -> NotifyChannel | None:
-    """当前用户扫码绑定的 openclaw 渠道(带 account_id+user_id 的)。"""
+    """当前用户扫码绑定的 wechat_ilink 渠道(带 account_id+user_id 的)。"""
     rows = (
         db.query(NotifyChannel)
         .filter(
@@ -59,7 +59,7 @@ async def bind_status(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """轮询扫码状态。成功后自动保存 openclaw 通知渠道(按 user 隔离)。"""
+    """轮询扫码状态。成功后自动保存 wechat_ilink 通知渠道(按 user 隔离)。"""
     try:
         result = await wechat_ilink.poll_qr(qrcode)
     except Exception as exc:
@@ -125,7 +125,7 @@ async def unbind(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """解除绑定(删除该用户扫码绑定的 openclaw 渠道)。"""
+    """解除绑定(删除该用户扫码绑定的 wechat_ilink 渠道)。"""
     channel = _find_bound_channel(db, user)
     if channel:
         db.delete(channel)

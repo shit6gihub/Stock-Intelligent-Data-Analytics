@@ -96,9 +96,9 @@ CHANNEL_TYPES = {
         "label": "Hermes 中转(企微/TG等)",
         "fields": ["webhook_url", "secret"],
     },
-    "openclaw": {
+    "wechat_ilink": {
         "label": "个人微信(iLink)",
-        "fields": ["webhook_url", "secret"],
+        "fields": [],
         "hint": "个人微信直通(腾讯官方 iLink 通道, 推送以「数智分析BOT」自称)。设置页扫码绑定即可, 无需手填。",
     },
     "lark": {
@@ -127,14 +127,14 @@ CHANNEL_TYPES = {
 _APPRISE_TYPES = {"telegram", "bark", "dingtalk", "lark", "discord", "pushover"}
 
 # 自定义实现的渠道类型（带代理或特殊需求）
-_CUSTOM_IMPL_TYPES = {"wecom", "serverchan", "pushplus", "hermes", "openclaw"}
+_CUSTOM_IMPL_TYPES = {"wecom", "serverchan", "pushplus", "hermes", "wechat_ilink"}
 
 _CUSTOM_REQUIRED_FIELDS = {
     "wecom": ("webhook_key",),
     "serverchan": ("sendkey",),
     "pushplus": ("token",),
     "hermes": ("webhook_url",),
-    "openclaw": ("webhook_url",),
+    "wechat_ilink": (),  # 扫码绑定写入 token/base_url/user_id, 无需手填校验
 }
 
 # 支持 Markdown 的渠道（不需要 sanitize）
@@ -410,8 +410,8 @@ class NotifierManager:
             return await self._send_pushplus(config, title, content)
         elif ch_type == "hermes":
             await self._send_hermes(config, title, content)
-        elif ch_type == "openclaw":
-            return await self._send_openclaw(config, title, content)
+        elif ch_type == "wechat_ilink":
+            return await self._send_wechat_ilink(config, title, content)
         else:
             logger.warning(f"未知的自定义渠道类型: {ch_type}")
 
@@ -535,7 +535,7 @@ class NotifierManager:
                 raise RuntimeError(f"Hermes 中转未送达: {data}")
             logger.info(f"Hermes 中转通知发送成功: {title}")
 
-    async def _send_openclaw(self, config: dict, title: str, content: str):
+    async def _send_wechat_ilink(self, config: dict, title: str, content: str):
         """个人微信 iLink 直连发送(腾讯官方通道)。
 
         config 由扫码绑定写入: token/base_url/user_id/context_token。
@@ -592,7 +592,7 @@ class NotifierManager:
                     row = (
                         db.query(NotifyChannel)
                         .filter(
-                            NotifyChannel.type == "openclaw",
+                            NotifyChannel.type == "wechat_ilink",
                             NotifyChannel.config["user_id"].astext == config.get("user_id", ""),
                         )
                         .first()
