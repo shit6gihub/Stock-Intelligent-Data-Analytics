@@ -1771,7 +1771,7 @@ export default function StocksPage() {
               <RefreshCw className={`w-4 h-4 ${quotesLoading ? 'animate-spin' : ''}`} />
               刷新
             </Button>
-            <Button variant="secondary" onClick={scanAndReload} disabled={scanning}>
+            <Button variant="secondary" onClick={() => void scanAndReload()} disabled={scanning}>
               <Bot className="w-4 h-4" /> 扫描
             </Button>
             <Button variant="secondary" onClick={() => openAccountDialog()}>
@@ -1789,7 +1789,7 @@ export default function StocksPage() {
             <Button variant="secondary" size="sm" className="h-8 w-8 p-0" onClick={handleRefresh} disabled={quotesLoading}>
               <RefreshCw className={`w-4 h-4 ${quotesLoading ? 'animate-spin' : ''}`} />
             </Button>
-            <Button variant="secondary" size="sm" className="h-8 w-8 p-0" onClick={scanAndReload} disabled={scanning}>
+            <Button variant="secondary" size="sm" className="h-8 w-8 p-0" onClick={() => void scanAndReload()} disabled={scanning}>
               <Bot className="w-4 h-4" />
             </Button>
             <Button variant="secondary" size="sm" className="h-8 w-8 p-0" onClick={() => openAccountDialog()}>
