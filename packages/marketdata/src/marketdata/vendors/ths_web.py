@@ -63,8 +63,17 @@ def _market_code(symbol: Symbol) -> str | None:
     return None
 
 
+class _ThsBlockedError(RuntimeError):
+    """同花顺对当前出口 IP 的访问被拒绝(403)。raise 让 Engine 跳过本 vendor。
+
+    Engine 对 vendor.fetch 抛出的 403 会识别为 rate-limit/credential 类错误,
+    直接跳到下一个源;不再 per-symbol 逐个 403(每只股票一次无用请求)。
+    """
+
+
 def _fuyao_post(path: str, payload: dict) -> str:
     """fuyao 接口 POST(fuyao 需 POST + JSON body,market_get 只支持 GET)。"""
+    import urllib.error
     import urllib.request
 
     req = urllib.request.Request(
@@ -77,20 +86,31 @@ def _fuyao_post(path: str, payload: dict) -> str:
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=12) as r:
-        return r.read().decode("utf-8", errors="ignore")
+    try:
+        with urllib.request.urlopen(req, timeout=12) as r:
+            return r.read().decode("utf-8", errors="ignore")
+    except urllib.error.HTTPError as e:
+        if e.code == 403:
+            raise _ThsBlockedError(f"同花顺拒绝访问(HTTP 403): {path}") from e
+        raise
 
 
 def _ths_get(url: str) -> str:
     """直接 GET(不走 market_get,避免系统代理导致 403)。"""
+    import urllib.error
     import urllib.request
 
     req = urllib.request.Request(url, headers={
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/122.0",
         "Referer": "https://www.10jqka.com.cn/",
     })
-    with urllib.request.urlopen(req, timeout=12) as r:
-        return r.read().decode("utf-8", errors="ignore")
+    try:
+        with urllib.request.urlopen(req, timeout=12) as r:
+            return r.read().decode("utf-8", errors="ignore")
+    except urllib.error.HTTPError as e:
+        if e.code == 403:
+            raise _ThsBlockedError(f"同花顺拒绝访问(HTTP 403): {url}") from e
+        raise
 
 
 def _f(v) -> float | None:
@@ -150,6 +170,10 @@ class ThsQuoteVendor(QuoteVendor):
                     volume=_f(vals.get(_F_VOL)),
                     turnover=_f(vals.get(_F_AMT)),
                 ))
+            except _ThsBlockedError:
+                # 同花顺 403: 整个源不可用, 立即上抛让 Engine 跳过本 vendor
+                # (不再 per-symbol 逐个 403 浪费 14 次无用请求)
+                raise
             except Exception as e:
                 logger.warning(f"[ths_quote] {symbol.code} 失败: {e}")
         return quotes
