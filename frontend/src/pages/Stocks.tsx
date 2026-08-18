@@ -1079,11 +1079,12 @@ export default function StocksPage() {
   }, [agentDialogStock, agents, schedulePreviewCache, schedulePreviewLoading])
 
   // 触发扫描：调用盘中监控扫描，并刷新建议池
-  const scanAndReload = useCallback(async () => {
+  // 2026-08-18 fix: analyze=false 默认(不调 LLM,5.9s 完成), 用户可手动点"AI 分析"
+  const scanAndReload = useCallback(async (analyze = false) => {
     setScanning(true)
     try {
-      const url = '/agents/intraday/scan?analyze=true'
-      await fetchAPI(url, { method: 'POST' })
+      const url = `/agents/intraday/scan?analyze=${analyze}`
+      await fetchAPI(url, { method: 'POST', timeoutMs: analyze ? 120000 : 30000 })
       await loadPoolSuggestions()
       await refreshKlines()
       setLastRefreshTime(new Date())
