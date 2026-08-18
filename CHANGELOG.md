@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-08-18
+
+### fix — 生产稳定性 + 微信通道重构 (v0.2.65.4)
+
+**ths_web 403 熔断(修复生产 42s 卡死 + 403 风暴)**:
+- `_fuyao_post`/`_ths_get` 遇 HTTP 403 抛 `_ThsBlockedError`,Engine 识别后直接跳过整个源
+- 不再 per-symbol 逐个 403 浪费 14 次无用请求(此前 254 次/10min 拖垮事件循环)
+
+**个人微信通道彻底移除 OpenClaw, 全链路 iLink 直连**:
+- 渠道类型标识 `openclaw` → `wechat_ilink`(notifier / wechat_bind / wechat_bot_worker)
+- 移除 openclaw 的 `webhook_url` 必填校验(iLink 扫码绑定自动写入 token/base_url/user_id)
+- `_send_openclaw` → `_send_wechat_ilink`
+- 前端 Settings/Notifications 类型标识与表单同步改 `wechat_ilink`, fields 置空引导扫码
+- DB 迁移: notify_channels.type `openclaw` → `wechat_ilink`, 清理重复渠道
+
 ## 2026-08-17
 
 ### feat(infra) — 基础设施层 Phase 1 (v0.2.65)
