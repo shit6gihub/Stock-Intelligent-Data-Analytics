@@ -6,6 +6,13 @@
 #   --build-arg NODE_IMAGE=node:20-alpine --build-arg PYTHON_IMAGE=python:3.11-slim
 ARG NODE_IMAGE=docker.m.daocloud.io/library/node:20-alpine
 ARG PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.11-slim
+# thsdk(同花顺 L2 私有 SDK, amd64 二进制)vendor 镜像: 不进 git(public 仓库防泄露),
+# 构建时 COPY --from 引入。固定 linux/amd64(仅 amd64 有二进制); arm64 主镜像里
+# .so 无法加载, 由 auction/orderbook/wencai 端点的懒加载 try/except 优雅降级。
+ARG THSDK_IMAGE=ghcr.io/xiaoze-hub/thsdk-vendor:v1.7.18
+
+# ===== Stage 0: thsdk vendor(私有二进制, 固定 amd64) =====
+FROM --platform=linux/amd64 ${THSDK_IMAGE} AS thsdk-vendor
 
 # ===== Stage 1: 前端构建 =====
 FROM ${NODE_IMAGE} AS frontend-builder
@@ -126,6 +133,8 @@ RUN pip install --no-cache-dir --timeout 300 --retries 8 -i https://mirrors.aliy
 # 复制后端代码
 COPY src/ ./src/
 COPY data_source/ ./data_source/
+# thsdk L2 SDK(从 vendor 阶段复制; arm64 上 .so 加载失败时各端点懒加载降级)
+COPY --from=thsdk-vendor /thsdk/ /usr/local/lib/python3.11/site-packages/thsdk/
 COPY server.py ./
 COPY prompts/ ./prompts/
 COPY strategies/ ./strategies/
