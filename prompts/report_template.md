@@ -152,7 +152,7 @@
 
 ## 与 daily_stock_analysis 的差异
 
-| 维度 | daily_stock_analysis | PanWatch(借鉴版) |
+| 维度 | daily_stock_analysis | SIDA(借鉴版) |
 |------|----------------------|------------------|
 | 模板引擎 | Jinja2 + Python | 直接 Markdown 文本(LLM 输出) |
 | 报告生成 | 程序填充字段 | LLM 生成 + 模板约束 |

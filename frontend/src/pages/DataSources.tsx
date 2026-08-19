@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Pencil, Play, Database, Newspaper, LineChart, TrendingUp, DollarSign, Image, Layers, Zap, Check, X, Clock, Trash2, ChevronUp, ChevronDown, ChevronRight, Eye, EyeOff, RotateCcw, AlertTriangle, BarChart3, Trophy, Landmark, Users, Gift, ArrowLeftRight } from 'lucide-react'
+import { Pencil, Play, Database, Newspaper, LineChart, TrendingUp, DollarSign, Layers, Zap, Check, X, Clock, Trash2, ChevronUp, ChevronDown, ChevronRight, Eye, EyeOff, RotateCcw, AlertTriangle, BarChart3, Trophy, Landmark, Users, Gift, ArrowLeftRight } from 'lucide-react'
 import { fetchAPI, resetDataSourcesToSeed, type DataSource } from '@panwatch/api'
 import { Input } from '@panwatch/base-ui/components/ui/input'
 import { Label } from '@panwatch/base-ui/components/ui/label'
@@ -30,7 +30,7 @@ interface TestResult {
   count: number
   duration_ms: number
   error?: string
-  items?: unknown[] | { image?: string }  // array for most types, object for chart
+  items?: unknown[]
   logs: TestLogItem[]
 }
 
@@ -45,12 +45,11 @@ interface DataSourceForm {
 }
 
 const DATASOURCE_TYPES = {
-  news: { label: '新闻资讯', icon: Newspaper, color: 'text-blue-500' },
+  news: { label: '新闻资讯', icon: Newspaper, color: 'text-blue-600' },
   kline: { label: 'K线数据', icon: LineChart, color: 'text-orange-500' },
   capital_flow: { label: '资金流向', icon: DollarSign, color: 'text-yellow-500' },
-  quote: { label: '实时行情', icon: TrendingUp, color: 'text-emerald-500' },
+  quote: { label: '实时行情', icon: TrendingUp, color: 'text-emerald-700' },
   events: { label: '事件日历', icon: Layers, color: 'text-violet-500' },
-  chart: { label: 'K线截图', icon: Image, color: 'text-purple-500' },
   flash_news: { label: '快讯', icon: Zap, color: 'text-amber-500' },
   fundamentals: { label: '基本面', icon: BarChart3, color: 'text-indigo-500' },
   dragon_tiger: { label: '龙虎榜', icon: Trophy, color: 'text-red-500' },
@@ -68,7 +67,6 @@ const DATASOURCE_CATEGORIES: { key: string; label: string; types: string[] }[] =
   { key: 'news', label: '资讯 & 快讯', types: ['news', 'flash_news', 'events'] },
   { key: 'fundamentals', label: '基本面 & 财务', types: ['fundamentals'] },
   { key: 'capital', label: '资金 & 市场面', types: ['capital_flow', 'board_capital_flow', 'market_capital_flow', 'dragon_tiger', 'margin', 'shareholders', 'northbound', 'dividend'] },
-  { key: 'chart', label: '图表', types: ['chart'] },
 ]
 
 // 兜底:未被以上分类覆盖的 type 归入"其他"(防止将来新增 type 时漏显示)
@@ -120,7 +118,7 @@ export default function DataSourcesPage() {
 
   const load = async () => {
     try {
-      const data = await fetchAPI<DataSource[]>('/datasources')
+      const data = await fetchAPI<DataSource[]>('/datasources', { cacheMode: 'reload' })
       setSources(data)
     } catch (e) {
       console.error(e)
@@ -272,7 +270,7 @@ export default function DataSourcesPage() {
                       <div className="flex items-center gap-2">
                         <span className="text-[13px] font-medium text-foreground">{source.name}</span>
                         {source.supports_batch && (
-                          <span className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                          <span className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-700">
                             <Layers className="w-2.5 h-2.5" />
                             批量
                           </span>
@@ -282,7 +280,7 @@ export default function DataSourcesPage() {
                         <span className="text-[11px] text-muted-foreground font-mono">{source.provider}</span>
                         <span className="text-[11px] text-muted-foreground">优先级: {source.priority}</span>
                         {source.engine_attached ? (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">已接入新引擎</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-700">已接入新引擎</span>
                         ) : (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">旧路·待迁移</span>
                         )}
@@ -468,7 +466,7 @@ export default function DataSourcesPage() {
 
             <div className="flex justify-between gap-2 pt-2">
               {editId ? (
-                <Button variant="ghost" className="text-red-500 hover:text-red-600" onClick={deleteSource}>
+                <Button variant="ghost" className="text-red-600 hover:text-red-700" onClick={deleteSource}>
                   <Trash2 className="w-4 h-4 mr-1" />删除
                 </Button>
               ) : <span />}
@@ -490,9 +488,9 @@ export default function DataSourcesPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {testResult?.test_passed ? (
-                <Check className="w-5 h-5 text-emerald-500" />
+                <Check className="w-5 h-5 text-emerald-700 dark:text-emerald-700" />
               ) : (
-                <X className="w-5 h-5 text-red-500" />
+                <X className="w-5 h-5 text-red-600" />
               )}
               测试结果 - {testResult?.source_name}
             </DialogTitle>
@@ -507,7 +505,7 @@ export default function DataSourcesPage() {
             <div className="flex items-center gap-4 p-3 rounded-lg bg-accent/30">
               <div className="flex-1">
                 <div className="text-[11px] text-muted-foreground">状态</div>
-                <div className={`text-[13px] font-medium ${testResult?.test_passed ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'}`}>
+                <div className={`text-[13px] font-medium ${testResult?.test_passed ? 'text-emerald-600 dark:text-emerald-700' : 'text-red-600'}`}>
                   {testResult?.test_passed ? '测试成功' : '测试失败'}
                 </div>
               </div>
@@ -524,7 +522,7 @@ export default function DataSourcesPage() {
             {/* Error message */}
             {testResult?.error && (
               <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-                <div className="text-[11px] text-red-500 font-medium mb-1">错误信息</div>
+                <div className="text-[11px] text-red-600 font-medium mb-1">错误信息</div>
                 <div className="text-[12px] text-red-600 dark:text-red-400 break-words whitespace-pre-wrap">{testResult.error}</div>
               </div>
             )}
@@ -541,9 +539,9 @@ export default function DataSourcesPage() {
                     <div key={i} className="flex items-start gap-2 p-2 rounded-lg bg-accent/30 text-[11px]">
                       <span className="text-muted-foreground font-mono flex-shrink-0">{log.timestamp}</span>
                       <span className={`px-1 py-0.5 rounded text-[10px] flex-shrink-0 ${
-                        log.action === 'start' ? 'bg-blue-500/10 text-blue-500' :
-                        log.action === 'success' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' :
-                        'bg-red-500/10 text-red-500'
+                        log.action === 'start' ? 'bg-blue-500/10 text-blue-600' :
+                        log.action === 'success' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-700' :
+                        'bg-red-500/10 text-red-600'
                       }`}>
                         {log.action === 'start' ? '开始' : log.action === 'success' ? '成功' : '失败'}
                       </span>
@@ -558,18 +556,8 @@ export default function DataSourcesPage() {
             )}
 
             {/* Data Preview */}
-            {/* Chart type - show image outside scrollable area */}
-            {testResult?.test_passed && testResult.source_type === 'chart' && (testResult.items as {image?: string})?.image && (
-              <div>
-                <div className="text-[12px] font-medium text-foreground mb-2">数据预览</div>
-                <div className="rounded-lg overflow-hidden border">
-                  <img src={(testResult.items as {image: string}).image} alt="K线图截图" className="w-full" />
-                </div>
-              </div>
-            )}
-
             {/* Other data types - in scrollable container */}
-            {testResult?.test_passed && testResult.items && testResult.source_type !== 'chart' && Array.isArray(testResult.items) && testResult.items.length > 0 && (
+            {testResult?.test_passed && testResult.items && Array.isArray(testResult.items) && testResult.items.length > 0 && (
               <div>
                 <div className="text-[12px] font-medium text-foreground mb-2">数据预览</div>
                 <div className="space-y-1.5 max-h-60 overflow-y-auto">
@@ -606,7 +594,7 @@ export default function DataSourcesPage() {
                         <div className="flex items-center gap-3">
                           <span className="text-[12px] font-mono">{quoteItem.price?.toFixed(2)}</span>
                           <span className={`text-[11px] font-medium ${
-                            (quoteItem.change_pct ?? 0) > 0 ? 'text-red-500' : (quoteItem.change_pct ?? 0) < 0 ? 'text-green-500' : 'text-muted-foreground'
+                            (quoteItem.change_pct ?? 0) > 0 ? 'text-red-600' : (quoteItem.change_pct ?? 0) < 0 ? 'text-green-700' : 'text-muted-foreground'
                           }`}>
                             {(quoteItem.change_pct ?? 0) > 0 ? '+' : ''}{quoteItem.change_pct?.toFixed(2)}%
                           </span>
@@ -668,7 +656,7 @@ export default function DataSourcesPage() {
                         <span className="text-[12px] font-medium text-foreground">{flowItem.name || flowItem.symbol}</span>
                         <div className="flex items-center gap-3">
                           <span className={`text-[12px] font-mono ${
-                            (flowItem.main_net ?? 0) > 0 ? 'text-red-500' : 'text-green-500'
+                            (flowItem.main_net ?? 0) > 0 ? 'text-red-600' : 'text-green-700'
                           }`}>
                             {(flowItem.main_net ?? 0) > 0 ? '+' : ''}{((flowItem.main_net ?? 0) / 10000).toFixed(2)}万
                           </span>
@@ -687,7 +675,7 @@ export default function DataSourcesPage() {
                       <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-accent/30">
                         <span className="text-[12px] font-medium text-foreground">{dtItem.name || dtItem.symbol}</span>
                         <span className={`text-[12px] font-mono ${
-                          (dtItem.net_buy ?? 0) > 0 ? 'text-red-500' : 'text-green-500'
+                          (dtItem.net_buy ?? 0) > 0 ? 'text-red-600' : 'text-green-700'
                         }`}>
                           {(dtItem.net_buy ?? 0) > 0 ? '+' : ''}{((dtItem.net_buy ?? 0) / 10000).toFixed(2)}万
                         </span>
@@ -745,7 +733,7 @@ export default function DataSourcesPage() {
                         <span className="text-[12px] font-medium text-foreground">{nbItem.date}</span>
                         <div className="flex items-center gap-3">
                           <span className={`text-[12px] font-mono ${
-                            (nbItem.total_net ?? 0) > 0 ? 'text-red-500' : 'text-green-500'
+                            (nbItem.total_net ?? 0) > 0 ? 'text-red-600' : 'text-green-700'
                           }`}>
                             {(nbItem.total_net ?? 0) > 0 ? '+' : ''}{((nbItem.total_net ?? 0) / 10000).toFixed(2)}万
                           </span>

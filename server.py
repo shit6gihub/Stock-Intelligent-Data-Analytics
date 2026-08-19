@@ -3,6 +3,7 @@
 import logging
 import os
 import time
+import asyncio
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -27,6 +28,8 @@ from src.core.scheduler import AgentScheduler
 from src.core.price_alert_scheduler import PriceAlertScheduler
 from src.core.paper_trading_scheduler import PaperTradingScheduler
 from src.core.context_scheduler import ContextMaintenanceScheduler
+from src.core.report_scheduler import ReportScheduler
+from src.core.kline_backfill_scheduler import KlineBackfillScheduler
 from src.core.agent_runs import record_agent_run
 from src.core.log_context import install_log_record_factory, log_context
 from src.core.agent_catalog import (
@@ -52,6 +55,14 @@ scheduler: AgentScheduler | None = None
 price_alert_scheduler: PriceAlertScheduler | None = None
 paper_trading_scheduler: PaperTradingScheduler | None = None
 context_maintenance_scheduler: ContextMaintenanceScheduler | None = None
+report_scheduler: ReportScheduler | None = None
+kline_backfill_scheduler: KlineBackfillScheduler | None = None
+
+# 2026-08-17 加股 60s 快速 backfill:
+# APScheduler 跑在它自己的后台线程(没 asyncio loop),
+# 但 server.py 跑在 uvicorn 的 asyncio loop 里,
+# 需要把 loop 暴露给 kline_backfill_scheduler 用于跨线程调度。
+_kline_oneoff_loop: asyncio.AbstractEventLoop | None = None
 
 
 def apply_proxy_env(proxy: str | None) -> None:
@@ -1508,8 +1519,13 @@ async def trigger_agent_for_stock(
     suppress_notify: bool = False,
     trace_id: str | None = None,
     force_refresh: bool = False,
+    user_id: str | None = None,
 ) -> dict:
-    """手动触发 Agent 执行（单只股票）"""
+    """手动触发 Agent 执行（单只股票）
+
+    user_id: 触发用户 id(手动触发传入; 系统调度不传)。传入时注入 context.user,
+    Agent 场景绑定走用户级模型解析(BYOK/平台授权, 见 agents/base.apply_scene_binding)。
+    """
     start = time.monotonic()
     trace_id = trace_id or f"man-{agent_name}-{stock.symbol}-{int(time.time() * 1000)}"
     agent_cls = AGENT_REGISTRY.get(agent_name)
@@ -1554,6 +1570,36 @@ async def trigger_agent_for_stock(
     # AgentContext 不强制声明此字段,通过 setattr 注入,其他 agent 不受影响。
     setattr(context, "_trace_id", trace_id)
     setattr(context, "_force_refresh", force_refresh)
+
+    # 用户级模型解析(2026-08-16): 手动触发带 user_id → 注入 context.user,
+    # apply_scene_binding 走 BYOK/平台授权(子用户只能用被授权模型)。
+    # 后台线程执行, ORM 对象跨线程不安全 → 只传 id, 此处重新加载后立即关闭会话
+    # (permissions 为普通列, 加载后随实例走, 脱离会话可读)。
+    if user_id:
+        try:
+            from src.web.database import SessionLocal
+            from src.web.models import User as _User
+
+            _db = SessionLocal()
+            try:
+                context.user = _db.query(_User).filter(_User.id == user_id).first()
+                # 授权预检(2026-08-16): 解析器返回 None = 用户被禁用全部模型
+                # (deny_all / granted 空列表 / 授权模型已删 / demo)。
+                # 此时必须拦截 —— 否则 apply_scene_binding 无绑定会保留全局
+                # client, 被禁用户越权使用平台模型。
+                if context.user is not None:
+                    from src.core.ai_client import get_model_for_scene
+
+                    if get_model_for_scene(_db, "chat", user=context.user) is None:
+                        return {
+                            "skipped": True,
+                            "content": "管理员未给当前用户授权任何 AI 模型,无法执行 AI 分析。请联系管理员在「用户管理 → 模型授权」中配置。",
+                            "trace_id": trace_id,
+                        }
+            finally:
+                _db.close()
+        except Exception:
+            logger.exception(f"加载触发用户失败(忽略, 回落系统级模型): user_id={user_id}")
 
     # 创建 agent，支持手动触发参数。TradingAgents 等新 agent 从 AgentConfig 读 config。
     if agent_name == "intraday_monitor":
@@ -1636,6 +1682,12 @@ async def lifespan(app):
     except Exception:
         pass
     init_db()
+    # 2026-08-18: 主动连 Redis (之前只在 close() 路径释放,健康检查报 down)
+    try:
+        from src.web.cache.redis_client import redis_client as _rc
+        await _rc.connect()
+    except Exception as e:
+        logger.warning(f"[Redis] 启动连接失败,降级运行: {e}")
     setup_logging()
     setup_proxy()  # 设置进程 env 代理(HTTP_PROXY/NO_PROXY);所有 httpx(trust_env=True)据此走代理
     setup_ssl()
@@ -1684,7 +1736,8 @@ async def lifespan(app):
 
     threading.Thread(target=refresh_stock_cache, daemon=True).start()
 
-    global scheduler, price_alert_scheduler, paper_trading_scheduler, context_maintenance_scheduler
+    global scheduler, price_alert_scheduler, paper_trading_scheduler, context_maintenance_scheduler, kline_backfill_scheduler, _kline_oneoff_loop
+    _kline_oneoff_loop = asyncio.get_running_loop()  # 跨线程调度用
     scheduler = build_scheduler()
     scheduler.start()
     logger.info("Agent 调度器已启动")
@@ -1720,7 +1773,40 @@ async def lifespan(app):
         logger.info("上下文维护调度器已启动")
     except Exception as e:
         logger.error(f"上下文维护调度器启动失败: {e}")
+    # SIDA 内置报告生成器(盘前 8:30 / 盘后 15:30, 周一至五)
+    try:
+        settings = Settings()
+        report_scheduler = ReportScheduler(timezone=settings.app_timezone)
+        report_scheduler.start()
+        logger.info("SIDA 报告调度器已启动")
+    except Exception as e:
+        logger.error(f"SIDA 报告调度器启动失败: {e}")
+    # K线每日 backfill(收盘后 18:00, 周一至五, 拉最近 2 天)
+    try:
+        settings = Settings()
+        kline_backfill_scheduler = KlineBackfillScheduler(
+            timezone=settings.app_timezone
+        )
+        kline_backfill_scheduler.start()
+    except Exception as e:
+        logger.error(f"K线入库调度器启动失败: {e}")
+
+    # 微信数智分析BOT worker: 长轮询 getupdates, 微信消息 → AI 回复 → 回微信
+    try:
+        from src.core.wechat_bot_worker import wechat_bot_worker
+
+        app.state.wechat_bot_task = asyncio.create_task(wechat_bot_worker(), name="wechat-bot-worker")
+        logger.info("微信数智分析BOT worker 已启动")
+    except Exception as e:
+        logger.error(f"微信数智分析BOT worker 启动失败: {e}")
     yield
+    # 2026-08-17 v0.2.65: Redis 客户端关闭
+    try:
+        from src.web.cache.redis_client import redis_client as _redis_close
+        await _redis_close.close()
+    except Exception:
+        pass
+
     if scheduler:
         scheduler.shutdown()
         logger.info("Agent 调度器已关闭")
@@ -1733,6 +1819,11 @@ async def lifespan(app):
     if context_maintenance_scheduler:
         context_maintenance_scheduler.shutdown()
         logger.info("上下文维护调度器已关闭")
+    if report_scheduler:
+        report_scheduler.shutdown()
+        logger.info("SIDA 报告调度器已关闭")
+    if kline_backfill_scheduler:
+        kline_backfill_scheduler.shutdown()
 
 
 # 模块级 app 实例，供 uvicorn reload 使用
@@ -1753,6 +1844,10 @@ if os.path.exists(static_dir):
 
     @app.get("/{path:path}")
     async def serve_spa(path: str):
+        # /api/* 未注册的端点 → 返 404 JSON 而非 SPA HTML(避免前端 JSON.parse(HTML) 触发 ErrorBoundary)
+        if path.startswith("api/"):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=404, content={"code": 404, "success": False, "data": None, "message": f"API endpoint not found: /{path}"})
         file_path = os.path.join(static_dir, path)
         if os.path.isfile(file_path):
             return FileResponse(file_path)

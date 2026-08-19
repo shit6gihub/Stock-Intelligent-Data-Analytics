@@ -69,7 +69,9 @@ def build_darkflow_response(symbol_code: str) -> dict:
         "main_net": dark.get("main_net"),
         "big_net": dark.get("big_net"),
         "mid_net": dark.get("mid_net"),
-        "retail_net": dark.get("retail_net"),
+        # 散户净额: dark_flow 的 result 字段名是 small_net(2026-08-15 修复:
+        # 之前读 retail_net → None → 前端显示 "--", 信息不全)
+        "retail_net": dark.get("small_net", dark.get("retail_net")),
         "main_intensity": dark.get("main_intensity"),
         "main_buy_ratio": dark.get("main_buy_ratio"),
         "signal": dark.get("signal"),

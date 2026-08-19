@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { TrendingUp, LineChart, RefreshCw, Activity, Download, History, FileText, Send } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
-import { fetchAPI, stocksApi, type StockItem } from '@panwatch/api'
+import { fetchAPI, getToken, stocksApi, type StockItem } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Input } from '@panwatch/base-ui/components/ui/input'
 import { Label } from '@panwatch/base-ui/components/ui/label'
@@ -183,9 +183,9 @@ function ModelDivergenceChart({ result }: { result: PredictResult }) {
 }
 
 export default function ForecastPage() {
-  const [symbol, setSymbol] = useState('002361')
+  const [symbol, setSymbol] = useState('')
   const [days] = useState(5)
-  const [searchText, setSearchText] = useState('神剑股份')
+  const [searchText, setSearchText] = useState('')
   const [searchResults, setSearchResults] = useState<{ symbol: string; name: string }[]>([])
   const [stockName, setStockName] = useState('')
   const [targetDate, setTargetDate] = useState('')
@@ -207,6 +207,8 @@ export default function ForecastPage() {
   const [reportLoading, setReportLoading] = useState(false)
   const [backtestReport, setBacktestReport] = useState<BacktestReport | null>(null)
   const [showDetail, setShowDetail] = useState(false)
+  const [modelWeights, setModelWeights] = useState<Record<string, number> | null>(null)
+  const [weightsSource, setWeightsSource] = useState('')
   const { toast } = useToast()
 
   // 股票搜索(输入名称/代码) — 用 数智分析 自带 /stocks/search(返回 list)
@@ -287,7 +289,45 @@ export default function ForecastPage() {
     }
   }
 
+  // 导出历史预测 CSV(/api/export/predictions, 带 token 直接 fetch blob)
+  const exportPredictions = async () => {
+    try {
+      const token = getToken()
+      const res = await fetch('/api/export/predictions', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `预测记录_${new Date().toISOString().slice(0, 10)}.csv`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      toast('预测记录已导出', 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '导出失败', 'error')
+    }
+  }
+
   useEffect(() => { loadHistory() }, [])
+
+  // 运行时拉取模型权重(权重透明度: 后端按历史回测命中率动态调整)
+  // 失败时回退硬编码默认(见下方渲染处的 fallback), 不阻塞页面
+  useEffect(() => {
+    let cancelled = false
+    fetchAPI<{ weights: Record<string, number>; source?: string }>('/forecast/weights')
+      .then(d => {
+        if (!cancelled && d?.weights) {
+          setModelWeights(d.weights)
+          setWeightsSource(d.source || '')
+        }
+      })
+      .catch(() => { /* 引擎未起/接口未就绪: 保留硬编码 fallback */ })
+    return () => { cancelled = true }
+  }, [])
 
   // 检测引擎状态(可手动刷新调用)
   const checkEngine = () => {
@@ -474,7 +514,7 @@ export default function ForecastPage() {
   }
 
   const dirColor = (dir: string) =>
-    dir === 'up' ? 'text-red-500' : dir === 'down' ? 'text-green-500' : 'text-gray-500'
+    dir === 'up' ? 'text-red-600' : dir === 'down' ? 'text-green-700' : 'text-gray-500'
 
   // 到期对照: 仅当后端 /forecast/history 返回 outcome 字段时展示该列(见 ForecastHistoryItem 的 TODO)
   const historyHasOutcome = history.some(
@@ -492,7 +532,7 @@ export default function ForecastPage() {
     const hit = h.outcome_status === 'hit' || (!h.outcome_status && h.direction === actualDir && actualDir !== 'flat')
     const pct = h.outcome_return_pct
     return (
-      <span className={hit ? 'text-green-500' : 'text-red-500'}>
+      <span className={hit ? 'text-green-700' : 'text-red-600'}>
         {hit ? '✓' : '✗'}{' '}
         <span className="font-mono text-xs">
           预测{typeof h.expected_pct === 'number' ? `${h.expected_pct > 0 ? '+' : ''}${h.expected_pct}%` : '-'}
@@ -531,8 +571,10 @@ export default function ForecastPage() {
         </div>
       </div>
 
+      {/* 三列工作台(设计蓝本): 输入(窄) | 结果/模型对比(宽); 移动端堆叠 */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
       {/* 输入区 */}
-      <div className="card p-4">
+      <div className="card p-4 xl:col-span-3">
         <div className="mb-3">
           <div className="text-lg font-bold">发起预测</div>
         </div>
@@ -617,7 +659,7 @@ export default function ForecastPage() {
 
       {/* 预测进度日志 */}
       {(loading || taskLogs.length > 0) && (
-        <div className="card p-4">
+        <div className="card p-4 xl:col-span-9">
           <div className="flex items-center gap-2 mb-2">
             <span className={`h-2.5 w-2.5 rounded-full ${taskStatus === 'done' ? 'bg-green-500' : taskStatus === 'error' ? 'bg-red-500' : 'bg-blue-500 animate-pulse'}`} />
             <span className="font-medium">
@@ -639,7 +681,7 @@ export default function ForecastPage() {
 
       {/* 预测结果 */}
       {result && (
-        <div className="card p-4">
+        <div className="card p-4 xl:col-span-9">
           <div className="mb-3">
             <div className="flex items-center justify-between">
               <span>预测结果：{result.symbol}{result.stock_name ? ` ${result.stock_name}` : ''}</span>
@@ -687,7 +729,7 @@ export default function ForecastPage() {
               <div className={`rounded-lg border px-4 py-3 ${result.direction === 'up' ? 'border-red-500/30 bg-red-500/5' : result.direction === 'down' ? 'border-green-500/30 bg-green-500/5' : 'border-gray-500/30 bg-gray-500/5'}`}>
                 <div className="flex items-center gap-2 mb-1">
                   <span className="font-bold text-lg">操作建议：{result.recommendation.action}</span>
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${result.recommendation.confidence === '高' ? 'bg-green-500/20 text-green-500' : result.recommendation.confidence === '中' ? 'bg-yellow-500/20 text-yellow-500' : 'bg-red-500/20 text-red-500'}`}>
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${result.recommendation.confidence === '高' ? 'bg-green-500/20 text-green-700' : result.recommendation.confidence === '中' ? 'bg-yellow-500/20 text-yellow-500' : 'bg-red-500/20 text-red-600'}`}>
                     置信度{result.recommendation.confidence}
                   </span>
                 </div>
@@ -695,20 +737,21 @@ export default function ForecastPage() {
                   {/* 反AI模板⑤: 目标价/预期均为模型输出,标签带"模型"限定 */}
                   <span>模型目标价：<span className="font-num font-bold text-foreground tabular-nums">{result.recommendation.target_price}</span></span>
                   <span>止损参考：<span className="font-num font-bold text-foreground tabular-nums">{result.recommendation.stop_loss}</span></span>
-                  <span>模型预期：<span className={`font-num font-bold tabular-nums ${result.expected_pct >= 0 ? 'text-red-500' : 'text-green-500'}`}>{result.expected_pct > 0 ? '+' : ''}{result.expected_pct}%</span></span>
+                  <span>模型预期：<span className={`font-num font-bold tabular-nums ${result.expected_pct >= 0 ? 'text-red-600' : 'text-green-700'}`}>{result.expected_pct > 0 ? '+' : ''}{result.expected_pct}%</span></span>
                   {result.recommendation.risk_note && <span className="text-amber-500">{result.recommendation.risk_note}</span>}
                 </div>
               </div>
             )}
 
             {/* 预测价格序列 */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div>
               <div className="text-sm font-medium mb-2">预测价格（综合投票）</div>
               <div className="flex flex-wrap gap-2">
                 {result.prediction.map((p, i) => (
                   <div key={i} className="bg-muted rounded-lg px-3 py-2 text-center">
                     <div className="text-xs text-muted-foreground">T+{i + 1}</div>
-                    <div className={`font-num font-bold tabular-nums ${p > result.last_close ? 'text-red-500' : 'text-green-500'}`}>
+                    <div className={`font-num font-bold tabular-nums ${p > result.last_close ? 'text-red-600' : 'text-green-700'}`}>
                       {p.toFixed(2)}
                     </div>
                     <div className="text-xs text-muted-foreground">
@@ -729,31 +772,32 @@ export default function ForecastPage() {
                 </span>
               </div>
               {/* 模型权重透明度: 4 模型投票权重。
-                  数据源: 引擎无公开权重接口(/forecast/models 只返回模型清单、/health 无权重、
-                  predict 响应不含权重字段), 此处展示生产后端最新一次回测落盘的实时权重
-                  (~/.panwatch_model_weights.json, 2026-08-13 17:56 更新, source=backtest):
-                  kronos 0.4414 / chronos 0.3379 / xgboost 0.1103 / linreg 0.1103。
-                  权重按历史回测命中率动态调整, 下次回测后可能变化;
-                  待后端暴露权重接口后应改为运行时拉取, 避免数字过期。 */}
+                  数据源: 引擎 /forecast/weights(按历史回测命中率动态调整,
+                  贝叶斯收缩 + 双写闭环, 见 forecast_lib/model_weights.py);
+                  接口未就绪时回退历史快照 (kronos 0.4414 / chronos 0.3379 /
+                  xgboost 0.1103 / linreg 0.1103, 2026-08-13 backtest)。 */}
               <div className="mb-2 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
                 <span>当前模型权重</span>
-                <span className="font-mono font-medium text-foreground/80">Kronos 44%</span>
+                <span className="font-mono font-medium text-foreground/80">Kronos {Math.round(((modelWeights?.kronos ?? 0.4414)) * 100)}%</span>
                 <span>·</span>
-                <span className="font-mono font-medium text-foreground/80">Chronos 34%</span>
+                <span className="font-mono font-medium text-foreground/80">Chronos {Math.round(((modelWeights?.chronos ?? 0.3379)) * 100)}%</span>
                 <span>·</span>
-                <span className="font-mono font-medium text-foreground/80">XGB 11%</span>
+                <span className="font-mono font-medium text-foreground/80">XGB {Math.round(((modelWeights?.xgboost ?? 0.1103)) * 100)}%</span>
                 <span>·</span>
-                <span className="font-mono font-medium text-foreground/80">线性回归 11%</span>
-                <span className="opacity-70">(按历史命中率动态调整 · 最近回测 2026-08-13)</span>
+                <span className="font-mono font-medium text-foreground/80">线性回归 {Math.round(((modelWeights?.linreg ?? 0.1103)) * 100)}%</span>
+                <span className="opacity-70">
+                  (按历史命中率动态调整{weightsSource === 'default' ? ' · 暂无回测数据, 使用默认权重' : weightsSource === 'history' ? ' · 实时回测统计' : weightsSource === 'file' ? ' · 最近回测落盘' : ' · 最近回测 2026-08-13'})
+                </span>
               </div>
               <ModelDivergenceChart result={result} />
             </div>
+            </div>{/* 预测价格 + 四模型对比 两栏 grid 结束 */}
 
             {/* 消息情绪面 */}
             {result.sentiment && (
               <div>
                 <div className="text-sm font-medium mb-2">消息情绪面</div>
-                <div className={`rounded px-3 py-2 text-sm mb-2 ${result.sentiment.adjustment_pct >= 0 ? 'bg-red-500/10 text-red-500' : 'bg-green-500/10 text-green-500'}`}>
+                <div className={`rounded px-3 py-2 text-sm mb-2 ${result.sentiment.adjustment_pct >= 0 ? 'bg-red-500/10 text-red-600' : 'bg-green-500/10 text-green-700'}`}>
                   情绪修正系数：{result.sentiment.adjustment_pct > 0 ? '+' : ''}{result.sentiment.adjustment_pct}%
                   {result.sentiment.notes?.length > 0 && (
                     <span className="text-muted-foreground ml-2 text-xs">
@@ -782,6 +826,7 @@ export default function ForecastPage() {
           </div>
         </div>
       )}
+      </div>{/* 三列工作台 grid 结束 */}
 
       {/* 预测报告（双格式） */}
       {report && (
@@ -874,7 +919,7 @@ export default function ForecastPage() {
                         <td className="py-1.5">{s.date}</td>
                         <td className="text-right font-mono">{s.pred_close.toFixed(2)}</td>
                         <td className="text-right font-mono">{s.actual_close.toFixed(2)}</td>
-                        <td className={`text-right ${s.hit ? 'text-green-500' : 'text-red-500'}`}>
+                        <td className={`text-right ${s.hit ? 'text-green-700' : 'text-red-600'}`}>
                           {s.hit ? '✓' : '✗'}
                         </td>
                       </tr>
@@ -924,9 +969,15 @@ export default function ForecastPage() {
             <History className="h-4 w-4" />
             <span className="text-lg font-bold">历史预测</span>
           </div>
-          <Button variant="ghost" size="sm" className="h-8" onClick={loadHistory} disabled={historyLoading}>
-            <RefreshCw className={`h-3.5 w-3.5 ${historyLoading ? 'animate-spin' : ''}`} />
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button variant="ghost" size="sm" className="h-8" onClick={exportPredictions}>
+              <Download className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline ml-1">导出</span>
+            </Button>
+            <Button variant="ghost" size="sm" className="h-8" onClick={loadHistory} disabled={historyLoading}>
+              <RefreshCw className={`h-3.5 w-3.5 ${historyLoading ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
         </div>
         {history.length === 0 ? (
           <div className="text-sm text-muted-foreground py-4 text-center">
@@ -957,10 +1008,10 @@ export default function ForecastPage() {
                     <td className="py-2 font-mono">{h.symbol}{h.stock_name ? ` ${h.stock_name}` : ''}</td>
                     <td>{h.last_date}</td>
                     <td className="font-mono">{h.target_date || '-'}</td>
-                    <td className={`text-right font-bold ${h.direction === 'up' ? 'text-red-500' : h.direction === 'down' ? 'text-green-500' : ''}`}>
+                    <td className={`text-right font-bold ${h.direction === 'up' ? 'text-red-600' : h.direction === 'down' ? 'text-green-700' : ''}`}>
                       {h.direction === 'up' ? '↑' : h.direction === 'down' ? '↓' : '→'}
                     </td>
-                    <td className={`text-right font-mono ${h.expected_pct >= 0 ? 'text-red-500' : 'text-green-500'}`}>
+                    <td className={`text-right font-mono ${h.expected_pct >= 0 ? 'text-red-600' : 'text-green-700'}`}>
                       {h.expected_pct > 0 ? '+' : ''}{h.expected_pct}%
                     </td>
                     <td className="text-right font-mono">{h.target_price ?? '-'}</td>
@@ -1027,7 +1078,7 @@ export default function ForecastPage() {
                 </div>
                 <div className="bg-muted/40 rounded px-2 py-1.5">
                   <div className="text-muted-foreground">情绪修正</div>
-                  <div className={`font-mono font-bold ${(detail.sentiment_adj || 0) >= 0 ? 'text-red-500' : 'text-green-500'}`}>
+                  <div className={`font-mono font-bold ${(detail.sentiment_adj || 0) >= 0 ? 'text-red-600' : 'text-green-700'}`}>
                     {(detail.sentiment_adj || 0) > 0 ? '+' : ''}{detail.sentiment_adj || 0}%
                   </div>
                 </div>
@@ -1040,7 +1091,7 @@ export default function ForecastPage() {
                     {detail.prediction.map((p, i) => (
                       <div key={i} className="bg-muted/40 rounded px-2 py-1 text-center">
                         <div className="text-[10px] text-muted-foreground">T+{i + 1}</div>
-                        <div className={`font-mono font-bold text-xs ${p >= detail.last_close ? 'text-red-500' : 'text-green-500'}`}>{p}</div>
+                        <div className={`font-mono font-bold text-xs ${p >= detail.last_close ? 'text-red-600' : 'text-green-700'}`}>{p}</div>
                       </div>
                     ))}
                   </div>

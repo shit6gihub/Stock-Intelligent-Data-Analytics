@@ -226,6 +226,12 @@ def get_quotes(db: Session = Depends(get_db), user: User = Depends(get_current_u
 
 @router.post("", response_model=StockResponse)
 def create_stock(stock: StockCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    # demo 账号: 自选数量上限 1 只(演示体验; 防公开账号堆积垃圾数据)
+    if user.username == "demo":
+        own_count = db.query(Stock).filter(Stock.user_id == user.id).count()
+        if own_count >= 1:
+            raise HTTPException(403, "演示账号仅可添加 1 只自选股。请先删除当前自选,再添加其他股票体验。")
+
     existing = db.query(Stock).filter(
         Stock.symbol == stock.symbol, Stock.market == stock.market,
         or_(Stock.user_id == user.id, Stock.user_id.is_(None)),
@@ -238,6 +244,42 @@ def create_stock(stock: StockCreate, db: Session = Depends(get_db), user: User =
     db.add(db_stock)
     db.commit()
     db.refresh(db_stock)
+
+    # 2026-08-17 加股快速 backfill(60s 内): 用户加股后立即拉 K线, 不必等 18:00 cron
+    # 60s 延迟是为了合并 1 分钟内多次 add(用户连续点不会重复拉)
+    from src.core.kline_backfill_scheduler import KlineBackfillScheduler
+    try:
+        # 复用 server.py lifespan 已启动的 scheduler(单例), 不要新建
+        # 因为新建会创建第二个 AsyncIOScheduler, schedule_one_off 的 job
+        # 跟 18:00 cron 不在同一线程, 启动后没人 start() 会死锁
+        import src.core.kline_backfill_scheduler as _kbs_mod
+
+        if _kbs_mod._global_scheduler is None:
+            # 单例不存在(测试环境 / server 未启动) — 走 18:00 cron 兜底
+            logger.warning(
+                "K线入库调度器未启动, 加股 backfill 跳过(18:00 cron 兜底)"
+            )
+        else:
+            market_str = (
+                db_stock.market.value
+                if hasattr(db_stock.market, "value")
+                else str(db_stock.market)
+            )
+            symbol_str = (
+                db_stock.symbol.value
+                if hasattr(db_stock.symbol, "value")
+                else str(db_stock.symbol)
+            )
+            _kbs_mod._global_scheduler.schedule_one_off(
+                symbol=symbol_str,
+                market=market_str,
+            )
+            logger.info(
+                f"已为新加自选 {db_stock.symbol}.{db_stock.market} 调度 60s 后 backfill"
+            )
+    except Exception as e:
+        logger.warning(f"调度新加股 backfill 失败: {e}")
+
     return _stock_to_response(db_stock)
 
 
@@ -274,10 +316,16 @@ def update_stock(stock_id: int, stock: StockUpdate, db: Session = Depends(get_db
 
 
 @router.delete("/{stock_id}")
-def delete_stock(stock_id: int, db: Session = Depends(get_db)):
+def delete_stock(stock_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     db_stock = db.query(Stock).filter(Stock.id == stock_id).first()
     if not db_stock:
         raise HTTPException(404, "股票不存在")
+
+    # 归属校验(2026-08-15 安全加固): 只能删自己的自选; 共享默认项(user_id NULL)仅 owner 可删
+    if db_stock.user_id is not None and db_stock.user_id != user.id:
+        raise HTTPException(403, "无权删除该自选(非本人创建)")
+    if db_stock.user_id is None and user.role != "owner":
+        raise HTTPException(403, "无权删除共享默认自选")
 
     # 删除股票前，要求先清理持仓，避免误删资产数据。
     has_position = db.query(Position.id).filter(Position.stock_id == stock_id).first()
@@ -354,6 +402,7 @@ async def trigger_stock_agent(
     market: str = Query("CN"),
     name: str = Query(""),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """手动触发单只股票 Agent。
 
@@ -495,6 +544,7 @@ async def trigger_stock_agent(
                     suppress_notify=suppress_notify,
                     trace_id=trace_id,
                     force_refresh=force_refresh,
+                    user_id=user.id,
                 ))
                 if outcome.get("skipped"):
                     detail = str(outcome.get("content") or outcome.get("message") or "本次任务已跳过")
@@ -526,6 +576,7 @@ async def trigger_stock_agent(
             suppress_notify=suppress_notify,
             trace_id=trace_id,
             force_refresh=force_refresh,
+            user_id=user.id,
         )
         logger.info(f"Agent {agent_name} 执行完成 - {trigger_stock.symbol}")
         return {

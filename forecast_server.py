@@ -768,6 +768,32 @@ def history(symbol: str = "", limit: int = 50):
     return {"items": list_forecasts(limit=min(limit, 200), symbol=symbol)}
 
 
+@app.get("/forecast/weights")
+def forecast_weights():
+    """当前 4 模型投票权重(按历史回测命中率动态调整)。
+
+    供 PanWatch 前端预测页展示权重透明度; 同时返回权重来源与
+    各模型样本/命中统计, 便于用户判断"该不该信"。
+    """
+    try:
+        from forecast_lib.model_weights import load_weights, last_weights_source
+    except ImportError:
+        from model_weights import load_weights, last_weights_source
+    weights = load_weights()
+    stats = {}
+    try:
+        from forecast_lib.model_weights import _load_pooled_model_stats
+    except ImportError:
+        from model_weights import _load_pooled_model_stats
+    stats = _load_pooled_model_stats()
+    return {
+        "weights": weights,
+        "source": last_weights_source(),
+        "model_stats": stats,
+        "updated_at": None,  # 由 DB 聚合实时计算, 无固定时间戳
+    }
+
+
 @app.get("/forecast/models")
 def forecast_models():
     """预测引擎模型清单(设置页展示)。"""

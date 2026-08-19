@@ -8,6 +8,7 @@ import { Badge } from '@panwatch/base-ui/components/ui/badge'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@panwatch/base-ui/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@panwatch/base-ui/components/ui/dialog'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
+import { parseServerTime } from '@/lib/utils'
 
 interface HistoryRecord {
   id: number
@@ -60,7 +61,7 @@ export default function HistoryPage() {
     if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/.test(normalized)) {
       return normalized
     }
-    const d = new Date(s)
+    const d = parseServerTime(s)
     if (isNaN(d.getTime())) return s
     const pad = (n: number) => String(n).padStart(2, '0')
     const year = d.getFullYear()

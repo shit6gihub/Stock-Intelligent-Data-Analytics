@@ -11,9 +11,85 @@
 # 数据持久化:
 #   - 命名卷 panwatch_data(主后端 DB + Playwright 浏览器)
 #   - 命名卷 panwatch_forecast_data(预测引擎 SQLite + 回测报告)
-#   - 可选 bind 挂载 ~/.hermes(cron 输出只读)+ ~/Obsidian/FinanceVault(报告中心同步目标)
+#   - 可选 bind 挂载 ~/.hermes(cron 输出只读, 报告中心数据源)
 
 services:
+  # ============== 基础设施层 (Phase 1, 2026-08-17) ==============
+  # 默认不启动(可显式 `docker compose --profile infra up -d` 启动)
+  # - Redis 7: 缓存 + 限流 + Redis Streams
+  # - Prometheus: 抓 /metrics 指标
+  # - Loki: 收日志(配 Promtail)
+  # - Promtail: 收 panwatch logs 送到 Loki
+  # - Grafana: 大盘 (预置 Prometheus + Loki 数据源)
+  redis:
+    image: redis:7-alpine
+    container_name: panwatch-redis
+    restart: unless-stopped
+    profiles: ["infra"]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: panwatch-prometheus
+    restart: unless-stopped
+    profiles: ["infra"]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: panwatch-loki
+    restart: unless-stopped
+    profiles: ["infra"]
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./deploy/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+
+  promtail:
+    image: grafana/promtail:2.9.4
+    container_name: panwatch-promtail
+    restart: unless-stopped
+    profiles: ["infra"]
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./deploy/promtail-config.yml:/etc/promtail/config.yml:ro
+    command: -config.file=/etc/promtail/config.yml
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: panwatch-grafana
+    restart: unless-stopped
+    profiles: ["infra"]
+    ports:
+      - "35099:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=xz.170530
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deploy/grafana-provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+      - loki
+
   # ============== 主后端 8000 (FastAPI) ==============
   panwatch:
     image: ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest
@@ -26,8 +102,6 @@ services:
       - FORECAST_ENGINE_URL=http://forecast:8010
       # Hermes cron 输出根目录(可选,挂载 ~/.hermes 后自动可用)
       - HERMES_HOME=/hermes
-      # Obsidian vault 根目录(可选,挂载后报告中心「同步到 Obsidian」可用)
-      - OBSIDIAN_VAULT=/obsidian-vault
       # 数据源 key 在「设置 → 接口Key」UI 维护;此处只传 Hermes 必需的环境变量
       - TZ=Asia/Shanghai
       - PYTHONUNBUFFERED=1
@@ -37,9 +111,6 @@ services:
       # 可选: Hermes cron 输出(报告中心读取 cron 报告用)
       # ⚠️ 朋友请改成自己的路径,不存在会自动创建空目录不影响服务启动
       - ~/.hermes:/hermes:ro
-      # 可选: Obsidian vault 双向同步(报告中心「同步到 Obsidian」写入目标)
-      # ⚠️ 朋友请改成自己的路径,不存在会自动创建空目录不影响服务启动
-      - ./obsidian-vault:/obsidian-vault:rw
     depends_on:
       forecast:
         condition: service_healthy
@@ -83,3 +154,11 @@ volumes:
     name: panwatch_data
   panwatch_forecast_data:
     name: panwatch_forecast_data
+  redis_data:
+    name: panwatch_redis_data
+  prometheus_data:
+    name: panwatch_prometheus_data
+  loki_data:
+    name: panwatch_loki_data
+  grafana_data:
+    name: panwatch_grafana_data

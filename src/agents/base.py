@@ -38,11 +38,14 @@ def _scene_db(context) -> tuple[Any, bool]:
 
 
 def _coerce_bound_model(bound) -> str | None:
-    """get_model_for_scene 返回值可能是模型名字符串或 AIModel 对象 → 统一成字符串。"""
+    """get_model_for_scene 返回值可能是模型名字符串 / AIModel 对象 / BYOK dict → 统一成字符串。"""
     if bound is None:
         return None
     if isinstance(bound, str):
         return bound.strip() or None
+    if isinstance(bound, dict):  # BYOK 返回 {"name","model","base_url","api_key","is_default"}
+        m = bound.get("model")
+        return str(m).strip() if m else None
     m = getattr(bound, "model", None)
     return str(m).strip() if m else None
 
@@ -64,8 +67,12 @@ def apply_scene_binding(context, scene: str, system_prompt: str) -> str:
             return system_prompt
         # 1) 场景模型绑定: 有绑定 → 整体重建 ai_client(base_url+api_key+model 一起换,
         #    只改 model 字符串会导致跨服务商绑定后仍发往原服务商 → 404 model not found)
+        #    用户级解析(2026-08-16): context.user 存在时走 BYOK/平台授权, 子用户
+        #    只能用到被授权的模型; 无 user(系统调度)保持全局解析。
         try:
-            bound_model = get_model_for_scene(db, scene)
+            bound_model = get_model_for_scene(
+                db, scene, user=getattr(context, "user", None)
+            )
             if bound_model is not None and getattr(context, "ai_client", None) is not None:
                 from src.web.models import AIService
 
@@ -111,14 +118,18 @@ def apply_scene_binding(context, scene: str, system_prompt: str) -> str:
                 pass
 
 
-def resolve_scene_model(db, scene: str, default_model: str | None = None) -> str | None:
-    """按场景取绑定模型名(供不自带 system prompt 的调用点用); 无绑定回落 default_model。"""
+def resolve_scene_model(db, scene: str, default_model: str | None = None, user=None) -> str | None:
+    """按场景取绑定模型名(供不自带 system prompt 的调用点用); 无绑定回落 default_model。
+
+    user 可选: 传入 User 对象时走用户级解析(BYOK/平台授权/demo 零授权, 见
+    src/core/ai_client.get_model_for_scene), 不传保持系统级全局解析。
+    """
     if db is None:
         return default_model
     try:
         from src.core.ai_client import get_model_for_scene
 
-        bound = _coerce_bound_model(get_model_for_scene(db, scene))
+        bound = _coerce_bound_model(get_model_for_scene(db, scene, user=user))
         return bound or default_model
     except Exception:
         return default_model

@@ -37,11 +37,13 @@ import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
 import DiscoveryPanel from '@/components/DiscoveryPanel'
 import SkeletonRows from '@/components/SkeletonRows'
 import Sparkline from '@/components/Sparkline'
+import ErrorBanner from '@/components/ErrorBanner'
 import BenchChart from '@/components/BenchChart'
 import BenchmarkShareCard from '@/components/BenchmarkShareCard'
 import DiagnosticsShareCard from '@/components/DiagnosticsShareCard'
 import DigestShareCard from '@/components/DigestShareCard'
 import StockContextMenu, { type StockContextMenuState, type StockContextTarget } from '@/components/StockContextMenu'
+import { parseServerTime } from '@/lib/utils'
 
 function pct(v?: number | null, digits = 2): string {
   if (v == null || !isFinite(v)) return '--'
@@ -49,13 +51,13 @@ function pct(v?: number | null, digits = 2): string {
 }
 function moveColor(v?: number | null): string {
   if (v == null) return 'text-muted-foreground'
-  return v > 0 ? 'text-rose-500' : v < 0 ? 'text-emerald-500' : 'text-muted-foreground'
+  return v > 0 ? 'text-red-600' : v < 0 ? 'text-green-700' : 'text-muted-foreground'
 }
 /** 涨跌着色 chip 的背景+文字类;null/平盘 → 灰底。红涨绿跌(A股口径)。 */
 function pctChipCls(v?: number | null): string {
   if (v == null) return 'bg-accent text-muted-foreground'
-  if (v > 0) return 'bg-rose-500/10 text-rose-500'
-  if (v < 0) return 'bg-emerald-500/10 text-emerald-500'
+  if (v > 0) return 'bg-red-600/10 text-red-600'
+  if (v < 0) return 'bg-green-700/10 text-green-700'
   return 'bg-accent text-muted-foreground'
 }
 /** 归一化后端列表响应:可能直接是数组,也可能是 {items:[...]} / {data:[...]},取不到返回空数组。 */
@@ -95,7 +97,7 @@ function formatHeaderTime(d: Date): string {
 /** 报告相对时间:1分钟内→"刚刚";1小时内→"N分钟前";当天→"今天 HH:MM";昨天→"昨天 HH:MM";更早→"M月D日 HH:MM" */
 function formatReportTime(iso: string): string {
   if (!iso) return ''
-  const d = new Date(iso)
+  const d = parseServerTime(iso)
   if (isNaN(d.getTime())) return iso.replace('T', ' ').slice(0, 16)
   const now = new Date()
   const diffMin = Math.floor((now.getTime() - d.getTime()) / 60000)
@@ -121,8 +123,8 @@ const ALERT_LABEL: Record<string, string> = {
 }
 
 const FEED_BADGE: Record<string, { label: string; cls: string }> = {
-  alert: { label: '提醒命中', cls: 'bg-rose-500/15 text-rose-500' },
-  holding: { label: '持仓', cls: 'bg-emerald-500/15 text-emerald-500' },
+  alert: { label: '提醒命中', cls: 'bg-rose-500/15 text-red-600' },
+  holding: { label: '持仓', cls: 'bg-emerald-500/15 text-green-700' },
   watch: { label: '自选', cls: 'bg-accent text-muted-foreground' },
   risk: { label: '风险', cls: 'bg-amber-500/15 text-amber-600' },
   opportunity: { label: '机会', cls: 'bg-primary/10 text-primary' },
@@ -167,6 +169,24 @@ export default function DashboardPage() {
   const [hotStocks, setHotStocks] = useState<MarketHotStockItem[]>([])
   const [hotStocksLoading, setHotStocksLoading] = useState(true)
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null)
+  // 2026-08-17: 数据源失败显式标识 — 收集 {source, message},横幅展示具体哪个源挂了
+  const [sourceErrors, setSourceErrors] = useState<Array<{ id: number; source: string; message: string; retry?: () => void }>>([])
+  // 2026-08-17: pushError 加 retry 参数(闭环修正 v0.2.60 回归 — ErrorBanner 重试按钮之前永不渲染)
+  const pushError = (source: string, message: string, retry?: () => void) => {
+    setSourceErrors(prev => {
+      // 2026-08-17 v0.2.64 (B 报告 P1-5): 同一 source 已存在则合并更新 message + retry (避免横幅风暴)
+      const existing = prev.find(p => p.source === source)
+      if (existing) {
+        return prev.map(p =>
+          p.source === source
+            ? { ...p, message: message.slice(0, 200), ...(retry ? { retry } : {}) }
+            : p
+        )
+      }
+      // 新 source — 加 id (B 报告 P1-6)
+      return [...prev, { id: Date.now() + Math.random(), source, message: message.slice(0, 200), ...(retry ? { retry } : {}) }].slice(-8)
+    })
+  }
   // 分享卡开关:成绩单(基准)/ 组合体检 / 每日 digest
   const [shareBench, setShareBench] = useState(false)
   const [shareDiag, setShareDiag] = useState(false)
@@ -196,30 +216,40 @@ export default function DashboardPage() {
 
   const load = useCallback(async (opts?: { skipBench?: boolean }) => {
     setLoading(true)
+    setSourceErrors([])  // 清空上次错误
     // 指数 pills:独立加载不阻塞首屏(spark 冷启动可能 ~1s,数据到了自然浮现)
-    dashboardApi.indices().then(setIndices).catch(() => {})
-    // 大盘资金流(同花顺源):独立加载,失败静默
-    dashboardApi.marketCapitalFlow().then(setMarketFlow).catch(() => {})
+    dashboardApi.indices().then(setIndices).catch((err) => pushError('大盘指数', err?.message || '服务不可用', load))
+    // 大盘资金流(同花顺源):独立加载,失败聚合到全局横幅
+    dashboardApi.marketCapitalFlow().then(setMarketFlow).catch((err) => pushError('大盘资金流', err?.message || '服务不可用', load))
     // 最新报告(Hermes cron):独立加载,失败静默;cacheMode reload 保证 30s 轮询必拿新数据
     setReportsLoading(true)
     reportsApi
       .list({ limit: 8, cacheMode: 'reload' })
       .then((r) => setReports((r.items || []).slice(0, 4)))
-      .catch(() => setReports([]))
+      .catch((err) => {
+        setReports([])
+        pushError('Hermes 报告', err?.message || '服务不可用', load)
+      })
       .finally(() => setReportsLoading(false))
     // 异动池(东财):独立加载,失败静默(端点未就绪时优雅降级为空态)
     setAnomaliesLoading(true)
     dashboardApi
       .anomalies({ limit: 10 })
       .then((r) => setAnomalies(pickList<MarketAnomalyItem>(r, 'items').slice(0, 10)))
-      .catch(() => setAnomalies([]))
+      .catch((err) => {
+        setAnomalies([])
+        pushError('异动池 (东财)', err?.message || '服务不可用', load)
+      })
       .finally(() => setAnomaliesLoading(false))
     // 热榜(同花顺):独立加载,失败静默
     setHotStocksLoading(true)
     dashboardApi
       .hotStocks({ period: 'hour', limit: 10 })
       .then((r) => setHotStocks(pickList<MarketHotStockItem>(r, 'items').slice(0, 10)))
-      .catch(() => setHotStocks([]))
+      .catch((err) => {
+        setHotStocks([])
+        pushError('热榜 (同花顺)', err?.message || '服务不可用', load)
+      })
       .finally(() => setHotStocksLoading(false))
     // 快车道:DB/轻量查询,先让首屏(要紧事/体检分布)尽快出来
     const [sc, ov, dg, ht, td, ms] = await Promise.allSettled([
@@ -236,6 +266,13 @@ export default function DashboardPage() {
     if (ht.status === 'fulfilled') setAlertHits(ht.value)
     if (td.status === 'fulfilled') setTodos(td.value.todos || [])
     if (ms.status === 'fulfilled') setMarketStatus(ms.value)
+    if ([sc, ov, dg, ht, td, ms].some((r) => r.status === 'rejected')) {
+      // 2026-08-17: 显示具体哪个接口失败(快车道 6 个接口任意失败)
+      const failed = [sc, ov, dg, ht, td, ms]
+        .map((r, i) => ({ r, name: ['盘中扫描', '首页概览', '组合体检', '今日告警', '待办', '市场状态'][i] }))
+        .filter(x => x.r.status === 'rejected')
+      failed.forEach(({ name, r }) => pushError(name, (r as PromiseRejectedResult).reason?.message || '服务不可用', load))
+    }
     setLoading(false) // 首屏不再等基准/归因(要拉全持仓 K 线)
     setRefreshedAt(new Date())
 
@@ -244,7 +281,7 @@ export default function DashboardPage() {
       recommendationsApi
         .listStrategySignals({ status: 'active', limit: 5 })
         .then((r) => setOppFallback(r.items || []))
-        .catch(() => {})
+        .catch((err) => pushError('机会池兜底', err?.message || '服务不可用', load))
     }
 
     // 慢车道:基准/归因需拉全持仓 K 线(分钟级),独立加载,就绪后回填超额/归因。
@@ -263,7 +300,7 @@ export default function DashboardPage() {
     // 自选股列表(判断盘前标的是否已加自选)
     stocksApi.list().then((rows) => {
       setWatchSymbols(new Set((rows || []).map((s) => `${s.market}:${s.symbol}`)))
-    }).catch(() => {})
+    }).catch((err) => pushError('自选股列表', err?.message || '服务不可用', load))
   }, [loadBench])
 
   // 盘前标的快捷加入自选
@@ -310,8 +347,11 @@ export default function DashboardPage() {
     setShowOnboarding(false)
   }
 
+  // 异动池/热榜等数据源返回 SH/SZ/BJ(交易所代码),行情接口统一按 A股 CN 处理
+  const normalizeMarket = (m: string) => (['SH', 'SZ', 'BJ'].includes((m || '').toUpperCase()) ? 'CN' : m || 'CN')
+
   const openStock = (symbol: string, market: string, name = '', hasPosition = false) =>
-    setModal({ open: true, symbol, market: market || 'CN', name, hasPosition })
+    setModal({ open: true, symbol, market: normalizeMarket(market), name, hasPosition })
 
   // ========== PC 右键菜单 ==========
   const [stockCtxMenu, setStockCtxMenu] = useState<StockContextMenuState | null>(null)
@@ -319,7 +359,7 @@ export default function DashboardPage() {
   const openStockContextMenu = useCallback((e: React.MouseEvent, stock: StockContextTarget) => {
     e.preventDefault()
     e.stopPropagation()
-    setStockCtxMenu({ x: e.clientX, y: e.clientY, stock })
+    setStockCtxMenu({ x: e.clientX, y: e.clientY, stock: { ...stock, market: normalizeMarket(stock.market) } })
   }, [])
 
   const addToWatchlistFromMenu = useCallback((stock: StockContextTarget) => {
@@ -461,6 +501,10 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* 核心接口失败横幅:失败≠空态,给出重试入口 */}
+      {/* 2026-08-17: 数据源失败显式标识 — ErrorBanner 组件,展示具体哪个源挂了 */}
+      <ErrorBanner errors={sourceErrors} onDismiss={(id) => setSourceErrors(prev => prev.filter(e => e.id !== id))} retryAll={load} />
+
       {/* 最新报告:Hermes cron 盘前/盘后报告速览(最近 4 条, 30s 随首页自动刷新, 点击进报告页) */}
       <div className="card mb-3 p-4">
         {/* 反AI模板 P2:段落头去图标惯性 — 报告区非高频扫描区, 用字号层级表达层级 */}
@@ -514,7 +558,7 @@ export default function DashboardPage() {
       <div className="mb-3 grid grid-cols-2 gap-2.5 md:grid-cols-3 lg:grid-cols-5">
         {loading && indices.length === 0
           ? Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="card-subtle p-2.5">
+              <div key={i} className="card p-2.5">
                 <Skeleton className="h-2.5 w-16" />
                 <Skeleton className="mt-1.5 h-4 w-14" />
                 <Skeleton className="mt-2 h-6 w-full" />
@@ -524,12 +568,12 @@ export default function DashboardPage() {
           <button
             key={`${ix.market}:${ix.symbol}`}
             onClick={() => navigate(`/index/${ix.symbol}`)}
-            className="card-subtle relative p-2.5 text-left hover:border-primary/40 transition-colors cursor-pointer"
+            className="card relative p-2.5 text-left hover:border-primary/40 transition-colors cursor-pointer"
           >
             <div className="flex items-start justify-between gap-1">
               <div className="min-w-0">
                 <div className="truncate text-[11px] text-muted-foreground">{ix.name}</div>
-                <div className="font-num text-[15px] text-foreground tabular-nums">
+                <div className="font-num text-[17px] font-semibold text-foreground tabular-nums">
                   {ix.current_price != null ? ix.current_price.toFixed(2) : '--'}
                 </div>
               </div>
@@ -556,13 +600,13 @@ export default function DashboardPage() {
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px]">
               <span className="text-muted-foreground">主力净流入
-                <b className={`font-mono ${(marketFlow.total_main_flow ?? 0) >= 0 ? 'text-red-500' : 'text-green-500'}`}>
+                <b className={`font-mono text-[15px] font-semibold ${(marketFlow.total_main_flow ?? 0) >= 0 ? 'text-red-600' : 'text-green-700'}`}>
                   {(marketFlow.total_main_flow ?? 0) >= 0 ? '+' : ''}{(marketFlow.total_main_flow ?? 0).toFixed(1)}亿
                 </b>
               </span>
               <span className="text-muted-foreground">成交额 <b className="font-mono">{(marketFlow.total_amount ?? 0).toFixed(0)}亿</b></span>
-              <span className="text-muted-foreground">涨 <b className="text-red-500 font-mono">{marketFlow.up_count ?? '--'}</b>
-                <span className="mx-1">/</span>跌 <b className="text-green-500 font-mono">{marketFlow.down_count ?? '--'}</b></span>
+              <span className="text-muted-foreground">涨 <b className="text-red-600 font-mono">{marketFlow.up_count ?? '--'}</b>
+                <span className="mx-1">/</span>跌 <b className="text-green-700 font-mono">{marketFlow.down_count ?? '--'}</b></span>
               <span className="text-muted-foreground">沪 <b className="font-mono">{(marketFlow.sh_flow ?? 0).toFixed(1)}亿</b>
                 <span className="mx-1">/</span>深 <b className="font-mono">{(marketFlow.sz_flow ?? 0).toFixed(1)}亿</b></span>
             </div>
@@ -572,12 +616,12 @@ export default function DashboardPage() {
             <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3">
               {marketFlow.inflow_boards?.length ? (
                 <div>
-                  <div className="mb-1 text-[11px] font-semibold text-red-500">资金流入板块</div>
+                  <div className="mb-1 text-[11px] font-semibold text-red-600">资金流入板块</div>
                   <div className="space-y-0.5">
                     {marketFlow.inflow_boards.map(b => (
                       <div key={b.name} className="flex justify-between text-[11px]">
                         <span className="text-muted-foreground truncate">{b.name}</span>
-                        <span className="font-mono text-red-500">+{b.net_inflow.toFixed(1)}亿</span>
+                        <span className="font-mono text-red-600">+{b.net_inflow.toFixed(1)}亿</span>
                       </div>
                     ))}
                   </div>
@@ -585,12 +629,12 @@ export default function DashboardPage() {
               ) : null}
               {marketFlow.outflow_boards?.length ? (
                 <div>
-                  <div className="mb-1 text-[11px] font-semibold text-green-500">资金流出板块</div>
+                  <div className="mb-1 text-[11px] font-semibold text-green-700">资金流出板块</div>
                   <div className="space-y-0.5">
                     {marketFlow.outflow_boards.map(b => (
                       <div key={b.name} className="flex justify-between text-[11px]">
                         <span className="text-muted-foreground truncate">{b.name}</span>
-                        <span className="font-mono text-green-500">{b.net_inflow.toFixed(1)}亿</span>
+                        <span className="font-mono text-green-700">{b.net_inflow.toFixed(1)}亿</span>
                       </div>
                     ))}
                   </div>
@@ -701,7 +745,7 @@ export default function DashboardPage() {
                   >
                     <span
                       className={`w-5 shrink-0 text-center font-mono text-[13px] font-bold ${
-                        i < 3 ? 'text-rose-500' : 'text-muted-foreground'
+                        i < 3 ? 'text-red-600' : 'text-muted-foreground'
                       }`}
                     >
                       {h.rank ?? i + 1}
@@ -965,7 +1009,7 @@ export default function DashboardPage() {
                   ))}
                 </div>
               ) : (
-                <div className="pt-1 text-[11px] text-emerald-500">✓ 集中度/分布未见明显风险</div>
+                <div className="pt-1 text-[11px] text-green-700">✓ 集中度/分布未见明显风险</div>
               )}
               <button
                 type="button"
@@ -1072,7 +1116,7 @@ export default function DashboardPage() {
                       <span className="text-foreground">{s.name}</span>
                       <span className="font-mono text-muted-foreground">{s.symbol}</span>
                       {inWatch ? (
-                        <span className="text-[10px] text-emerald-500">已自选</span>
+                        <span className="text-[10px] text-green-700">已自选</span>
                       ) : (
                         <button
                           type="button"

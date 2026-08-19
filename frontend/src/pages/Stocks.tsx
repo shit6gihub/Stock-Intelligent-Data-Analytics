@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { Plus, Trash2, Pencil, Search, X, TrendingUp, Bot, Play, RefreshCw, Wallet, PiggyBank, ArrowUpRight, ArrowDownRight, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink, BarChart3, Brain, Activity } from 'lucide-react'
+import { Plus, Trash2, Pencil, Search, X, TrendingUp, Bot, Play, RefreshCw, Wallet, PiggyBank, ArrowUpRight, ArrowDownRight, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink, BarChart3, Brain, Activity, Download } from 'lucide-react'
 import { fetchAPI, getToken, stocksApi, type AIService, type NotifyChannel } from '@panwatch/api'
-import { useLocalStorage } from '@/lib/utils'
+import { useLocalStorage, parseServerTime } from '@/lib/utils'
 import { SuggestionBadge, type SuggestionInfo, type KlineSummary } from '@panwatch/biz-ui/components/suggestion-badge'
 import { buildKlineSuggestion } from '@/lib/kline-scorer'
 import { KlineSummaryDialog } from '@panwatch/biz-ui/components/kline-summary-dialog'
@@ -20,6 +20,7 @@ import { DeepAnalysisModal } from '@panwatch/biz-ui/components/deep-analysis-mod
 import StockPriceAlertPanel from '@panwatch/biz-ui/components/stock-price-alert-panel'
 import { useNavigate } from 'react-router-dom'
 import StockContextMenu, { type StockContextMenuState, type StockContextTarget } from '@/components/StockContextMenu'
+import ErrorBanner from '@/components/ErrorBanner'
 
 interface AgentResult {
   success?: boolean
@@ -423,6 +424,8 @@ export default function StocksPage() {
   const [services, setServices] = useState<AIService[]>([])
   const [channels, setChannels] = useState<NotifyChannel[]>([])
   const [loading, setLoading] = useState(true)
+  // 初始加载失败提示(失败≠空态:避免把"加载失败"误读为"没有数据")
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   // Portfolio
   const [portfolio, setPortfolio] = useState<PortfolioSummary | null>(null)
@@ -636,8 +639,8 @@ export default function StocksPage() {
     try {
       const [agentData, servicesData, channelsData] = await Promise.all([
         fetchAPI<AgentConfig[]>('/agents'),
-        fetchAPI<AIService[]>('/providers/services'),
-        fetchAPI<NotifyChannel[]>('/channels'),
+        fetchAPI<AIService[]>('/providers/services', { cacheMode: 'reload' }),
+        fetchAPI<NotifyChannel[]>('/channels', { cacheMode: 'reload' }),
       ])
       setAgents(agentData)
       setServices(servicesData)
@@ -648,11 +651,12 @@ export default function StocksPage() {
   }
 
   const load = async () => {
+    setLoadError(null)
     try {
       // 核心数据（立即需要）
       const [stockData, accountData] = await Promise.all([
-        fetchAPI<Stock[]>('/stocks'),
-        fetchAPI<Account[]>('/accounts'),
+        fetchAPI<Stock[]>('/stocks', { cacheMode: 'reload' }),
+        fetchAPI<Account[]>('/accounts', { cacheMode: 'reload' }),
       ])
       setStocks(stockData)
       setAccounts(accountData)
@@ -660,6 +664,7 @@ export default function StocksPage() {
       setExpandedAccounts(new Set(accountData.map((a: Account) => a.id)))
     } catch (e) {
       console.error(e)
+      setLoadError(e instanceof Error ? e.message : '加载失败')
     } finally {
       setLoading(false)  // 提前解除阻塞
     }
@@ -693,6 +698,7 @@ export default function StocksPage() {
       }
     } catch (e) {
       console.error(e)
+      setLoadError(e instanceof Error ? e.message : '加载失败')
     } finally {
       setPortfolioLoading(false)
     }
@@ -960,7 +966,7 @@ export default function StocksPage() {
 
   const formatPreviewTime = (iso: string, tz?: string): string => {
     try {
-      const d = new Date(iso)
+      const d = parseServerTime(iso)
       if (isNaN(d.getTime())) return iso
       return d.toLocaleString('zh-CN', {
         timeZone: tz || undefined,
@@ -1073,11 +1079,12 @@ export default function StocksPage() {
   }, [agentDialogStock, agents, schedulePreviewCache, schedulePreviewLoading])
 
   // 触发扫描：调用盘中监控扫描，并刷新建议池
-  const scanAndReload = useCallback(async () => {
+  // 2026-08-18 fix: analyze=false 默认(不调 LLM,5.9s 完成), 用户可手动点"AI 分析"
+  const scanAndReload = useCallback(async (analyze = false) => {
     setScanning(true)
     try {
-      const url = '/agents/intraday/scan?analyze=true'
-      await fetchAPI(url, { method: 'POST' })
+      const url = `/agents/intraday/scan?analyze=${analyze}`
+      await fetchAPI(url, { method: 'POST', timeoutMs: analyze ? 120000 : 30000 })
       await loadPoolSuggestions()
       await refreshKlines()
       setLastRefreshTime(new Date())
@@ -1651,7 +1658,7 @@ export default function StocksPage() {
           </div>
         </div>
         {/* Summary Cards Skeleton */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="card p-4">
               <Skeleton className="h-4 w-16 mb-2" />
@@ -1680,6 +1687,29 @@ export default function StocksPage() {
         </div>
       </div>
     )
+  }
+
+  // 导出持仓 CSV(/api/export/portfolio, 带 token 直接 fetch blob)
+  const exportPortfolio = async () => {
+    try {
+      const token = getToken()
+      const res = await fetch('/api/export/portfolio', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `持仓_${new Date().toISOString().slice(0, 10)}.csv`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      toast('持仓已导出', 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '导出失败', 'error')
+    }
   }
 
   return (
@@ -1734,11 +1764,14 @@ export default function StocksPage() {
               )}
             </div>
             {/* Buttons */}
+            <Button variant="secondary" onClick={exportPortfolio}>
+              <Download className="w-4 h-4" /> 导出
+            </Button>
             <Button variant="secondary" onClick={handleRefresh} disabled={quotesLoading}>
               <RefreshCw className={`w-4 h-4 ${quotesLoading ? 'animate-spin' : ''}`} />
               刷新
             </Button>
-            <Button variant="secondary" onClick={scanAndReload} disabled={scanning}>
+            <Button variant="secondary" onClick={() => void scanAndReload()} disabled={scanning}>
               <Bot className="w-4 h-4" /> 扫描
             </Button>
             <Button variant="secondary" onClick={() => openAccountDialog()}>
@@ -1750,10 +1783,13 @@ export default function StocksPage() {
           </div>
           {/* Mobile buttons */}
           <div className="flex md:hidden items-center gap-1.5">
+            <Button variant="secondary" size="sm" className="h-8 w-8 p-0" onClick={exportPortfolio}>
+              <Download className="w-4 h-4" />
+            </Button>
             <Button variant="secondary" size="sm" className="h-8 w-8 p-0" onClick={handleRefresh} disabled={quotesLoading}>
               <RefreshCw className={`w-4 h-4 ${quotesLoading ? 'animate-spin' : ''}`} />
             </Button>
-            <Button variant="secondary" size="sm" className="h-8 w-8 p-0" onClick={scanAndReload} disabled={scanning}>
+            <Button variant="secondary" size="sm" className="h-8 w-8 p-0" onClick={() => void scanAndReload()} disabled={scanning}>
               <Bot className="w-4 h-4" />
             </Button>
             <Button variant="secondary" size="sm" className="h-8 w-8 p-0" onClick={() => openAccountDialog()}>
@@ -1820,9 +1856,14 @@ export default function StocksPage() {
       </div>
 
       {/* Portfolio Total Summary */}
+      {/* 2026-08-17: 加载失败横幅统一为 ErrorBanner(闭环修正 P0-3: 错误体系统一) */}
+      <ErrorBanner
+        errors={loadError ? [{ source: '持仓/账户', message: loadError, retry: () => { void load(); void loadPortfolio() } }] : []}
+        onDismiss={() => setLoadError && setLoadError(null)}
+      />
       {portfolioLoading && !portfolio ? (
         // 首次加载时显示骨架屏
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="card p-4">
               <div className="flex items-center gap-2 mb-2">
@@ -1834,7 +1875,7 @@ export default function StocksPage() {
           ))}
         </div>
       ) : portfolio ? (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 md:gap-4 mb-6">
           <div className="card p-4">
             <div className="flex items-center gap-2 text-muted-foreground mb-1">
               <TrendingUp className="w-4 h-4" />
@@ -1847,13 +1888,13 @@ export default function StocksPage() {
           <div className="card p-4">
             <div className="flex items-center gap-2 text-muted-foreground mb-1">
               {portfolio.total.total_pnl >= 0 ? (
-                <ArrowUpRight className="w-4 h-4 text-rose-500" />
+                <ArrowUpRight className="w-4 h-4 text-rose-600" />
               ) : (
-                <ArrowDownRight className="w-4 h-4 text-emerald-500" />
+                <ArrowDownRight className="w-4 h-4 text-emerald-700" />
               )}
               <span className="text-[12px]">总盈亏</span>
             </div>
-            <div className={`text-[20px] font-bold font-num tabular-nums ${portfolio.total.total_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+            <div className={`text-[20px] font-bold font-num tabular-nums ${portfolio.total.total_pnl >= 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
               {portfolio.total.total_pnl >= 0 ? '+' : ''}{formatMoney(portfolio.total.total_pnl)}
               <span className="text-[13px] ml-1.5">
                 ({portfolio.total.total_pnl_pct >= 0 ? '+' : ''}{portfolio.total.total_pnl_pct.toFixed(2)}%)
@@ -1871,9 +1912,9 @@ export default function StocksPage() {
               <div className="card p-4">
                 <div className="flex flex-wrap items-center gap-2 text-muted-foreground mb-1">
                   {isUp ? (
-                    <ArrowUpRight className="w-4 h-4 text-rose-500" />
+                    <ArrowUpRight className="w-4 h-4 text-rose-600" />
                   ) : (
-                    <ArrowDownRight className="w-4 h-4 text-emerald-500" />
+                    <ArrowDownRight className="w-4 h-4 text-emerald-700" />
                   )}
                   <span className="text-[12px]">{dailyPnlDisplayLabel(portfolio.total)}</span>
                   {portfolioMarketStatusLabel && (
@@ -1882,7 +1923,7 @@ export default function StocksPage() {
                     </span>
                   )}
                 </div>
-                <div className={`text-[20px] font-bold font-mono ${isUp ? 'text-rose-500' : 'text-emerald-500'}`}>
+                <div className={`text-[20px] font-bold font-mono tabular-nums ${isUp ? 'text-rose-600' : 'text-emerald-700'}`}>
                   {isUp ? '+' : ''}{formatMoney(dayPnl)}
                   <span className="text-[13px] ml-1.5">({pct >= 0 ? '+' : ''}{pct.toFixed(2)}%)</span>
                 </div>
@@ -1895,7 +1936,7 @@ export default function StocksPage() {
               <Wallet className="w-4 h-4" />
               <span className="text-[12px]">可用资金</span>
             </div>
-            <div className="text-[20px] font-bold text-foreground font-mono">
+            <div className="text-[20px] font-bold text-foreground font-mono tabular-nums">
               {formatMoney(portfolio.total.available_funds)}
             </div>
           </div>
@@ -1904,7 +1945,7 @@ export default function StocksPage() {
               <PiggyBank className="w-4 h-4" />
               <span className="text-[12px]">总资产</span>
             </div>
-            <div className="text-[20px] font-bold text-foreground font-mono">
+            <div className="text-[20px] font-bold text-foreground font-mono tabular-nums">
               {formatMoney(portfolio.total.total_assets)}
             </div>
           </div>
@@ -1914,7 +1955,7 @@ export default function StocksPage() {
               <Bell className="w-4 h-4" />
               <span className="text-[12px]">仓位占比</span>
             </div>
-            <div className="text-[20px] font-bold text-foreground font-mono">
+            <div className="text-[20px] font-bold text-foreground font-mono tabular-nums">
               {positionRatio ? `${positionRatio.pct.toFixed(1)}%` : '--'}
             </div>
             <div className="mt-1 text-[11px] text-muted-foreground line-clamp-1">
@@ -2078,11 +2119,11 @@ export default function StocksPage() {
                   <div className="flex items-center gap-2.5 md:gap-6 min-w-0">
                     <div className="text-left md:text-right">
                       <div className="text-[10px] md:text-[11px] text-muted-foreground">市值</div>
-                      <div className="text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap">{formatMoney(account.total_market_value)}</div>
+                      <div className="text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap tabular-nums">{formatMoney(account.total_market_value)}</div>
                     </div>
                     <div className="text-left md:text-right">
                       <div className="text-[10px] md:text-[11px] text-muted-foreground">盈亏</div>
-                      <div className={`text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap ${account.total_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                      <div className={`text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap tabular-nums ${account.total_pnl >= 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
                         {account.total_pnl >= 0 ? '+' : ''}{formatMoney(account.total_pnl)}
                         <span className="text-[10px] md:text-[11px] ml-1 hidden md:inline">({account.total_pnl_pct >= 0 ? '+' : ''}{account.total_pnl_pct.toFixed(2)}%)</span>
                       </div>
@@ -2094,13 +2135,13 @@ export default function StocksPage() {
                       >
                         {dailyPnlDisplayLabel(account, true)}
                       </div>
-                      <div className={`text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap ${account.total_daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                      <div className={`text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap tabular-nums ${account.total_daily_pnl >= 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
                         {account.total_daily_pnl >= 0 ? '+' : ''}{formatMoney(account.total_daily_pnl)}
                       </div>
                     </div>
                     <div className="text-left md:text-right hidden sm:block">
                       <div className="text-[10px] md:text-[11px] text-muted-foreground">可用</div>
-                      <div className="text-[12px] md:text-[13px] font-mono whitespace-nowrap">{formatMoney(account.available_funds)}</div>
+                      <div className="text-[12px] md:text-[13px] font-mono whitespace-nowrap tabular-nums">{formatMoney(account.available_funds)}</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-0 md:gap-1 shrink-0" onClick={e => e.stopPropagation()}>
@@ -2142,8 +2183,8 @@ export default function StocksPage() {
                               >
                                 {dailyPnlDisplayLabel(account, true)}
                               </th>
-                              <th className="text-center px-4 py-2 text-[11px] font-semibold text-muted-foreground">风格</th>
-                              <th className="text-left px-4 py-2 text-[11px] font-semibold text-muted-foreground">Agent</th>
+                              <th className="hidden lg:table-cell text-center px-4 py-2 text-[11px] font-semibold text-muted-foreground">风格</th>
+                              <th className="hidden lg:table-cell text-left px-4 py-2 text-[11px] font-semibold text-muted-foreground">Agent</th>
                               <th className="text-center px-4 py-2 text-[11px] font-semibold text-muted-foreground">操作</th>
                             </tr>
                           </thead>
@@ -2153,10 +2194,10 @@ export default function StocksPage() {
                               const badge = marketBadge(pos.market)
                               const isForeign = pos.market === 'HK' || pos.market === 'US'
                               const changeColor = pos.change_pct != null
-                                ? (pos.change_pct > 0 ? 'text-rose-500' : pos.change_pct < 0 ? 'text-emerald-500' : 'text-muted-foreground')
+                                ? (pos.change_pct > 0 ? 'text-rose-600' : pos.change_pct < 0 ? 'text-emerald-700' : 'text-muted-foreground')
                                 : 'text-muted-foreground'
                               const pnlColor = pos.pnl != null
-                                ? (pos.pnl > 0 ? 'text-rose-500' : pos.pnl < 0 ? 'text-emerald-500' : 'text-muted-foreground')
+                                ? (pos.pnl > 0 ? 'text-rose-600' : pos.pnl < 0 ? 'text-emerald-700' : 'text-muted-foreground')
                                 : 'text-muted-foreground'
                               return (
                                 <tr
@@ -2248,7 +2289,7 @@ export default function StocksPage() {
                                     ) : '—'}
                                   </td>
                                   <td
-                                    className={`px-4 py-2.5 text-right font-mono tabular-nums text-[12px] ${pos.daily_pnl != null ? (pos.daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500') : ''}`}
+                                    className={`px-4 py-2.5 text-right font-mono tabular-nums text-[12px] ${pos.daily_pnl != null ? (pos.daily_pnl >= 0 ? 'text-rose-600' : 'text-emerald-700') : ''}`}
                                     title={pos.quote_time ? `行情时间：${pos.quote_time}` : undefined}
                                   >
                                     {pos.daily_pnl != null ? (
@@ -2258,7 +2299,7 @@ export default function StocksPage() {
                                       </div>
                                     ) : '—'}
                                   </td>
-                                  <td className="px-4 py-2.5 text-center">
+                                  <td className="hidden lg:table-cell px-4 py-2.5 text-center">
                                     {pos.trading_style ? (
                                       <span className={`text-[10px] px-1.5 py-0.5 rounded ${pos.trading_style === 'short' ? 'bg-rose-500/10 text-rose-600' : pos.trading_style === 'long' ? 'bg-blue-500/10 text-blue-600' : 'bg-amber-500/10 text-amber-600'}`}>
                                         {pos.trading_style === 'short' ? '短线' : pos.trading_style === 'long' ? '长线' : '波段'}
@@ -2267,7 +2308,7 @@ export default function StocksPage() {
                                       <span className="text-[10px] text-muted-foreground/50">-</span>
                                     )}
                                   </td>
-                                  <td className="px-4 py-2.5">
+                                  <td className="hidden lg:table-cell px-4 py-2.5">
                                     {stock && (
                                       <button onClick={() => setAgentDialogStock(stock)} className="flex items-center gap-1.5 hover:opacity-70 transition-opacity">
                                         {stock.agents && stock.agents.length > 0 ? (
@@ -2331,10 +2372,10 @@ export default function StocksPage() {
                           const stock = stocks.find(s => s.id === pos.stock_id)
                           const badge = marketBadge(pos.market)
                           const changeColor = pos.change_pct != null
-                            ? (pos.change_pct > 0 ? 'text-rose-500' : pos.change_pct < 0 ? 'text-emerald-500' : 'text-muted-foreground')
+                            ? (pos.change_pct > 0 ? 'text-rose-600' : pos.change_pct < 0 ? 'text-emerald-700' : 'text-muted-foreground')
                             : 'text-muted-foreground'
                           const pnlColor = pos.pnl != null
-                            ? (pos.pnl > 0 ? 'text-rose-500' : pos.pnl < 0 ? 'text-emerald-500' : 'text-muted-foreground')
+                            ? (pos.pnl > 0 ? 'text-rose-600' : pos.pnl < 0 ? 'text-emerald-700' : 'text-muted-foreground')
                             : 'text-muted-foreground'
                           return (
                             <div
@@ -2368,10 +2409,10 @@ export default function StocksPage() {
                                 setDraggingPositionAccountId(null)
                                 positionDragSnapshotRef.current = null
                               }}
-                              className={`p-3 hover:bg-accent/30 transition-colors ${draggingPositionId === pos.id ? 'opacity-60' : ''}`}
+                              className={`px-3 py-2.5 hover:bg-accent/30 transition-colors ${draggingPositionId === pos.id ? 'opacity-60' : ''}`}
                             >
                               {/* Row 1: Stock info + Current price */}
-                              <div className="flex items-center justify-between gap-2 mb-2">
+                              <div className="flex items-center justify-between gap-2 mb-1.5">
                                 <div className="flex items-center gap-1.5 min-w-0">
                                   <span className={`shrink-0 text-[9px] px-1 py-0.5 rounded ${badge.style}`}>{badge.label}</span>
                                   <span className="shrink-0 font-mono text-[12px] font-semibold text-foreground">
@@ -2389,7 +2430,7 @@ export default function StocksPage() {
                                     </span>
                                   )}
                                 </div>
-                                <div className={`font-mono text-[13px] font-medium whitespace-nowrap shrink-0 ${changeColor}`}>
+                                <div className={`font-mono text-[13px] font-medium whitespace-nowrap shrink-0 tabular-nums ${changeColor}`}>
                                   {pos.current_price?.toFixed(2) || '—'}
                                   {pos.change_pct != null && <span className="text-[11px] ml-1">{pos.change_pct >= 0 ? '+' : ''}{pos.change_pct.toFixed(2)}%</span>}
                                 </div>
@@ -2398,7 +2439,7 @@ export default function StocksPage() {
                               {(() => {
                                 const { suggestion, kline } = getSuggestionForStock(pos.symbol, pos.market, true)
                                 return (suggestion || kline) ? (
-                                  <div className="mb-2">
+                                  <div className="mb-1.5">
                                     <SuggestionBadge
                                       suggestion={suggestion}
                                       stockName={pos.name}
@@ -2414,19 +2455,19 @@ export default function StocksPage() {
                               <div className="grid grid-cols-4 gap-2 text-[11px]">
                                 <div className="min-w-0">
                                   <div className="text-[10px] text-muted-foreground">成本</div>
-                                  <div className="font-mono text-foreground truncate" title={String(pos.cost_price)}>{formatPrice(pos.cost_price)}</div>
+                                  <div className="font-mono text-foreground truncate tabular-nums" title={String(pos.cost_price)}>{formatPrice(pos.cost_price)}</div>
                                 </div>
                                 <div className="min-w-0">
                                   <div className="text-[10px] text-muted-foreground">数量</div>
-                                  <div className="font-mono text-foreground truncate" title={String(pos.quantity)}>{pos.quantity}</div>
+                                  <div className="font-mono text-foreground truncate tabular-nums" title={String(pos.quantity)}>{pos.quantity}</div>
                                 </div>
                                 <div className="min-w-0">
                                   <div className="text-[10px] text-muted-foreground">盈亏</div>
-                                  <div className={`font-mono whitespace-nowrap ${pnlColor}`}>
+                                  <div className={`font-mono whitespace-nowrap tabular-nums ${pnlColor}`}>
                                     {pos.pnl != null ? `${pos.pnl >= 0 ? '+' : ''}${formatMoney(pos.pnl)}` : '—'}
                                   </div>
                                   {pos.pnl_pct != null && (
-                                    <div className={`text-[10px] font-mono ${pnlColor} opacity-80`}>
+                                    <div className={`text-[10px] font-mono tabular-nums ${pnlColor} opacity-80`}>
                                       {pos.pnl_pct >= 0 ? '+' : ''}{pos.pnl_pct.toFixed(2)}%
                                     </div>
                                   )}
@@ -2437,13 +2478,13 @@ export default function StocksPage() {
                                       { period: pos.daily_pnl_period, date: pos.quote_date },
                                     ]), true)}
                                   </div>
-                                  <div className={`font-mono whitespace-nowrap ${pos.daily_pnl != null ? (pos.daily_pnl >= 0 ? 'text-rose-500' : 'text-emerald-500') : 'text-muted-foreground'}`}>
+                                  <div className={`font-mono whitespace-nowrap tabular-nums ${pos.daily_pnl != null ? (pos.daily_pnl >= 0 ? 'text-rose-600' : 'text-emerald-700') : 'text-muted-foreground'}`}>
                                     {pos.daily_pnl != null ? `${pos.daily_pnl >= 0 ? '+' : ''}${formatMoney(pos.daily_pnl)}` : '—'}
                                   </div>
                                 </div>
                               </div>
                               {/* Row 4: Actions */}
-                              <div className="flex items-center justify-between mt-2 pt-2 border-t border-border/20">
+                              <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-border/20">
                                 <div>
                                   {stock && stock.agents && stock.agents.length > 0 ? (
                                     <button onClick={() => setAgentDialogStock(stock)} className="flex items-center gap-1">
@@ -2550,10 +2591,12 @@ export default function StocksPage() {
             </div>
           </div>
           {stocks.length === 0 ? (
-            <div className="py-12 text-center">
-              <div className="text-[13px] text-muted-foreground">还没有添加关注股票</div>
-              <div className="mt-2 text-[11px] text-muted-foreground/70">点击右上角“添加股票”开始</div>
-            </div>
+            loadError ? null : (
+              <div className="py-12 text-center">
+                <div className="text-[13px] text-muted-foreground">还没有添加关注股票</div>
+                <div className="mt-2 text-[11px] text-muted-foreground/70">点击右上角“添加股票”开始</div>
+              </div>
+            )
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {stocks
@@ -2567,7 +2610,7 @@ export default function StocksPage() {
                 .map((stock) => {
                 const quote = getStockQuote(`${stock.market}:${stock.symbol}`)
                 const changeColor = quote?.change_pct != null
-                  ? (quote.change_pct > 0 ? 'text-rose-500' : quote.change_pct < 0 ? 'text-emerald-500' : 'text-muted-foreground')
+                  ? (quote.change_pct > 0 ? 'text-rose-600' : quote.change_pct < 0 ? 'text-emerald-700' : 'text-muted-foreground')
                   : 'text-muted-foreground'
                 const { suggestion, kline } = getSuggestionForStock(stock.symbol, stock.market, false)
                 return (
@@ -2600,7 +2643,7 @@ export default function StocksPage() {
                       setDraggingWatchStockId(null)
                       watchDragSnapshotRef.current = null
                     }}
-                    className={`group rounded-xl border border-border/40 bg-background/30 hover:bg-accent/20 transition-colors p-3 cursor-pointer ${draggingWatchStockId === stock.id ? 'opacity-60' : ''}`}
+                    className={`group rounded-xl border border-border/40 bg-background/30 hover:bg-accent/20 transition-colors px-3 py-2.5 cursor-pointer ${draggingWatchStockId === stock.id ? 'opacity-60' : ''}`}
                     onClick={() => {
                       if (isSuppressCardClick()) return
                       setAgentDialogStock(stock)
@@ -2626,17 +2669,17 @@ export default function StocksPage() {
                           </button>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <div className={`font-mono text-[14px] font-bold leading-tight ${changeColor}`}>
+                      <div className="text-right shrink-0 whitespace-nowrap">
+                        <div className={`font-mono text-[14px] font-bold leading-tight tabular-nums ${changeColor}`}>
                           {quote?.current_price != null ? quote.current_price.toFixed(2) : '--'}
                         </div>
-                        <div className={`font-mono text-[11px] leading-tight ${changeColor}`}>
+                        <div className={`font-mono text-[11px] leading-tight tabular-nums ${changeColor}`}>
                           {quote?.change_pct != null ? `${quote.change_pct >= 0 ? '+' : ''}${quote.change_pct.toFixed(2)}%` : '--'}
                         </div>
                       </div>
                     </div>
 
-                    <div className="mt-2">
+                    <div className="mt-1.5">
                       {(suggestion || kline) ? (
                         <SuggestionBadge
                           suggestion={suggestion}
@@ -2651,7 +2694,7 @@ export default function StocksPage() {
                       )}
                     </div>
 
-                    <div className="mt-2 pt-2 border-t border-border/30 flex items-center justify-between gap-2">
+                    <div className="mt-1.5 pt-1.5 border-t border-border/30 flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1 flex-wrap">
                         {stock.agents && stock.agents.length > 0 ? (
                           <Badge variant="secondary" className="text-[10px]">{stock.agents.length} Agent</Badge>
@@ -3232,7 +3275,7 @@ export default function StocksPage() {
         <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Newspaper className="w-5 h-5 text-blue-500" />
+              <Newspaper className="w-5 h-5 text-blue-600" />
               相关资讯
             </DialogTitle>
             <DialogDescription>
@@ -3296,14 +3339,14 @@ export default function StocksPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1.5">
                           <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                            item.source === 'eastmoney' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400' :
-                            item.source === 'eastmoney_news' ? 'bg-blue-500/10 text-blue-500' :
-                            'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                            item.source === 'eastmoney' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-600' :
+                            item.source === 'eastmoney_news' ? 'bg-blue-500/10 text-blue-600' :
+                            'bg-emerald-500/10 text-emerald-600 dark:text-emerald-700'
                           }`}>
                             {item.source_label}
                           </span>
                           {item.importance >= 2 && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-500">
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-600">
                               重要
                             </span>
                           )}

@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo } from 'react'
-import { RefreshCw, Search, FileText, Calendar, Hash, ArrowDownToLine, CheckCircle2, AlertCircle, Loader2, ExternalLink } from 'lucide-react'
-import { reportsApi, type ReportItem, type VaultStatus, type SyncResult } from '@panwatch/api'
+import { RefreshCw, Search, FileText, Calendar, Hash, Loader2, ExternalLink } from 'lucide-react'
+import { reportsApi, type ReportItem } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Input } from '@panwatch/base-ui/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@panwatch/base-ui/components/ui/dialog'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import ErrorBanner from '@/components/ErrorBanner'
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n}B`
@@ -21,36 +22,29 @@ export default function ReportsPage() {
   const [items, setItems] = useState<ReportItem[]>([])
   const [jobs, setJobs] = useState<{ job_id: string; job_name: string }[]>([])
   const [loading, setLoading] = useState(false)
+  // 初始加载失败提示(失败≠空态:不把"加载失败"误读为"暂无报告")
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [jobFilter, setJobFilter] = useState<string>('') // 空 = 全部
   const [selected, setSelected] = useState<{ item: ReportItem; content: string } | null>(null)
   const [loadingContent, setLoadingContent] = useState(false)
-  const [vault, setVault] = useState<VaultStatus | null>(null)
-  const [syncing, setSyncing] = useState(false)
-  const [syncResult, setSyncResult] = useState<SyncResult | null>(null)
 
   const load = async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       const res = await reportsApi.list({ limit: 500 })
       setItems(res.items)
       setJobs(res.jobs)
     } catch (e) {
       console.error(e)
+      setLoadError(e instanceof Error ? e.message : '加载失败')
     } finally {
       setLoading(false)
     }
   }
 
-  const loadVault = async () => {
-    try {
-      setVault(await reportsApi.vaultStatus())
-    } catch (e) {
-      console.error(e)
-    }
-  }
-
-  useEffect(() => { load(); loadVault() }, [])
+  useEffect(() => { load() }, [])
 
   const filtered = useMemo(() => {
     let r = items
@@ -89,20 +83,6 @@ export default function ReportsPage() {
     }
   }
 
-  const doSync = async () => {
-    setSyncing(true)
-    setSyncResult(null)
-    try {
-      const res = await reportsApi.syncToVault()
-      setSyncResult(res)
-      await loadVault()
-    } catch (e: any) {
-      setSyncResult({ synced: 0, skipped: 0, errors: [String(e)], target_dir: '' })
-    } finally {
-      setSyncing(false)
-    }
-  }
-
   return (
     <div className="space-y-5 p-4 md:p-6">
       {/* Header */}
@@ -117,57 +97,11 @@ export default function ReportsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={() => { load(); loadVault() }} disabled={loading}>
+          <Button variant="ghost" size="sm" onClick={load} disabled={loading}>
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          </Button>
-          <Button onClick={doSync} disabled={syncing} size="sm">
-            {syncing ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <ArrowDownToLine className="w-4 h-4 mr-1" />}
-            同步到 Obsidian
           </Button>
         </div>
       </div>
-
-      {/* Vault 状态卡片 */}
-      {vault && (
-        <div className="card-subtle p-3.5 text-sm">
-          {vault.exists ? (
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                <span>Obsidian vault 已连接: <code className="text-xs">{vault.reports_dir}</code></span>
-              </div>
-              <span className="text-muted-foreground">
-                已同步 <strong className="text-foreground">{vault.reports_count}</strong> 份
-                {vault.tasks && vault.tasks.length > 0 && (
-                  <> · {vault.tasks.length} 个任务</>
-                )}
-              </span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 text-yellow-600">
-              <AlertCircle className="w-4 h-4" />
-              <span>Obsidian vault 不存在:{vault.hint}</span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* 同步结果提示 */}
-      {syncResult && (
-        <div className={`card-subtle p-3 text-sm ${syncResult.errors.length === 0 ? 'border-emerald-500/30' : 'border-red-500/30'}`}>
-          {syncResult.errors.length === 0 ? (
-            <div className="flex items-center gap-2 text-emerald-600">
-              <CheckCircle2 className="w-4 h-4" />
-              同步完成:新增 <strong>{syncResult.synced}</strong> 份 · 跳过(已存在)<strong>{syncResult.skipped}</strong> 份
-            </div>
-          ) : (
-            <div className="text-red-500">
-              <div>同步失败:{syncResult.errors.length} 个错误</div>
-              <div className="text-xs mt-1">{syncResult.errors[0]}</div>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* 筛选条 */}
       <div className="flex items-center gap-2 flex-wrap">
@@ -200,6 +134,11 @@ export default function ReportsPage() {
         <div className="flex items-center justify-center py-12 text-muted-foreground">
           <Loader2 className="w-5 h-5 animate-spin mr-2" /> 加载中...
         </div>
+      ) : loadError ? (
+        <ErrorBanner
+          errors={loadError ? [{ source: '报告列表', message: loadError, retry: () => void load() }] : []}
+          onDismiss={() => setLoadError(null)}
+        />
       ) : grouped.size === 0 ? (
         <div className="card-subtle p-8 text-center text-sm text-muted-foreground">
           暂无报告
@@ -212,9 +151,9 @@ export default function ReportsPage() {
             const latest = files[0] // 已 mtime 倒序
             return (
               <div key={jobId} className="card-subtle p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <h3 className="font-medium text-sm">{jobName}</h3>
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div className="min-w-0">
+                    <h3 className="font-medium text-sm truncate">{jobName}</h3>
                     <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-3">
                       <span className="flex items-center gap-1"><Hash className="w-3 h-3" />{files.length} 份</span>
                       <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />
@@ -235,11 +174,11 @@ export default function ReportsPage() {
                         <div className="text-sm truncate">
                           {it.title_preview || it.file}
                         </div>
-                        <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
-                          <span>{formatDate(it.mtime_iso)}</span>
-                          <span>·</span>
-                          <span>{formatBytes(it.size)}</span>
-                          <span className="text-muted-foreground/60">{it.file}</span>
+                        <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 min-w-0">
+                          <span className="shrink-0">{formatDate(it.mtime_iso)}</span>
+                          <span className="shrink-0">·</span>
+                          <span className="shrink-0">{formatBytes(it.size)}</span>
+                          <span className="text-muted-foreground/60 truncate min-w-0">{it.file}</span>
                         </div>
                       </div>
                       <ExternalLink className="w-3.5 h-3.5 text-muted-foreground/50 shrink-0" />
@@ -278,7 +217,7 @@ export default function ReportsPage() {
                 <Loader2 className="w-5 h-5 animate-spin mr-2" /> 加载中...
               </div>
             ) : (
-              <div className="report-content prose prose-sm dark:prose-invert max-w-none prose-headings:font-semibold prose-h2:text-base prose-h3:text-sm prose-h3:mt-4 prose-h3:mb-2 prose-table:text-xs prose-th:bg-accent/30 prose-th:p-1.5 prose-td:p-1.5 prose-td:border-border prose-th:border-border prose-code:bg-accent/30 prose-code:px-1 prose-code:rounded prose-code:before:content-none prose-code:after:content-none">
+              <div className="report-content overflow-x-auto prose prose-sm dark:prose-invert max-w-none prose-headings:font-semibold prose-h2:text-base prose-h3:text-sm prose-h3:mt-4 prose-h3:mb-2 prose-table:text-xs prose-th:bg-accent/30 prose-th:p-1.5 prose-td:p-1.5 prose-td:border-border prose-th:border-border prose-code:bg-accent/30 prose-code:px-1 prose-code:rounded prose-code:before:content-none prose-code:after:content-none">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{selected?.content || ''}</ReactMarkdown>
               </div>
             )}

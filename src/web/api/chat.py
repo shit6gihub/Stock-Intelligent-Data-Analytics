@@ -1,11 +1,13 @@
 """AI 对话 API 端点。"""
 
 import asyncio
+import html.parser
 import json
 import logging
 import os
 import re
 import sqlite3
+import urllib.parse
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -38,7 +40,7 @@ from src.web.models import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-SYSTEM_PROMPT = """你是 PanWatch 的 AI 投资助手。
+SYSTEM_PROMPT = """你是数智分析BOT,是 SIDA(Stock-Intelligent-Data-Analytics 数智分析)的 AI 投资助手。
 
 你可以使用工具获取用户的投资数据。当用户的问题涉及具体数据时，主动调用工具获取，不要让用户自己提供。
 
@@ -47,11 +49,13 @@ SYSTEM_PROMPT = """你是 PanWatch 的 AI 投资助手。
 - 基于工具返回的实时数据回答，不编造价格等具体数据
 - 给出明确的观点和理由
 - 涉及买卖建议时说明风险
+- 合规声明(2026-08-14): 回答末尾如需给买卖倾向/预测结论, 必须附带「以上分析仅供参考, 不构成投资建议」; 严禁承诺收益或保证盈利
 - 用中文回答
 - 保持简洁，避免冗余
 - 用户问「新闻 / 资讯 / 热点 / 今天有什么消息」类问题时，必须调用 get_market_news 工具获取实时资讯热榜与每日简报，再基于返回内容回答；严禁在不调用工具的情况下凭记忆编造新闻、题材或资金流向。若工具返回为空，如实说明「暂无实时资讯数据」并建议盘后重试。
 - 工具选择指引(2026-08-11): 用户问「主力意图/主力在吸筹还是派发/主力想干什么」时, 必须调用 get_main_intent(逐笔口径,含筹码/参与度);「资金流向/主力净流入多少/超大单大单」时调用 get_capital_flow(东财四档口径)。两工具口径不同, 主力意图判断一律以 get_main_intent 为准, get_capital_flow 仅作资金面参考; 若两者方向冲突, 说明口径差异(逐笔vs东财)并优先采信 get_main_intent。严禁用 get_capital_flow 的数据直接下「主力派发/吸筹」结论。
-- 口径标注规则(2026-08-13): 工具返回文本开头自带数据源口径标注(get_main_intent 为「腾讯逐笔·主力意图口径」, get_capital_flow 为「东财四档·资金流向口径」)。回答涉及「主力净流入/净流出」等具体数字时, 必须说明所用口径(逐笔 or 东财四档), 不得省略; 若两个口径数字不同, 要指出差异原因(统计方式不同: 逐笔主动买卖盘 vs 按大中小单四档归类), 再给结论。"""
+- 口径标注规则(2026-08-13): 工具返回文本开头自带数据源口径标注(get_main_intent 为「腾讯逐笔·主力意图口径」, get_capital_flow 为「东财四档·资金流向口径」)。回答涉及「主力净流入/净流出」等具体数字时, 必须说明所用口径(逐笔 or 东财四档), 不得省略; 若两个口径数字不同, 要指出差异原因(统计方式不同: 逐笔主动买卖盘 vs 按大中小单四档归类), 再给结论。
+- 网页链接处理(2026-08-14): 用户发送网页链接(如 mp.weixin.qq.com 微信公众号文章、新闻/研报网页)或要求分析某链接内容时, 必须先调用 get_web_content 工具抓取链接正文, 再基于抓取内容回答; 严禁不抓取就凭空猜测或编造链接内容。若抓取失败(链接非法/超时/非网页/网络错误), 如实告知用户无法获取链接内容及原因, 不得伪造抓取结果。"""
 
 MAX_HISTORY_MESSAGES = 20
 MAX_TOOL_ROUNDS = 5
@@ -66,6 +70,7 @@ _TOOL_STAGE_LABELS = {
     "get_stock_suggestions": "正在读取历史建议...",
     "get_watchlist": "正在读取自选股...",
     "get_capital_flow": "正在查询主力资金流向...",
+    "get_web_content": "正在抓取网页链接内容...",
     "tdx_wenda": "正在查询市场数据...",
     "get_market_news": "正在获取市场资讯...",
     "get_kline_patterns": "正在识别K线形态...",
@@ -406,6 +411,20 @@ CHAT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_web_content",
+            "description": "抓取网页链接正文(支持 http/https, 含微信公众号文章 mp.weixin.qq.com)。用于回答「帮我看看这个链接/这篇文章讲了什么/分析一下这个网页内容」等需要分析用户发来链接的问题。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "要抓取的网页完整链接, 如 https://mp.weixin.qq.com/s/xxx 或 https://example.com/article"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
 ]
 
 
@@ -688,6 +707,184 @@ def _format_fundamentals_text(symbol: str, market: str, data: dict) -> str:
         lines.append(f"- [{ts}] {r.get('title') or '—'} ({src})")
 
     return "\n".join(lines)
+
+
+# ──────────────── 网页链接抓取工具(2026-08-14): get_web_content ────────────────
+
+# SSRF 防护: 内网/本地/云 metadata 主机名(IP 直连 + 域名解析后双重检查)
+_INTERNAL_HOSTNAMES = {
+    "localhost", "metadata.google.internal", "metadata.tencentyun.com",
+    "metadata.aliyun.com", "metadata", "kubernetes.default.svc",
+}
+
+
+def _is_internal_target(parsed) -> bool:
+    """判断目标 URL 是否指向内网/本地/云 metadata(SSRF 拦截)。"""
+    import ipaddress
+    import socket
+
+    host = (parsed.hostname or "").strip().lower().rstrip(".")
+    if not host:
+        return True
+    if host in _INTERNAL_HOSTNAMES:
+        return True
+    # IP 形式直接判断
+    try:
+        ip = ipaddress.ip_address(host)
+        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast
+    except ValueError:
+        pass
+    # 域名形式: 解析一次, 命中内网段也拒绝(防 DNS 指向内网)
+    try:
+        for info in socket.getaddrinfo(host, None):
+            try:
+                ip = ipaddress.ip_address(info[4][0])
+                if ip.is_private or ip.is_loopback or ip.is_link_local:
+                    return True
+            except ValueError:
+                continue
+    except (socket.gaierror, OSError):
+        pass  # 解析失败交给后续请求报错
+    return False
+# 用户可能在对话中发来网页链接(微信公众号文章/新闻/研报等), AI 通过该工具抓取正文再回答。
+# 轻量实现: httpx GET(15s 超时 + 常见浏览器 UA, 微信文章需要 UA) + html.parser 标准库提取正文,
+# 不引入 BeautifulSoup 等重型依赖。
+
+_WEB_CONTENT_MAX_CHARS = 3000              # 返回给 LLM 的正文截断上限
+_WEB_CONTENT_MAX_BYTES = 2 * 1024 * 1024   # 响应体读取上限, 防异常大页面拖垮
+_WEB_FETCH_TIMEOUT = 15                    # 秒
+_WEB_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+
+# 块级/换行标签: 提取文本时在标签边界补换行, 避免正文挤成一行
+_WEB_BLOCK_TAGS = frozenset({
+    "p", "div", "br", "li", "h1", "h2", "h3", "h4", "h5", "h6",
+    "tr", "section", "article", "blockquote", "pre", "ul", "ol", "table", "hr",
+})
+# 跳过标签: 内部文本不参与提取(脚本/样式/头部/导航/页脚/内联框架/表单等噪音)
+_WEB_SKIP_TAGS = frozenset({
+    "script", "style", "noscript", "head", "title", "meta", "link",
+    "iframe", "svg", "nav", "footer", "header", "form", "button",
+    "template", "video", "audio", "canvas", "aside",
+})
+# HTML 空元素(void): 没有闭合标签, 深度计数必须跳过, 否则 head 内的 <link>/<meta>
+# 会把 _skip_depth 永久抬高, 导致 body 正文被误判为噪音而全部丢弃
+_HTML_VOID_TAGS = frozenset({
+    "area", "base", "br", "col", "embed", "hr", "img", "input",
+    "link", "meta", "param", "source", "track", "wbr",
+})
+
+
+class _WebTextExtractor(html.parser.HTMLParser):
+    """轻量 HTML 正文提取器: 跳过 script/style 等噪音标签, 块级标签边界补换行。"""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self._skip_depth = 0
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in _WEB_SKIP_TAGS and tag not in _HTML_VOID_TAGS:
+            self._skip_depth += 1
+        if self._skip_depth == 0 and tag in _WEB_BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in _WEB_SKIP_TAGS and tag not in _HTML_VOID_TAGS:
+            if self._skip_depth > 0:
+                self._skip_depth -= 1
+        elif self._skip_depth == 0 and tag in _WEB_BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if self._skip_depth == 0:
+            self.parts.append(data)
+
+
+def _extract_web_text(html_text: str) -> str:
+    """从 HTML 提取正文文本: 去噪音标签 → 折叠空白 → 去空行。解析异常不致命, 用已收集部分。"""
+    parser = _WebTextExtractor()
+    try:
+        parser.feed(html_text)
+        parser.close()
+    except Exception:
+        pass
+    lines = []
+    for ln in re.split(r"\n+", "".join(parser.parts)):
+        ln = re.sub(r"[ \t\u00a0]+", " ", ln).strip()
+        if ln:
+            lines.append(ln)
+    return "\n".join(lines)
+
+
+def get_web_content(url: str) -> str:
+    """抓取网页链接正文文本, 供 AI 分析用户发来的链接(含微信公众号文章 mp.weixin.qq.com)。
+
+    安全/健壮性: 仅允许 http/https; 15s 超时; 常见浏览器 UA; 响应体上限 2MB;
+    正文截断到 3000 字符返回; 任何失败均返回友好错误文本, 不抛异常。
+    """
+    url = (url or "").strip()
+    if not url:
+        return "抓取失败: 链接为空, 请提供有效的 http/https 网址。"
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError:
+        return "抓取失败: 链接格式非法, 仅支持 http/https 网址。"
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return "抓取失败: 仅支持 http/https 链接, 请检查链接格式。"
+
+    # SSRF 防护(2026-08-15): 拒绝内网/本地/云 metadata 地址, 防服务器被当作代理扫描内网
+    if _is_internal_target(parsed):
+        return "抓取失败: 目标链接为内网/本地地址, 已拒绝访问。"
+
+    try:
+        import httpx
+    except ImportError:
+        return "抓取失败: 当前环境缺少 httpx 依赖, 无法发起网络请求。"
+
+    try:
+        headers = {
+            "User-Agent": _WEB_USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        }
+        raw = b""
+        encoding = "utf-8"
+        with httpx.Client(timeout=_WEB_FETCH_TIMEOUT, follow_redirects=True, headers=headers) as client:
+            with client.stream("GET", url) as resp:
+                resp.raise_for_status()
+                ctype = (resp.headers.get("content-type") or "").lower()
+                if ctype and not any(k in ctype for k in ("text/", "html", "xhtml", "xml", "json")):
+                    return (
+                        "抓取失败: 目标链接返回的不是网页内容"
+                        f"(Content-Type: {ctype.split(';')[0].strip()}), 无法提取正文。"
+                    )
+                for chunk in resp.iter_bytes():
+                    raw += chunk
+                    if len(raw) > _WEB_CONTENT_MAX_BYTES:
+                        return "抓取失败: 页面超过 2MB 读取上限, 已放弃抓取(可能为异常大页面)。"
+                encoding = resp.encoding or "utf-8"
+        try:
+            html_text = raw.decode(encoding, errors="replace")
+        except (LookupError, UnicodeDecodeError):
+            html_text = raw.decode("utf-8", errors="replace")
+        text = _extract_web_text(html_text)
+        if not text:
+            return f"抓取失败: 页面未提取到正文文本({url})。"
+        if len(text) > _WEB_CONTENT_MAX_CHARS:
+            text = text[:_WEB_CONTENT_MAX_CHARS] + "…[已截断]"
+        return f"【网页内容】{url}\n{text}"
+    except httpx.HTTPStatusError as e:
+        return f"抓取失败: 目标链接返回 HTTP {e.response.status_code}。"
+    except httpx.TimeoutException:
+        return "抓取失败: 请求超时(15s), 链接可能不可达或响应过慢。"
+    except httpx.RequestError as e:
+        return f"抓取失败: 网络请求错误({e.__class__.__name__}: {str(e)[:120]})。"
+    except Exception as e:
+        logger.warning(f"get_web_content 抓取失败 [{url}]: {e}")
+        return f"抓取失败: {str(e)[:120]}。"
 
 
 async def _execute_tool(db: Session, name: str, args: dict) -> str:
@@ -1008,6 +1205,15 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
             except Exception as e:
                 logger.warning(f"get_hot_stocks 工具失败: {e}")
                 return f"同花顺热榜查询失败: {e}"
+        elif name == "get_web_content":
+            url = (args.get("url") or "").strip()
+            if not url:
+                return "请提供要抓取的网页链接(url)。"
+            # 局部 import asyncio: 函数内 get_market_news 分支有 `import asyncio`,
+            # 使 asyncio 成为整个函数作用域的局部名, 必须在本分支内重新 import 才能使用
+            import asyncio
+            # 同步网络抓取放线程池, 不阻塞事件循环(与 2026-08-14 热修风格一致)
+            return await asyncio.to_thread(get_web_content, url)
         else:
             return f"未知工具: {name}"
     except Exception as e:
@@ -1133,7 +1339,73 @@ def _detect_repeat_question(history: list, threshold: int = 3) -> str | None:
     )
 
 
-async def _build_ai_messages(db: Session, conv: ChatConversation, user: User) -> list[dict]:
+async def _describe_image(image_data: str, user=None) -> str:
+    """视觉代理: 用「vision 场景」绑定的多模态模型看图生成文字描述。
+
+    主对话模型(deepseek)无视觉能力, 图片先由视觉模型描述成文本,
+    再拼进对话内容由主模型分析。视觉模型可在设置页「场景分配」随时更换。
+    失败返回空串(调用方自行降级)。
+    """
+    try:
+        from src.core.ai_client import get_model_for_scene
+        from src.web.database import SessionLocal
+        from src.web.models import AIService
+
+        db = SessionLocal()
+        try:
+            # 1) vision 场景绑定优先(设置页可换)
+            base_url, api_key, model_name = None, None, None
+            try:
+                model_obj = get_model_for_scene(db, "vision", user=user)
+                if model_obj is not None:
+                    svc = db.query(AIService).filter(AIService.id == model_obj.service_id).first()
+                    if svc:
+                        base_url, api_key, model_name = svc.base_url, svc.api_key, model_obj.model
+            except Exception:
+                pass
+            # 2) 兜底: Agnes 服务 + agnes-2.5-flash(已知支持视觉)
+            if not (base_url and api_key and model_name):
+                svc = db.query(AIService).filter(AIService.name.like("%Agnes%")).first()
+                if not svc:
+                    return ""
+                base_url, api_key, model_name = svc.base_url, svc.api_key, "agnes-2.5-flash"
+        finally:
+            db.close()
+
+        import httpx
+
+        payload = {
+            "model": model_name,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "请用中文简要描述这张图片: 包含内容、颜色、形状、文字、图表类型等, 50字以内。",
+                        },
+                        {"type": "image_url", "image_url": {"url": image_data}},
+                    ],
+                }
+            ],
+            "max_tokens": 200,
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                f"{base_url.rstrip('/')}/chat/completions",
+                json=payload,
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            r.raise_for_status()
+            return str(r.json()["choices"][0]["message"]["content"] or "").strip()
+    except Exception as exc:
+        logger.warning(f"视觉代理(看图)失败: {exc}")
+        return ""
+
+
+async def _build_ai_messages(
+    db: Session, conv: ChatConversation, user: User, image_data: str | None = None
+) -> list[dict]:
     """构建发送给 AI 的消息列表(system + 历史 + 数据上下文)。
 
     send_message(非流式)与 send_message_stream(流式)共用, 保证两条链路逻辑一致。
@@ -1213,6 +1485,16 @@ async def _build_ai_messages(db: Session, conv: ChatConversation, user: User) ->
     if summary_block:
         messages_for_ai[0]["content"] += "\n\n" + summary_block
 
+    # 多模态: 若本次消息带图片(base64 data URL), 把最后一条 user 消息替换为 content_parts(文本+图片)
+    if image_data and messages_for_ai and messages_for_ai[-1].get("role") == "user":
+        last_text = str(messages_for_ai[-1].get("content") or "")
+        messages_for_ai[-1] = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": last_text},
+                {"type": "image_url", "image_url": {"url": image_data}},
+            ],
+        }
     return messages_for_ai
 
 
@@ -1296,6 +1578,7 @@ class CreateConversationBody(BaseModel):
 
 class SendMessageBody(BaseModel):
     content: str
+    image_data: str | None = None  # 可选: 图片 base64 data URL(多模态, 模型看图)
 
 
 def _client_from_scene_cfg(db: Session, cfg) -> AIClient | None:
@@ -1345,30 +1628,42 @@ def _client_from_scene_cfg(db: Session, cfg) -> AIClient | None:
     return None
 
 
-def _get_ai_client(db: Session, model_id: int | None = None) -> AIClient:
+def _get_ai_client(db: Session, model_id: int | None = None, user=None) -> AIClient:
     """获取 AI 客户端实例。
 
-    模型选择优先级(2026-08-13 统一 LLM 配置中心):
-    1. 会话显式指定模型(conv.ai_model_id —— AI 裁判等经 ai_model_id 建会话时用)
-    2. ai_scene_bindings 的 chat 场景绑定(基础设施 A 子任务提供
-       ai_client.get_model_for_scene(db, "chat"); 未落地/异常时向后兼容回落)
-    3. AIModel 表 is_default
-    4. AIModel 表任意一条
-    5. Settings 默认配置
+    模型选择优先级(2026-08-13 统一 LLM 配置中心; 2026-08-16 接入用户级解析):
+    1. 会话显式指定模型(conv.ai_model_id —— AI 裁判等经 ai_model_id 建会话时用;
+       用户级 granted 授权时校验该模型在授权列表内, 不在则回落 ②)
+    2. 用户级解析 get_model_for_scene(db, "chat", user):
+       BYOK 自有服务商 → 平台授权(从授权列表挑) → 全局 chat 场景绑定
+    3. AIModel 表 is_default / 任意一条(无用户级配置时)
+    4. Settings 默认配置
     """
     model = None
     service = None
 
-    # 1) 会话显式模型(裁判场景绑定等传入 ai_model_id 创建会话)
-    if model_id:
+    # 用户级 granted 授权列表(用于校验 conv.ai_model_id); BYOK 用户不限制平台模型
+    granted_ids = None
+    if user is not None:
+        from src.core.ai_client import _get_model_access
+
+        access = _get_model_access(user)
+        if access is not None and access.get("mode") == "granted":
+            granted_ids = set(access.get("model_ids") or [])
+
+    # 1) 会话显式模型(裁判场景绑定等传入 ai_model_id 创建会话;
+    #    granted 授权下模型不在列表内 → 视为不可用, 走 ② 用户级解析)
+    if model_id and (granted_ids is None or model_id in granted_ids):
         model = db.query(AIModel).filter(AIModel.id == model_id).first()
 
-    # 2) chat 场景绑定优先(统一配置中心); 函数未落地 → ImportError 自然回落
+    # 2) 用户级解析(BYOK/平台授权/chat 场景绑定); 函数未落地 → ImportError 自然回落
     if not model:
         try:
             from src.core.ai_client import get_model_for_scene
 
-            scene_client = _client_from_scene_cfg(db, get_model_for_scene(db, "chat"))
+            scene_client = _client_from_scene_cfg(
+                db, get_model_for_scene(db, "chat", user=user)
+            )
             if scene_client is not None:
                 return scene_client
         except Exception as e:
@@ -1389,6 +1684,7 @@ def _get_ai_client(db: Session, model_id: int | None = None) -> AIClient:
             base_url=service.base_url,
             api_key=service.api_key,
             model=model.model,
+            scene="chat",
         )
 
     settings = Settings()
@@ -1396,6 +1692,7 @@ def _get_ai_client(db: Session, model_id: int | None = None) -> AIClient:
         base_url=settings.ai_base_url,
         api_key=settings.ai_api_key,
         model=settings.ai_model,
+        scene="chat",
     )
 
 
@@ -1870,6 +2167,19 @@ async def send_message(
         if not conv:
             raise HTTPException(404, "对话不存在")
 
+        # demo 账号限流: 每日对话次数上限, 防共享模型 key 被公开访客滥用
+        if user.username == "demo":
+            from src.core.demo_limit import allow
+            if not allow(user.id):
+                raise HTTPException(429, "演示账号每日对话次数已用完(10次/天)。请自行部署体验完整功能: https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics")
+
+        # 多模态: 图片先由 agnes 视觉代理转成文字描述(在保存前处理, 保证 DB 历史连贯)
+        if body.image_data:
+            desc = await _describe_image(body.image_data, user=user)
+            if desc:
+                body.content = f"[用户附图内容] {desc}\n\n{body.content}"
+                body.image_data = None  # 主模型用文本, 不传图片
+
         # 保存用户消息
         user_msg = ChatMessage(
             conversation_id=conversation_id,
@@ -1886,8 +2196,8 @@ async def send_message(
         db.refresh(user_msg)
 
         # 构建消息列表 + 调用 AI（带 tool use，用于按需获取更多数据）
-        messages_for_ai = await _build_ai_messages(db, conv, user)
-        ai_client = _get_ai_client(db, conv.ai_model_id)
+        messages_for_ai = await _build_ai_messages(db, conv, user, image_data=body.image_data)
+        ai_client = _get_ai_client(db, conv.ai_model_id, user=user)
         ai_response = ""
         async for _kind, payload in _run_tool_loop(ai_client, messages_for_ai, db):
             if _kind == "text":
@@ -1941,6 +2251,20 @@ async def send_message_stream(
                 yield _sse_event("error", {"message": "对话不存在"})
                 return
 
+            # demo 账号限流: 每日对话次数上限, 防共享模型 key 被公开访客滥用
+            if user.username == "demo":
+                from src.core.demo_limit import allow, remaining
+                if not allow(user.id):
+                    yield _sse_event("error", {"message": f"演示账号每日对话次数已用完(10次/天)。请自行部署体验完整功能: https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics"})
+                    return
+
+            # 多模态: 图片先由 agnes 视觉代理转成文字描述(在保存前处理, 保证 DB 历史连贯)
+            if body.image_data:
+                desc = await _describe_image(body.image_data, user=user)
+                if desc:
+                    body.content = f"[用户附图内容] {desc}\n\n{body.content}"
+                    body.image_data = None
+
             # 保存用户消息
             user_msg = ChatMessage(
                 conversation_id=conversation_id,
@@ -1958,8 +2282,14 @@ async def send_message_stream(
 
             # 构建消息列表(与 send_message 共用逻辑)
             yield _sse_event("stage", {"message": "正在准备上下文..."})
-            messages_for_ai = await _build_ai_messages(db, conv, user)
-            ai_client = _get_ai_client(db, conv.ai_model_id)
+            # 多模态: 图片先由 agnes 视觉代理转成文字描述, 再交给主对话模型
+            if body.image_data:
+                desc = await _describe_image(body.image_data, user=user)
+                if desc:
+                    body.content = f"[用户附图内容] {desc}\n\n{body.content}"
+                    body.image_data = None
+            messages_for_ai = await _build_ai_messages(db, conv, user, image_data=body.image_data)
+            ai_client = _get_ai_client(db, conv.ai_model_id, user=user)
 
             # 多轮 tool use: 每轮 tool 执行前推送阶段提示
             ai_response = ""

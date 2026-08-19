@@ -277,11 +277,11 @@ export default function AnalysisDetailPage() {
             >
               <ArrowLeft className="w-4 h-4" />
             </button>
-            <h1 className="text-base font-bold truncate min-w-0">{result.title || `${symbol} 深度分析`}</h1>
+            <h1 className="text-[20px] md:text-[22px] font-bold truncate min-w-0">{result.title || `${symbol} 深度分析`}</h1>
             <span className="text-[12px] text-muted-foreground shrink-0">{date}</span>
             <button
               onClick={() => setShareOpen(true)}
-              className="ml-auto shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/50 text-[12.5px] text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+              className="ml-auto shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/50 text-[12px] text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
               title="生成可分享的结论卡片图"
             >
               <ImageDown className="w-3.5 h-3.5" />
@@ -290,7 +290,7 @@ export default function AnalysisDetailPage() {
             <button
               onClick={handleExportPdf}
               disabled={pdfBusy}
-              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/50 text-[12.5px] text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/50 text-[12px] text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
               title="导出 PDF 文件"
             >
               <FileDown className="w-3.5 h-3.5" />

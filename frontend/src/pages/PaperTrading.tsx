@@ -14,6 +14,7 @@ import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Switch } from '@panwatch/base-ui/components/ui/switch'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@panwatch/base-ui/components/ui/dialog'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
+import ErrorBanner from '@/components/ErrorBanner'
 
 const EXIT_REASON_MAP: Record<string, string> = {
   stop_loss: '止损',
@@ -112,6 +113,7 @@ export default function PaperTradingPage() {
   const [equityCurve, setEquityCurve] = useState<EquityCurvePoint[]>([])
   const [strategyPerf, setStrategyPerf] = useState<StrategyPerformanceItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)  // 2026-08-17 闭环修正:错误态系统统一
   const [scanning, setScanning] = useState(false)
   const [tradesPage, setTradesPage] = useState(0)
   const tradesPageSize = 20
@@ -153,8 +155,9 @@ export default function PaperTradingPage() {
       setTradesTotal(tradeData.total)
       setEquityCurve(metrics.equity_curve)
       setStrategyPerf(metrics.strategy_performance || [])
-    } catch {
-      toast('加载失败', 'error')
+    } catch (e) {
+      console.error(e)
+      setLoadError(e instanceof Error ? e.message : '加载失败')
     } finally {
       setLoading(false)
     }
@@ -321,6 +324,11 @@ export default function PaperTradingPage() {
 
   return (
     <div className="space-y-5">
+      {/* 2026-08-17 闭环修正(B 报告 P0-3):错误态系统统一 */}
+      <ErrorBanner
+        errors={loadError ? [{ source: '模拟盘', message: loadError, retry: () => void loadData() }] : []}
+        onDismiss={() => setLoadError(null)}
+      />
       {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-2">
@@ -403,12 +411,12 @@ export default function PaperTradingPage() {
       {/* Summary Cards */}
       {account && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <div className="card p-3">
+          <div className="card relative overflow-hidden p-3 border-l-2 border-l-primary">
             <div className="flex items-center gap-1.5 text-muted-foreground text-xs mb-1">
               <Wallet className="w-3.5 h-3.5" />
               总资产
             </div>
-            <div className="text-lg font-bold">{formatCurrency(account.total_equity)}</div>
+            <div className="text-xl font-bold font-num tabular-nums">{formatCurrency(account.total_equity)}</div>
           </div>
           <div className="card p-3">
             <div className="flex items-center gap-1.5 text-muted-foreground text-xs mb-1">

@@ -8,6 +8,7 @@ import re
 import apprise
 import asyncio
 import httpx
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,11 @@ CHANNEL_TYPES = {
         "label": "Hermes 中转(企微/TG等)",
         "fields": ["webhook_url", "secret"],
     },
+    "wechat_ilink": {
+        "label": "个人微信(iLink)",
+        "fields": [],
+        "hint": "个人微信直通(腾讯官方 iLink 通道, 推送以「数智分析BOT」自称)。设置页扫码绑定即可, 无需手填。",
+    },
     "lark": {
         "label": "飞书机器人",
         "fields": ["webhook_token"],
@@ -121,13 +127,14 @@ CHANNEL_TYPES = {
 _APPRISE_TYPES = {"telegram", "bark", "dingtalk", "lark", "discord", "pushover"}
 
 # 自定义实现的渠道类型（带代理或特殊需求）
-_CUSTOM_IMPL_TYPES = {"wecom", "serverchan", "pushplus", "hermes"}
+_CUSTOM_IMPL_TYPES = {"wecom", "serverchan", "pushplus", "hermes", "wechat_ilink"}
 
 _CUSTOM_REQUIRED_FIELDS = {
     "wecom": ("webhook_key",),
     "serverchan": ("sendkey",),
     "pushplus": ("token",),
     "hermes": ("webhook_url",),
+    "wechat_ilink": (),  # 扫码绑定写入 token/base_url/user_id, 无需手填校验
 }
 
 # 支持 Markdown 的渠道（不需要 sanitize）
@@ -209,6 +216,17 @@ def build_apprise_url(channel_type: str, config: dict) -> str | None:
 
     else:
         raise ValueError(f"不支持的 Apprise 渠道类型: {channel_type}")
+
+
+def _extract_context_token(updates: dict, user_id: str) -> str | None:
+    """从 iLink getupdates 响应中提取指定用户的最新 context_token(最新优先)。"""
+    msgs = updates.get("msgs") or []
+    for m in reversed(msgs):
+        if str(m.get("from_user_id") or "") == user_id:
+            ctx = str(m.get("context_token") or "").strip()
+            if ctx:
+                return ctx
+    return None
 
 
 class NotifierManager:
@@ -392,6 +410,8 @@ class NotifierManager:
             return await self._send_pushplus(config, title, content)
         elif ch_type == "hermes":
             await self._send_hermes(config, title, content)
+        elif ch_type == "wechat_ilink":
+            return await self._send_wechat_ilink(config, title, content)
         else:
             logger.warning(f"未知的自定义渠道类型: {ch_type}")
 
@@ -427,7 +447,7 @@ class NotifierManager:
             if link_m:
                 notice = f"\n\n…内容过长已截断,完整报告 👉 {link_m.group(1)}"
             else:
-                notice = "\n\n…内容过长已截断,完整报告请在 PanWatch 查看"
+                notice = "\n\n…内容过长已截断,完整报告请在 SIDA 查看"
             text = text[: 3900 - len(notice)].rstrip() + notice
         payload = {
             "chat_id": chat_id,
@@ -493,7 +513,7 @@ class NotifierManager:
         if not url:
             raise ValueError("Hermes 中转需要 webhook_url")
 
-        payload = {"title": title or "PanWatch 通知", "body": content or ""}
+        payload = {"title": title or "SIDA 通知", "body": content or ""}
         raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
         headers = {"Content-Type": "application/json"}
@@ -514,6 +534,78 @@ class NotifierManager:
             if data.get("status") not in (None, "delivered", "ok"):
                 raise RuntimeError(f"Hermes 中转未送达: {data}")
             logger.info(f"Hermes 中转通知发送成功: {title}")
+
+    async def _send_wechat_ilink(self, config: dict, title: str, content: str):
+        """个人微信 iLink 直连发送(腾讯官方通道)。
+
+        config 由扫码绑定写入: token/base_url/user_id/context_token。
+        调 src.core.wechat_ilink.send_text -> 腾讯官方 iLink sendmessage。
+        context_token 过期时自动 getupdates 刷新并重试一次。
+        """
+        token = str(config.get("token") or "").strip()
+        base_url = str(config.get("base_url") or "").strip()
+        wechat_user_id = str(config.get("user_id") or "").strip()
+        context_token = str(config.get("context_token") or "").strip() or None
+        if not token or not wechat_user_id:
+            raise ValueError("微信渠道需要 token/user_id(请重新扫码绑定)")
+
+        from src.core import wechat_ilink
+
+        account = {"token": token, "base_url": base_url or None}
+        # 消息以「数智分析BOT」自称(iLink bot 微信列表名由腾讯侧固定, 无法修改)
+        text = f"【数智分析BOT】{title}\n{content}" if title else f"【数智分析BOT】{content}"
+
+        try:
+            resp = await wechat_ilink.send_text(
+                account, wechat_user_id, text, context_token=context_token
+            )
+        except Exception as exc:
+            # 会话 token 过期/失效 → getupdates 拉最新 context_token 重试一次
+            logger.warning(f"微信 iLink 首次发送失败({exc}), 刷新 context_token 重试")
+            try:
+                updates = await wechat_ilink.get_updates(account)
+                new_ctx = _extract_context_token(updates, wechat_user_id)
+                if not new_ctx:
+                    raise RuntimeError(f"未能获取会话 token: {exc}")
+                resp = await wechat_ilink.send_text(
+                    account, wechat_user_id, text, context_token=new_ctx
+                )
+                self._persist_context_token(config, new_ctx)
+            except Exception as exc2:
+                raise RuntimeError(f"微信 iLink 发送失败: {exc2}")
+        message_id = str(resp.get("message_id") or "")[:128] if isinstance(resp, dict) else ""
+        logger.info(f"个人微信(iLink)通知发送成功: {title}")
+        return {"ok": True, "message_id": message_id}
+
+    def _persist_context_token(self, config: dict, new_ctx: str):
+        """把刷新后的 context_token 写回 DB(notify_channels.config)。"""
+        try:
+            from src.web.database import SessionLocal
+            from src.web.models import NotifyChannel
+
+            db = SessionLocal()
+            try:
+                channel_id = config.get("channel_id") or config.get("id")
+                if channel_id:
+                    row = db.query(NotifyChannel).filter(NotifyChannel.id == channel_id).first()
+                else:
+                    row = (
+                        db.query(NotifyChannel)
+                        .filter(
+                            NotifyChannel.type == "wechat_ilink",
+                            NotifyChannel.config["user_id"].astext == config.get("user_id", ""),
+                        )
+                        .first()
+                    )
+                if row:
+                    cfg = dict(row.config or {})
+                    cfg["context_token"] = new_ctx
+                    row.config = cfg
+                    db.commit()
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning(f"context_token 持久化失败: {exc}")
 
     async def _send_serverchan(self, config: dict, title: str, content: str):
         sendkey = config.get("sendkey", "")

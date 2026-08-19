@@ -96,6 +96,6 @@ class TestNewsMultiSource:
         assert branch_start != -1
         branch = src[branch_start:]
         news_pos = branch.find("flash_news(")
-        wudao_pos = branch.find('cli.call_tool("news_hotlist"')
+        wudao_pos = branch.find('"news_hotlist"')  # 兼容 call_tool("news_hotlist") 与 to_thread(cli.call_tool, "news_hotlist") 两种写法
         assert news_pos != -1 and wudao_pos != -1
         assert news_pos < wudao_pos

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, RefreshCw, Share2, Sparkles, ScanSearch, ThumbsDown, ThumbsUp } from 'lucide-react'
+import { AlertTriangle, BookOpen, RefreshCw, Share2, Sparkles, ScanSearch, ThumbsDown, ThumbsUp, Download } from 'lucide-react'
 import {
+  getToken,
   recommendationsApi,
   stocksApi,
   strategiesApi,
@@ -22,6 +23,7 @@ import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
 import FactorWeightsPanel from '@/components/FactorWeightsPanel'
 import SignalScoreShareCard from '@/components/SignalScoreShareCard'
 import WencaiPanel from '@panwatch/biz-ui/components/WencaiPanel'
+import StrategyLibraryDialog from '@/components/StrategyLibraryDialog'
 
 type SourceFilter = 'all' | 'market_scan' | 'watchlist' | 'mixed'
 type HoldingFilter = 'all' | 'held' | 'unheld'
@@ -96,22 +98,22 @@ const toneClass = (item: StrategySignalItem) => {
   const action = (item.action || '').toLowerCase()
   const score = Number(item.rank_score || item.score || 0)
   if (action === 'buy') {
-    return 'border-rose-500/35 bg-[linear-gradient(140deg,hsl(var(--rose-500)/0.14),hsl(var(--card)/0.96),hsl(var(--card)/0.98))]'
+    return 'border-l-2 border-l-rose-600/70'
   }
   if (action === 'add') {
-    return 'border-emerald-500/35 bg-[linear-gradient(140deg,hsl(var(--emerald-500)/0.13),hsl(var(--card)/0.96),hsl(var(--card)/0.98))]'
+    return 'border-l-2 border-l-emerald-600/70'
   }
   if (score >= 85) {
-    return 'border-primary/35 bg-[linear-gradient(140deg,hsl(var(--primary)/0.12),hsl(var(--card)/0.96),hsl(var(--card)/0.98))]'
+    return 'border-l-2 border-l-primary/70'
   }
-  return 'border-border/60 bg-card'
+  return ''
 }
 
 const actionBadgeClass = (action?: string) => {
   const key = (action || '').toLowerCase()
-  if (key === 'buy') return 'bg-rose-500/15 text-rose-400 border border-rose-500/35'
-  if (key === 'add') return 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/35'
-  if (key === 'hold') return 'bg-blue-500/15 text-blue-400 border border-blue-500/35'
+  if (key === 'buy') return 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border border-rose-500/35'
+  if (key === 'add') return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-700 border border-emerald-500/35'
+  if (key === 'hold') return 'bg-blue-500/15 text-blue-700 dark:text-blue-400 border border-blue-500/35'
   return 'bg-accent text-muted-foreground border border-border/50'
 }
 
@@ -224,9 +226,9 @@ const formatEntryDisplay = (action: string | undefined, entryLow: number | null,
 }
 
 const regimeToneClass = (regime?: string) => {
-  if (regime === 'bullish') return 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-  if (regime === 'bearish') return 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
-  return 'bg-amber-500/12 text-amber-300 border border-amber-500/25'
+  if (regime === 'bullish') return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-700 border border-emerald-500/30'
+  if (regime === 'bearish') return 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border border-rose-500/30'
+  return 'bg-amber-500/12 text-amber-700 dark:text-amber-300 border border-amber-500/25'
 }
 
 export default function OpportunitiesPage() {
@@ -319,6 +321,8 @@ export default function OpportunitiesPage() {
   const [scanStrategies, setScanStrategies] = useState<StrategyItem[]>([])
   const [scanStrategyId, setScanStrategyId] = useState('')
   const [scanUniverse, setScanUniverse] = useState<'all' | 'watchlist'>('all')
+  // 策略库弹窗(合并自原独立页面 /strategies)
+  const [strategyLibOpen, setStrategyLibOpen] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [scanResult, setScanResult] = useState<{ items: ScanItem[]; total: number; scanned: number; quoted: number } | null>(null)
   const [scanError, setScanError] = useState('')
@@ -589,6 +593,29 @@ export default function OpportunitiesPage() {
     }
   }
 
+  // 导出机会候选 CSV(/api/export/opportunities, 带 token 直接 fetch blob)
+  const exportOpportunities = async () => {
+    try {
+      const token = getToken()
+      const res = await fetch('/api/export/opportunities', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `机会候选_${new Date().toISOString().slice(0, 10)}.csv`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      toast('机会候选已导出', 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '导出失败', 'error')
+    }
+  }
+
   const resetFilters = useCallback(() => {
     setMarket(DEFAULT_FILTERS.market)
     setSource(DEFAULT_FILTERS.source)
@@ -709,6 +736,24 @@ export default function OpportunitiesPage() {
             variant="secondary"
             size="sm"
             className="h-8 text-[12px]"
+            onClick={() => setStrategyLibOpen(true)}
+          >
+            <BookOpen className="w-3.5 h-3.5 mr-1" />
+            策略库
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="h-8 text-[12px]"
+            onClick={exportOpportunities}
+          >
+            <Download className="w-3.5 h-3.5 mr-1" />
+            导出
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="h-8 text-[12px]"
             onClick={handleRefresh}
             disabled={refreshing}
           >
@@ -740,9 +785,9 @@ export default function OpportunitiesPage() {
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-        <div className="card p-3">
-          <div className="text-[11px] text-muted-foreground">当前候选(全局)</div>
-          <div className="text-[18px] font-bold mt-1">{globalCoverage?.total_signals ?? '--'}</div>
+        <div className="card relative overflow-hidden p-3 border-l-2 border-l-primary">
+          <div className="text-[11px] font-semibold text-foreground/80">当前候选(全局)</div>
+          <div className="text-[24px] font-bold mt-1 font-num tabular-nums">{globalCoverage?.total_signals ?? '--'}</div>
           <div className="text-[10px] text-muted-foreground mt-1">
             可执行: {globalCoverage?.active_signals ?? '--'}，观察: {(globalCoverage?.total_signals != null && globalCoverage?.active_signals != null) ? Math.max(0, globalCoverage.total_signals - globalCoverage.active_signals) : '--'}
           </div>
@@ -814,7 +859,7 @@ export default function OpportunitiesPage() {
                       输入板块或选股条件,点击查询(每次查询消耗 1 次 tdx ask 配额)
                     </div>
                   ) : tdxData == null ? (
-                    <div className="text-[11px] text-red-500 py-3">查询失败,请稍后重试</div>
+                    <div className="text-[11px] text-red-600 py-3">查询失败,请稍后重试</div>
                   ) : (
                     <>
                       <div className="text-[11px] text-muted-foreground mb-2">
@@ -890,8 +935,8 @@ export default function OpportunitiesPage() {
                                   <span
                                     className={
                                       String(chg).startsWith('-')
-                                        ? 'text-emerald-400'
-                                        : 'text-rose-400'
+                                        ? 'text-emerald-700 dark:text-emerald-700'
+                                        : 'text-rose-700 dark:text-rose-400'
                                     }
                                   >
                                     {chg}%
@@ -964,7 +1009,7 @@ export default function OpportunitiesPage() {
       )}
 
       <div className="card p-3 md:p-4 mb-4">
-        <div className="grid grid-cols-2 md:grid-cols-8 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-2">
           <Select value={market} onValueChange={(v) => setMarket(v as 'ALL' | 'CN' | 'HK' | 'US')}>
             <SelectTrigger className="h-8 text-[12px]"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -1027,7 +1072,7 @@ export default function OpportunitiesPage() {
             清空筛选
           </Button>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mt-2">
           <div className="relative">
             <Input
               value={sector}
@@ -1060,7 +1105,7 @@ export default function OpportunitiesPage() {
       </div>
 
       {error && (
-        <div className="card p-3 mb-4 text-[12px] text-amber-500 flex items-center gap-2">
+        <div className="card p-3 mb-4 text-[12px] text-amber-700 dark:text-amber-500 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4" />
           {error}
         </div>
@@ -1109,7 +1154,7 @@ export default function OpportunitiesPage() {
           )}
         </div>
         {scanError && (
-          <div className="mt-2 text-[12px] text-amber-500 flex items-center gap-1.5">
+          <div className="mt-2 text-[12px] text-amber-700 dark:text-amber-500 flex items-center gap-1.5">
             <AlertTriangle className="w-3.5 h-3.5" /> {scanError}
           </div>
         )}
@@ -1131,7 +1176,6 @@ export default function OpportunitiesPage() {
                 {scanResult.items.map((it) => {
                   const d = it.current_data || {}
                   const num = (v: unknown) => (v == null || Number.isNaN(Number(v)) ? '--' : Number(v).toFixed(2))
-                  const pctCls = Number(d.change_pct) >= 0 ? 'text-rose-400' : 'text-emerald-400'
                   return (
                     <tr key={it.symbol} className="border-b border-border/30 hover:bg-accent/40 cursor-pointer" onClick={() => openInsight({
                       stock_symbol: it.symbol,
@@ -1144,7 +1188,7 @@ export default function OpportunitiesPage() {
                       <td className="py-1.5 pr-2 font-medium text-foreground">{it.name}</td>
                       <td className="py-1.5 pr-2 text-right font-semibold text-primary">{it.score.toFixed(1)}</td>
                       <td className="py-1.5 pr-2 text-right font-mono">{num(d.current_price)}</td>
-                      <td className={`py-1.5 pr-2 text-right font-mono ${pctCls}`}>{num(d.pe_ttm)}</td>
+                      <td className="py-1.5 pr-2 text-right font-mono">{num(d.pe_ttm)}</td>
                       <td className="py-1.5 pr-2 text-right font-mono">{num(d.pb_ratio)}</td>
                       <td className="py-1.5 text-right font-mono text-muted-foreground">{num(d.market_cap)}</td>
                     </tr>
@@ -1199,7 +1243,7 @@ export default function OpportunitiesPage() {
             ? (group.members.some((x) => x.source_pool === 'mixed') ? '市场+关注' : '市场池')
             : (item.source_pool_label || '关注池')
           return (
-            <div key={stateKey} className={`card p-4 transition-colors ${toneClass(item)}`}>
+            <div key={stateKey} className={`card p-3 sm:p-4 transition-colors ${toneClass(item)}`}>
               <button className="w-full text-left" onClick={() => openInsight(item)}>
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
@@ -1212,22 +1256,22 @@ export default function OpportunitiesPage() {
                         {displayActionLabel(item)}
                       </span>
                     </div>
-                    <div className={`text-[12px] font-mono mt-1 ${Number(item.rank_score || item.score || 0) >= 80 ? 'text-primary' : 'text-muted-foreground'}`}>
+                    <div className={`text-[13px] font-bold font-mono mt-1.5 ${Number(item.rank_score || item.score || 0) >= 80 ? 'text-primary' : 'text-muted-foreground'}`}>
                       评分 {Math.round(item.rank_score || item.score || 0)}
                     </div>
                     {item.ai_score != null && (
                       <div className="mt-1 flex items-center justify-end gap-1">
                         <span className="text-[10px] text-muted-foreground">AI</span>
-                        <span className={`inline-flex items-center justify-center min-w-[18px] px-1.5 py-0.5 rounded text-[11px] font-semibold ${item.ai_score >= 8 ? 'bg-green-500/20 text-green-400' : item.ai_score >= 6 ? 'bg-primary/20 text-primary' : item.ai_score >= 4 ? 'bg-amber-500/20 text-amber-400' : 'bg-red-500/20 text-red-400'}`}>
+                        <span className={`inline-flex items-center justify-center min-w-[18px] px-1.5 py-0.5 rounded text-[11px] font-semibold ${item.ai_score >= 8 ? 'bg-green-500/20 text-green-700 dark:text-green-400' : item.ai_score >= 6 ? 'bg-primary/20 text-primary' : item.ai_score >= 4 ? 'bg-amber-500/20 text-amber-700 dark:text-amber-600' : 'bg-red-500/20 text-red-700 dark:text-red-400'}`}>
                           {item.ai_score}
                         </span>
                       </div>
                     )}
                   </div>
                 </div>
-                <div className="mt-2 text-[12px] text-foreground line-clamp-2">{item.signal || item.reason || '--'}</div>
-                <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
-                  <div>入场: {formatEntryDisplay(item.action, entryLow, entryHigh)}</div>
+                <div className="mt-1.5 text-[12px] leading-5 text-foreground line-clamp-2">{item.signal || item.reason || '--'}</div>
+                <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] leading-4 text-muted-foreground">
+                  <div className="font-medium text-foreground/90">入场: {formatEntryDisplay(item.action, entryLow, entryHigh)}</div>
                   <div>止损: {formatPlanPrice(stopLoss)}</div>
                   <div>目标: {formatPlanPrice(targetPrice)}</div>
                   <div>失效: {item.invalidation || '--'}</div>
@@ -1245,36 +1289,36 @@ export default function OpportunitiesPage() {
                   <div>持仓: {item.is_holding_snapshot ? '持仓中' : '未持仓'}</div>
                   <div>市场: {marketLabel(item.stock_market)}</div>
                 </div>
-                <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-muted-foreground">
+                <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] leading-4 text-muted-foreground">
                   <div>Alpha: {formatMetric(breakdown.alpha_score)}</div>
                   <div>催化: {formatMetric(breakdown.catalyst_score)}</div>
                   <div>质量: {formatMetric(breakdown.quality_score)}</div>
                   <div>风险惩罚: {formatMetric(breakdown.risk_penalty)}</div>
                   <div>相对强弱: {crossFeature.relative_strength_pct != null ? `${Number(crossFeature.relative_strength_pct).toFixed(0)}分位` : '--'}</div>
-                  <div>事件催化: {eventScore != null ? eventScore.toFixed(1) : '--'}{eventCount > 0 ? `（${eventCount}条）` : '（无命中）'}</div>
+                  <div className="font-medium text-foreground/90">事件催化: {eventScore != null ? eventScore.toFixed(1) : '--'}{eventCount > 0 ? `（${eventCount}条）` : '（无命中）'}</div>
                 </div>
                 {item.factor_explain && (((item.factor_explain.positive?.length ?? 0) > 0) || ((item.factor_explain.negative?.length ?? 0) > 0)) && (
-                  <div className="mt-2 flex flex-wrap gap-1">
+                  <div className="mt-1.5 flex flex-wrap gap-1">
                     {(item.factor_explain.positive ?? []).map((f) => (
-                      <span key={`p-${f.factor}`} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-green-500/15 text-green-400">
+                      <span key={`p-${f.factor}`} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-green-500/15 text-green-700 dark:text-green-400">
                         {f.label} +{Math.abs(f.contribution).toFixed(1)}
                       </span>
                     ))}
                     {(item.factor_explain.negative ?? []).map((f) => (
-                      <span key={`n-${f.factor}`} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-red-500/15 text-red-400">
+                      <span key={`n-${f.factor}`} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-red-500/15 text-red-700 dark:text-red-400">
                         {f.label} {f.contribution.toFixed(1)}
                       </span>
                     ))}
                   </div>
                 )}
                 {item.constrained && (
-                  <div className="mt-2 text-[10px] text-amber-400">
+                  <div className="mt-1.5 text-[10px] text-amber-700 dark:text-amber-600">
                     组合约束: {(item.constraint_reasons || []).join('；') || '已自动降级'}
                   </div>
                 )}
               </button>
 
-              <div className="mt-3 flex items-center justify-between">
+              <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
                 <div className="text-[10px] text-muted-foreground">
                   来源: {sourceFlags.join(' + ')}
                 </div>
@@ -1286,8 +1330,8 @@ export default function OpportunitiesPage() {
                       onClick={() => handleCandidateFeedback(item, true)}
                       className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors disabled:opacity-40 ${
                         feedbackMap[group.key] === true
-                          ? 'bg-green-500/15 text-green-400'
-                          : 'text-muted-foreground hover:text-green-400'
+                          ? 'bg-green-500/15 text-green-700 dark:text-green-400'
+                          : 'text-muted-foreground hover:text-green-700 dark:hover:text-green-400'
                       }`}
                       title="这个候选建议有用"
                     >
@@ -1300,8 +1344,8 @@ export default function OpportunitiesPage() {
                       onClick={() => handleCandidateFeedback(item, false)}
                       className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors disabled:opacity-40 ${
                         feedbackMap[group.key] === false
-                          ? 'bg-red-500/15 text-red-400'
-                          : 'text-muted-foreground hover:text-red-400'
+                          ? 'bg-red-500/15 text-red-700 dark:text-red-400'
+                          : 'text-muted-foreground hover:text-red-700 dark:hover:text-red-400'
                       }`}
                       title="这个候选建议没用"
                     >
@@ -1356,6 +1400,11 @@ export default function OpportunitiesPage() {
           item={shareSignal}
         />
       )}
+
+      <StrategyLibraryDialog
+        open={strategyLibOpen}
+        onOpenChange={setStrategyLibOpen}
+      />
     </div>
   )
 }

@@ -1,6 +1,5 @@
 apprise>=1.6.0
 openai>=1.0.0
-efinance>=0.4.0
 akshare>=1.10.0
 apscheduler>=3.10.0
 httpx>=0.25.0
@@ -13,6 +12,13 @@ tenacity>=8.2.0
 fastapi>=0.104.0
 uvicorn>=0.24.0
 sqlalchemy>=2.0.0
+# PostgreSQL adapter(SQLite→PG 切换需要,2026-08-17)
+psycopg2-binary>=2.9.9
+
+# Redis 客户端 (Phase 1 架构升级 2026-08-17: 缓存 + 限流 + Redis Streams)
+redis>=5.0.0
+# 监控指标导出 (Phase 1: Prometheus /metrics 端点)
+prometheus-client>=0.20.0
 playwright==1.57.0
 PyJWT>=2.8.0
 # 详情报告导出 PDF(后台直出,不依赖 Chromium):
@@ -43,3 +49,10 @@ python-multipart>=0.0.9
 
 # TA-Lib: 61 种标准 K 线形态识别(2026-08-10 接入,技术指标+AI助手)
 ta-lib==0.7.1
+
+# 微信媒体消息接收: 图片/文件下载解密(AES-128-ECB)+ OCR 文本化 + PDF/Excel 解析
+# (容器内已装好对应系统库 tesseract-ocr-chi-sim; pandas 已在上面声明)
+cryptography>=42.0
+pytesseract>=0.3.10
+pypdf>=4.0
+Pillow>=10.0

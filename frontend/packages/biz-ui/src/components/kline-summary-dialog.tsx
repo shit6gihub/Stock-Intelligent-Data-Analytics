@@ -4,6 +4,7 @@ import { fetchAPI } from '@panwatch/api'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@panwatch/base-ui/components/ui/dialog'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { buildKlineSuggestion } from '@/lib/kline-scorer'
+import { parseServerTime } from '@/lib/utils'
 import { HoverPopover } from '@panwatch/base-ui/components/ui/hover-popover'
 import { TechnicalBadge, technicalToneFromSuggestionAction } from '@panwatch/biz-ui/components/technical-badge'
 
@@ -124,7 +125,7 @@ interface KlineSummaryDialogProps {
 function formatLocalDateTime(iso?: string): string {
   if (!iso) return ''
   try {
-    const d = new Date(iso)
+    const d = parseServerTime(iso)
     if (isNaN(d.getTime())) return ''
     return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
   } catch {

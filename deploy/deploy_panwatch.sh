@@ -45,8 +45,6 @@ if [ -z "${AUTH_PASSWORD:-}" ]; then
   AUTH_PASSWORD="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 16)"
   echo "未提供 AUTH_PASSWORD，已生成一次性初始密码: $AUTH_PASSWORD"
 fi
-# Obsidian vault 路径(报告同步目标): 主机真实路径挂载进容器
-OBSIDIAN_VAULT="${OBSIDIAN_VAULT:-/home/ubuntu/Obsidian/FinanceVault}"
 
 # 部署清单: 所有被改动的文件 (相对 REPO_DIR)
 FILES=(
@@ -160,9 +158,7 @@ rebuild_container() {
     -p 8000:8000 \
     -v "${CONTAINER}_data:/app/data" \
     -v /home/ubuntu/.hermes:/hermes:ro \
-    -v "$OBSIDIAN_VAULT:/obsidian-vault:rw" \
     -e HERMES_HOME=/hermes \
-    -e OBSIDIAN_VAULT=/obsidian-vault \
     -e AUTH_USERNAME="$AUTH_USERNAME" \
     -e AUTH_PASSWORD="$AUTH_PASSWORD" \
     ${env_args[@]+"${env_args[@]}"} \

@@ -181,7 +181,7 @@ export default function ShadowAccountPage() {
             </div>
             <p className="text-[12px] leading-relaxed text-foreground whitespace-pre-line">{myProfile.profile_text}</p>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-              <StatCard icon={CheckCircle2} label="盈利回合" value={fmt(myProfile.profitable_roundtrips)} color="text-emerald-500" />
+              <StatCard icon={CheckCircle2} label="盈利回合" value={fmt(myProfile.profitable_roundtrips)} color="text-emerald-700 dark:text-emerald-500" />
               <StatCard icon={Activity} label="总回合" value={fmt(myProfile.total_roundtrips)} color="text-blue-500" />
               <StatCard
                 icon={Target}
@@ -249,7 +249,7 @@ export default function ShadowAccountPage() {
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 rounded-xl bg-red-500/10 border border-red-500/20 p-3 text-[12px] text-red-500">
+        <div className="flex items-center gap-2 rounded-xl bg-red-500/10 border border-red-500/20 p-3 text-[12px] text-red-600">
           <AlertTriangle className="w-4 h-4" /> {error}
         </div>
       )}
@@ -265,7 +265,7 @@ export default function ShadowAccountPage() {
               </h2>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <StatCard icon={Activity} label="总交易回合" value={fmt(result.profile.total_roundtrips)} color="text-blue-500" />
-                <StatCard icon={CheckCircle2} label="盈利回合" value={fmt(result.profile.profitable_roundtrips)} sub={result.profile.total_roundtrips ? `胜率 ${((result.profile.profitable_roundtrips / result.profile.total_roundtrips) * 100).toFixed(0)}%` : undefined} color="text-emerald-500" />
+                <StatCard icon={CheckCircle2} label="盈利回合" value={fmt(result.profile.profitable_roundtrips)} sub={result.profile.total_roundtrips ? `胜率 ${((result.profile.profitable_roundtrips / result.profile.total_roundtrips) * 100).toFixed(0)}%` : undefined} color="text-emerald-700 dark:text-emerald-500" />
                 <StatCard icon={Activity} label="平均持有时长" value={fmt(result.profile.typical_holding_days, '天')} color="text-violet-500" />
                 <StatCard icon={Target} label="偏好市场" value={(result.profile.preferred_markets || []).join(', ') || '--'} color="text-amber-500" />
               </div>
@@ -300,7 +300,7 @@ export default function ShadowAccountPage() {
                 <Shield className="w-4 h-4 text-primary" /> 归因分析
               </h2>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <StatCard icon={TrendingUp} label="影子收益" value={fmt(result.attribution.shadow_total_pnl)} color="text-emerald-500" />
+                <StatCard icon={TrendingUp} label="影子收益" value={fmt(result.attribution.shadow_total_pnl)} color="text-emerald-700 dark:text-emerald-500" />
                 <StatCard icon={Activity} label="实际收益" value={fmt(result.attribution.real_total_pnl)} color="text-blue-500" />
                 <StatCard icon={CheckCircle2} label="差值" value={fmt(result.attribution.delta_pnl)} color="text-violet-500" />
                 <StatCard icon={Target} label="归因项" value={fmt((result.attribution.attribution || []).length)} color="text-amber-500" />

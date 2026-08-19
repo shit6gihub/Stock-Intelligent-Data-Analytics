@@ -8,12 +8,13 @@
 import os
 import hashlib
 import hmac
+import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -82,6 +83,11 @@ class SetupRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     old_password: str
     new_password: str
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
 
 
 class TokenResponse(BaseModel):
@@ -286,21 +292,68 @@ async def auth_status(db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(data: LoginRequest, db: Session = Depends(get_db)):
-    """登录(多用户)。"""
+async def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    """登录(多用户)。带暴力破解限速: 同 IP+用户名 5 次失败锁 10 分钟。"""
+    ip = request.client.host if request.client else "unknown"
+    from src.core.login_ratelimit import check, fail, success
+    locked = check(ip, data.username.strip())
+    if locked:
+        raise HTTPException(429, locked)
+
     get_or_create_owner(db)  # 确保 owner 存在(兼容首次部署)
     user = get_user_by_username(db, data.username.strip())
     if not user or not verify_password(data.password, user.password_hash):
+        fail(ip, data.username.strip())
         raise HTTPException(401, "用户名或密码错误")
     if not user.is_active:
         raise HTTPException(403, "账号已禁用")
 
+    success(ip, data.username.strip())
     token, expires_at = create_token(user)
+
+    # 操作审计: 登录成功(延迟 import 避免与 audit.py 循环依赖)
+    try:
+        from src.web.api.audit import log_audit
+        log_audit(db, user, "login", detail="登录成功", ip=ip)
+    except Exception:
+        pass  # 审计失败不影响登录主流程
+
     return TokenResponse(
         token=token,
         expires_at=expires_at.isoformat(),
         user=user_to_dict(user),
     )
+
+
+@router.post("/register")
+async def register(data: RegisterRequest, request: Request, db: Session = Depends(get_db)):
+    """自助注册(member 账号)。
+
+    - 是否开放由 app_settings.allow_register 控制(默认关闭), 关闭时 403
+    - 校验: 用户名 2-20 位字母数字; 密码 ≥8 位; 用户名唯一
+    """
+    from src.web.api.audit import log_audit
+
+    ip = request.client.host if request.client else "unknown"
+
+    # 注册开关: app_settings.allow_register, 默认关闭(无记录或非真值均视为关闭)
+    setting = db.query(AppSettings).filter(AppSettings.key == "allow_register").first()
+    raw = getattr(setting, "value", None)
+    allow_value = str(raw).strip().lower() if raw else ""
+    if allow_value not in ("1", "true", "yes", "on"):
+        raise HTTPException(403, "注册未开放, 请联系管理员")
+
+    username = data.username.strip()
+    if not re.fullmatch(r"[A-Za-z0-9]{2,20}", username):
+        raise HTTPException(400, "用户名需为 2-20 位字母或数字")
+    if len(data.password) < 8:
+        raise HTTPException(400, "密码长度至少 8 位")
+    if get_user_by_username(db, username):
+        raise HTTPException(400, "用户名已存在")
+
+    user = create_user(db, username, data.password, "member")  # 默认 is_active=True
+    log_audit(db, user, "register", detail=f"注册账号 {username}", ip=ip)
+    return {"success": True, "message": "注册成功, 请登录"}
 
 
 @router.get("/me")
@@ -324,6 +377,12 @@ async def change_password(
     user.password_hash = hash_password(data.new_password)
     user.token_version += 1  # 踢掉旧 token
     db.commit()
+    # 审计(2026-08-15 评审 B 补覆盖)
+    try:
+        from src.web.api.audit import log_audit
+        log_audit(db, user, "update_password", detail="修改密码", ip="")
+    except Exception:
+        pass
 
     return {"message": "密码已更新"}
 
@@ -354,8 +413,8 @@ async def create_user_api(
         raise HTTPException(400, "用户名长度至少 2 位")
     if len(data.password) < 8:
         raise HTTPException(400, "密码长度至少 8 位")
-    if data.role not in ("owner", "member"):
-        raise HTTPException(400, "角色必须是 owner 或 member")
+    if data.role not in ("owner", "member", "guest"):
+        raise HTTPException(400, "角色必须是 owner、member 或 guest")
     if get_user_by_username(db, data.username.strip()):
         raise HTTPException(400, "用户名已存在")
 

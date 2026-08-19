@@ -1,5 +1,5 @@
 // PanWatch Service Worker
-const CACHE_NAME = 'panwatch-__SW_VERSION__';
+const CACHE_NAME = 'panwatch-v0.2.65.2-bust';
 
 // 需要缓存的静态资源
 // 注意: 不缓存 '/' (index.html) —— 每次发版 HTML 都变, 缓存旧 HTML 会导致
@@ -53,8 +53,9 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        // 成功获取网络响应，更新缓存(跳过 HTML 导航请求)
-        if (response.ok && !reqInit) {
+        // 跳过 /api/* 响应缓存(避免旧 HTML fallback 缓存导致新版 JSON 被替换)
+        const isApi = event.request.url.includes('/api/');
+        if (response.ok && !reqInit && !isApi) {
           const responseClone = response.clone();
           caches.open(CACHE_NAME).then((cache) => {
             cache.put(event.request, responseClone);

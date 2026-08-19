@@ -4,6 +4,8 @@ export interface AIModel {
   service_id: number
   model: string
   is_default: boolean
+  /** 功能标签: chat/vision/image/video/tools。后端可能未部署该字段,缺失时按空处理。 */
+  capabilities?: string[]
 }
 
 export interface AIService {

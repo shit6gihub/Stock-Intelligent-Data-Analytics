@@ -9,7 +9,7 @@ export interface AuthStatus {
 export interface UserInfo {
   id: string
   username: string
-  role: 'owner' | 'member'
+  role: 'owner' | 'member' | 'guest'
   is_active?: boolean
   created_at?: string | null
 }

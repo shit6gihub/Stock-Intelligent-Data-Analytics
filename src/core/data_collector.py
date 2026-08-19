@@ -77,10 +77,6 @@ class DataCollectorManager:
             "capital_flow": {
                 "eastmoney": lambda cfg: CapitalFlowCollector(MarketCode.CN),
             },
-            "chart": {
-                "xueqiu": lambda cfg: ("xueqiu", cfg),
-                "eastmoney": lambda cfg: ("eastmoney", cfg),
-            },
             "events": {
                 "eastmoney": lambda cfg: EastMoneyEventsCollector(),
             },
@@ -451,31 +447,6 @@ class DataCollectorManager:
         elif source.type == "quote":
             # 按 provider 路由到对应 Provider,Tushare(暂无 quote)/YFinance 可正确测到。
             return await self._test_quote_source(source, test_symbols)
-
-        elif source.type == "chart":
-            from src.collectors.screenshot_collector import ScreenshotCollector
-            import base64
-
-            collector = ScreenshotCollector(config={"extra_wait_ms": 3000})
-            try:
-                symbol = test_symbols[0] if test_symbols else "601127"
-                screenshot = await collector.capture(
-                    symbol=symbol,
-                    name="测试",
-                    market="CN",
-                    provider=source.provider,
-                )
-                if screenshot and screenshot.exists:
-                    with open(screenshot.filepath, "rb") as f:
-                        img_base64 = base64.b64encode(f.read()).decode("utf-8")
-                    return CollectorResult(
-                        success=True,
-                        data={"image": f"data:image/png;base64,{img_base64}"},
-                        count=1,
-                    )
-                return CollectorResult(success=False, error="截图失败")
-            finally:
-                await collector.close()
 
         elif source.type == "events":
             from src.collectors.events_collector import EastMoneyEventsCollector

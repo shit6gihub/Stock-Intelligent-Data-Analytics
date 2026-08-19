@@ -1,5 +1,310 @@
 # Changelog
 
+## 2026-08-18
+
+### feat — AuditMiddleware 操作审计全覆盖 (v0.2.65.5)
+
+- 所有 2xx 写操作(POST/PUT/PATCH/DELETE)自动落 audit_logs, 补齐渠道/服务商/数据源/设置/用户等管理操作审计
+- 内部自行 decode JWT, 独立 session 异步落库, 失败静默不阻塞
+- 排除 auth(已有埋点)/静态/health/webhook
+
+## 2026-08-18
+
+### fix — 生产稳定性 + 微信通道重构 (v0.2.65.4)
+
+**ths_web 403 熔断(修复生产 42s 卡死 + 403 风暴)**:
+- `_fuyao_post`/`_ths_get` 遇 HTTP 403 抛 `_ThsBlockedError`,Engine 识别后直接跳过整个源
+- 不再 per-symbol 逐个 403 浪费 14 次无用请求(此前 254 次/10min 拖垮事件循环)
+
+**个人微信通道彻底移除 OpenClaw, 全链路 iLink 直连**:
+- 渠道类型标识 `openclaw` → `wechat_ilink`(notifier / wechat_bind / wechat_bot_worker)
+- 移除 openclaw 的 `webhook_url` 必填校验(iLink 扫码绑定自动写入 token/base_url/user_id)
+- `_send_openclaw` → `_send_wechat_ilink`
+- 前端 Settings/Notifications 类型标识与表单同步改 `wechat_ilink`, fields 置空引导扫码
+- DB 迁移: notify_channels.type `openclaw` → `wechat_ilink`, 清理重复渠道
+
+## 2026-08-17
+
+### feat(infra) — 基础设施层 Phase 1 (v0.2.65)
+
+参考架构方案落地第一批 5 件:
+- ✅ **Redis 7**: 缓存 + 限流 token bucket + Redis Streams 任务队列
+- ✅ **Prometheus**: /metrics 端点 + 业务指标
+- ✅ **Grafana**: 预置 Prometheus + Loki 数据源 (35099 端口)
+- ✅ **Loki**: 日志聚合 (7 天保留)
+- ✅ **Promtail**: 收 panwatch stdout 送 Loki (结构化 JSON)
+- ✅ **统一网关中间件**: JWT decode + 限流 (Redis 优先 + 内存降级) + 请求日志
+- ✅ **深度 /health**: PG / Redis / 调度器 / 限流 状态分别报告
+- ✅ **Redis Streams**: kline_backfill 任务 publish (替代部分 APScheduler 职责)
+
+**核心模块**:
+- `src/web/cache/redis_client.py` (230 行): 单例 + 降级策略
+- `src/web/cache/streams.py` (70 行): Stream publish + stats
+- `src/web/middleware.py` (250 行): JWT/限流/日志 3 个中间件
+- `src/web/api/health.py` (180 行): /health + /metrics (合并了原 /health)
+- `deploy/*.yml`: 4 个监控配置
+
+**降级**:
+- Redis 不可达 → 缓存降级到源数据 / 限流降级到进程内 dict (仍生效)
+- /health 返回 200 + body.status="degraded" 表示有组件故障
+
+**docker-compose.yml**: 加 infra profile (Redis/Prom/Loki/Promtail/Grafana)
+- 默认 `docker compose up -d` 不启动
+- 启用: `docker compose --profile infra up -d`
+- Grafana: http://localhost:35099 (admin/xz.170530)
+
+**累计改动**: v0.2.60 → v0.2.65 = 5 commits
+## 2026-08-17
+
+### polish(ui/ux) — 协议 P1/P2 闭环第三轮 (v0.2.64)
+
+**a11y (B 报告 P1-1/4 + P1-10)**:
+- **toast**: 加 `role="region"` + `aria-live="polite"` + button `aria-label="关闭通知"`; 单一 toast 按 type 加 `role="alert|status"` 和 `aria-label` (B P1-4)
+- **toast 对比度**: `text-emerald-500/red-500` → `600` 级 (B P1-3)
+- **Settings.tsx**: 11 个 Input 加 `aria-label` (复用 placeholder 文案) (B P1-1)
+- **AppErrorBoundary**: 新建 + App.tsx 包装主路由 (B P1-10) — 任何 subtree 抛错降级 UI 而非整页崩溃
+
+**错误系统强化 (B 报告 P1-5/6 + A 报告 P2-1)**:
+- **ErrorBanner**: 新增 `makeErrorId()`, `onDismiss` 按 id 而非 index (B P1-6 — 并发 push 时 index 会错位)
+- **ErrorBanner**: 加 maxDisplay=3 折叠 — "还有 N 个源失败" 防横幅占满 (B P1-5)
+- **Dashboard pushError**: 同 source 已存在则合并更新 (不是 push) — 防横幅重复堆积
+- **api-error.ts**: 新建, `classifyApiError` + `describeApiError` 区分 TIMEOUT/HTTP_5xx/HTTP_4xx/NETWORK (B P1-9)
+- **IndexDetail**: 接入 describeApiError — 用户看到"请求超时, 请重试"而非统一"加载失败"
+
+**累计 v0.2.60 → v0.2.64**:
+- 4 commits (含 v0.2.63 协议第 2 轮)
+- 共 ~26 文件改动, ~330 insertions, ~180 deletions
+- 3 轮协议(3 + 6 + 6 = 15 P0/P1 修复)
+## 2026-08-17
+
+### polish(ui) — 协议闭环第二轮 (v0.2.63)
+
+**新增/优化(B 方案积累)**:
+
+- **B-1 错误态系统统一**(A P0-3): 6 个高频页面接入 ErrorBanner
+  - Reports (代替原 灰色加载失败块)
+  - Agents (新增, 解决 P0 静默吞错)
+  - PaperTrading (新增, 解决 10 个空 catch 中主页面静默)
+  - IndexDetail (代替原 红色裸文字)
+  - Notifications (代替原 红色横条)
+  - Audit (代替原 红色裸文字)
+- **B-2 ErrorBanner auto_dismiss 真起作用**(A P2-1): 死代码变成 5 秒自动关闭
+- **B-3 改密码抽公共 helper**(A P1-8): 新建 `src/lib/change-password.ts`, AccountMenu + Profile 改用 `submitChangePassword` (消除双份实现)
+- **B-4 UserManagement 5 个 icon button 加 aria-label**(B P0-4): 配置 AI/模块/重置密码/启禁用/删除
+
+**协议驱动**: A 轨 P0-3 + P1-8 + P2-1 / B 轨 P0-4 — 闭环第二轮
+
+**累计未发版改动**: v0.2.60 → v0.2.63 共有 13 文件改动
+## 2026-08-17
+
+### fix(regression) — ErrorBanner 重试按钮回归修复 (v0.2.62)
+
+- **v0.2.60 回归**: Dashboard `pushError()` 8 处调用都没传 `retry` 回调, ErrorBanner 的"重试"按钮永不渲染
+- 修法: `pushError` 加可选第 3 参数 `retry?: () => void`, 默认挂 `load` 让用户能重试
+- 8 处 pushError 全部传 `load` 作为重试回调(包含机会池兜底 + 异动池/热榜 + 5 个快车道接口)
+
+**协议驱动**: B 轨子智能体独立审查时发现, 不在 A 轨报告里
+## 2026-08-17
+
+### 5+1 skill 协议评审闭环 (v0.2.61)
+
+**协议执行**: 5+1 skill 协议全栈评审(A 设计 + B 技术双轨独立)
+
+**A 轨(设计评审)**: 6 维评分 3.4/5,3 P0 + 10 P1 + 10 P2
+**B 轨(技术审查)**: 7 维评分 2.4/5,6 P0 + 12 P1 + 6 P2
+
+**闭环修正(本版)**:
+- **P0-1 Settings 全局搜索空态**: sectionMatches 升级为 sectionSearchHints 关键词字典;空态卡片 + 'N 个区块匹配' 计数(260/1348)
+- **P0-2 AnalysisDetail 标题层级倒挂**: H1 16px → 20-22px; text-[12.5px] → 12px(280/284/293)
+- **P0-3 错误状态体系分裂**: Stocks 失败横幅接入 ErrorBanner(1858)
+- **P0-4 全仓对比度**: text-rose-500/emerald-500/amber-400/blue-500 → 600/700 级(Stocks 29 + 4 文件 25 = **54 处**文本对比度修复)
+- **P0-5 Settings 头像保存 catch 留痕**: 加 console.error(625)
+- **P0-6 PriceAlerts 11px 字号**: text-[11px] → text-[12px](10 处)
+- **ErrorBanner 接入 Stocks 失败横幅**
+## 2026-08-17
+
+### polish(ui) — Settings 全局搜索 + 数据源失败显式标识 (v0.2.60)
+
+**Settings.tsx**:
+- 新增全局搜索框(Hero 下方):输入关键词,过滤 section(不匹配的隐藏)
+- "清空搜索"快捷按钮在 jump pills 右侧
+- section 默认全部展开(以后可以改成按需折叠)
+
+**ErrorBanner 组件 + Dashboard.tsx**:
+- 新建 `frontend/src/components/ErrorBanner.tsx`:接收 `{source, message}` 数组,显示具体哪个数据源挂了
+- 7 处 catch 改用 `pushError(source, message)` 收集具体源(大盘指数/资金流/异动池/热榜/报告/机会池/自选股)
+- 替换旧的统一"部分数据加载失败"横幅
+## 2026-08-17
+
+### fix(kline) — server.py import 路径修复 (v0.2.59)
+
+- `schedule_one_off` 改用 `import server`(根 module), 不是 `src.web.server`(不存在)
+- 加 None 检查: server 未启动时优雅跳过
+## 2026-08-17
+
+### fix(kline) — 加股 60s backfill 真触发(跨线程调度) (v0.2.58)
+
+- `kline_backfill_scheduler.schedule_one_off()` 改用 `loop.call_soon_threadsafe` 跨线程
+  - APScheduler 跑在自己线程(无 event loop)
+  - server 跑在 uvicorn 的 asyncio loop
+  - 必须用 call_soon_threadsafe 把 coroutine 派发到 uvicorn loop
+- server.py 暴露 `_kline_oneoff_loop` 全局
+## 2026-08-17
+
+### fix(kline) — 加股 backfill 修复 (v0.2.57)
+
+- `create_stock()` 修复 `db_stock.market.value` / `db_stock.symbol.value` 类型问题
+  (market/symbol 是字符串不是 Enum, 直接用 str() 即可)
+## 2026-08-17
+
+### fix(kline) — K线入库去重 + 加股 60s 快速 backfill (v0.2.56)
+
+- **`get_default_symbols()` 加 set 去重** — 多用户各加同一股时, 拉取次数从 52 → 38(0 网络浪费)
+- **`stocks` 表加 UNIQUE 约束 `(user_id, symbol, market)`** — 根除重复
+- **加股 60s 快速 backfill** — 用户加自选股后 60s 延迟入库, 不必等 18:00 cron
+  - `_global_scheduler` 单例, server.py lifespan 启动时赋值
+  - `schedule_one_off(symbol, market, delay=60)` API
+  - 失败静默, 18:00 cron 兜底
+## 2026-08-17
+
+### feature(scheduler) — K线每日 backfill cron 18:00 (v0.2.55)
+
+- 新增 `src/core/kline_backfill_scheduler.py`: 收盘后 18:00 自动入库
+  - 拉最近 2 天日 K(覆盖当日 + 周末/节假日补齐)
+  - 工作日(Mon-Fri) 18:00 触发, 复用 `klines_ingestor.ingest_batch`
+  - 失败 retry(0 行入库 → 7 天兜底)
+  - 静默时段跳过非交易日
+- server.py 启动/关停这个 scheduler(同 PriceAlertScheduler 模式)
+- 手动触发 API: `sched.trigger_now()`(测试用)
+## 2026-08-17
+
+### feature(storage) — TimescaleDB hypertable 上线 + K线入库 worker (v0.2.54)
+
+- **PostgreSQL + TimescaleDB 2.29.1** 装在测试机 + 生产(3.6GB 内存 + B 档配置)
+- 新建 `klines` hypertable(按 ts 分块 / 7 天一块 / 30 天后自动压缩 / 5 年后自动 drop)
+- 新增 `src/collectors/klines_ingestor.py` 后台 worker: 腾讯/东财/新浪 三源并发拉 + 入库(幂等 ON CONFLICT)
+- 回测 `data_adapter.py` 改造: 优先查 PG klines 表(~70ms), fallback 联网拉
+- K线 API `klines.py` 改造: 同样优先查库, 标注 `source: "pg_klines_hypertable"`
+- 入库 5 只股 800 天 × 3 数据源 = 12,540 行, 写入 ~2,000 行/秒
+- 测试机: 124,800 行写入 6 秒; 单股 800 天查询 70ms; 聚合查询 45ms
+
+回测/前端 K线查询不再每次联网, 速度 ~5-10x 提升。
+## 2026-08-16
+
+### feature(rbac) — 设置页/导航权限细化(member 只见个人配置)
+
+- Settings 页 owner-only 区块(member 隐藏): AI 服务商&模型+场景分配、接口 Key、
+  同花顺登录、系统设置、配置包(导入/导出)、Hero 快捷按钮(导出配置包/配置 AI)
+  与服务商/模型统计徽标; member 保留个人配置: 通知渠道(per-user)、我的服务商
+  (BYOK)、定时报告订阅(per-user)、AI 调用统计、反馈
+- 侧栏「数据源」导航 owner-only(与审计页同模式): member 打开 /datasources
+  全部 API 403(manage_datasources), 页面本就不可用; 路由守卫跳首页
+- 后端写接口已有中间件拦截(manage_*), 本次为前端展示层对齐, 无需后端改动
+
+### fix(rbac) — 机会页策略功能对 member 全 403(v0.2.47 迁移遗留)
+
+- v0.2.47 把策略库并入机会页(member 可见), 但 `/api/strategies` 仍在中间件
+  管理区(manage_strategies) → member 机会页策略筛选下拉永远为空、扫描按钮 403
+  (前端 catch 静默吞掉, 无任何提示); 该前缀下 list/get/scan/apply 全部为只读或
+  纯计算端点(无写操作, 策略写入在 /api/recommendations) → 移出管理区
+- `theme_launch_detector.py` 补 `AgentContext` 导入(其他 agent 均有,
+  缺失导致 IDE/mypy 解析注解报错; 运行时因 `from __future__ import annotations` 未炸)
+- demo(guest)隔离策略保持不变(只读演示定位)
+
+### fix(rbac) — 子用户模型授权全链路失效(三层修复)
+
+- **granted 语义修复**(`src/core/ai_client.py`): 旧逻辑把授权列表当"全局场景模型白名单"
+  —— 场景绑定模型不在列表内即全场景 None,owner 授权了模型子用户也用不了;
+  新逻辑: 场景绑定模型在列表内优先用,否则从授权列表挑(is_default 优先/id 升序),
+  授权什么就能用什么; 空列表仍为显式全禁
+- **热路径接入用户级解析**: 聊天(`chat.py _get_ai_client` 传 user + 会话显式模型过
+  granted 校验)、Agent 触发(`stocks.py` → `trigger_agent_for_stock` 注入 context.user,
+  后台线程只传 id 重加载)、加仓评估/公告解读(insights 两端点)、图片描述(vision 场景)
+  全部走 BYOK/平台授权; 调度器系统级调用(无 user)行为不变
+- **越权拦截**: deny_all/granted 空列表用户手动触发 Agent 时预检直接返回
+  "管理员未给当前用户授权任何 AI 模型"(旧逻辑会静默保留全局 client 造成越权)
+- **中间件权限调整**(`src/web/app.py`): `GET /api/agents` 放行(member 个股 AI 分析页
+  需拉 Agent 列表, 旧配置连只读都 403); 移除死配置 `/api/reports/generate`(无对应路由)
+
+### test(rbac)
+
+- 新增 4 个 granted 行为用例: 从授权列表挑模型/多模型排序/空列表全禁/场景绑定在列表内优先
+- `test_chat_stream` mock 签名适配 `_get_ai_client(db, model_id, user)`
+
+## 2026-08-15 (v0.2.38)
+
+### feat(settings) — 设置页第二窗口改造(对齐 AI 服务商模式)
+
+- 接口 Key 区块 → 合集卡片(悟道/智兔/通达信一行一卡 + 已配置/未配置徽标)+「管理」第二窗口编辑(密码框/眼睛切换)
+- 系统区块 → 合集行(描述+当前值摘要)+「编辑」第二窗口编辑
+- 未修改时保存按钮禁用,防掩码覆盖真实 token
+
+### fix(settings) — 敏感 key 掩码脏写(生产卡死根因)
+
+- list_settings 掩码改为返回新对象,不再修改 ORM 对象 → 消除 autoflush 把字面 `********` 写回 DB 的隐患
+- 该 bug 曾导致 SQLite 锁竞争 → 事件循环阻塞 → 生产 7 小时无响应(已热修+本版固化)
+
+### ci — GitHub 源镜像自动构建修复
+
+- GHCR Actions: npm → pnpm(workspace 依赖 echarts 等装不上导致 v0.2.36/37 构建全失败)
+- 补传 VERSION build-arg;tag 保留 v 前缀;labels 更新(SIDA/AGPL-3.0)
+
+### license / docs
+
+- 许可证 GPL-3.0 → **AGPL-3.0**(防 SaaS 白嫖,网络服务必须开源改动)
+- README: 赞助区恢复(微信赞赏码不打码)/ K线主力意图截图 / 生产部署双镜像源(ghcr+ACR)/ 删除开源许可描述
+- 对话助手截图更新
+
+### test
+
+- marketdata registry 漂移校准(同花顺 ths/ths_f10 vendor 后加未同步测试)
+- get_market_news 断言兼容 to_thread 写法
+
+# Changelog
+
+## 2026-08-18
+
+### feat — AuditMiddleware 操作审计全覆盖 (v0.2.65.5)
+
+- 所有 2xx 写操作(POST/PUT/PATCH/DELETE)自动落 audit_logs, 补齐渠道/服务商/数据源/设置/用户等管理操作审计
+- 内部自行 decode JWT, 独立 session 异步落库, 失败静默不阻塞
+- 排除 auth(已有埋点)/静态/health/webhook
+
+## 2026-08-14 (v0.2.37)
+
+### feat(wechat) — 个人微信 iLink 直连全链路(零 OpenClaw 依赖)
+
+- 扫码绑定: 设置页扫码 → 腾讯官方 iLink 授权(纯 Python 直连 ilinkai.weixin.qq.com, 参考 Hermes weixin.py 架构)
+- 双向对话: 微信里直接和「数智分析BOT」对话(长轮询 getupdates → AI 回复 → sendmessage)
+- 回复状态: 微信显示「正在输入」(getconfig typing_ticket + sendtyping)
+- 媒体消息: 微信发图片/文件/链接 → iLink 媒体下载(AES-128-ECB 解密)→ OCR/解析 → AI 分析
+- 多模态: 图片由视觉代理(agnes-2.5-flash)看图描述 → deepseek 分析(自称保持数智分析BOT)
+- 推送自称: 所有微信推送以【数智分析BOT】开头
+- 会话自愈: context_token 自动刷新(推送失败 → getupdates 拉新重试)
+
+### feat(chat) — 对话助手多模态 + 链接抓取
+
+- 网页上传图片/文件: POST /api/chat/upload(20MB, 图片 OCR / Excel / PDF / txt 解析)
+- 链接抓取: get_web_content 工具(html.parser 正文提取, 3000 字截断, SSRF 防护)
+- 视觉代理场景化: 设置页「场景分配」新增 vision(视觉代理/图片识别), 可随时更换多模态模型
+
+### feat(reports) — SIDA 内置报告生成器(不再依赖 Hermes cron 同步)
+
+- 盘前(8:30)/盘后(15:30)交易日自动生成: 数据收集(指数/资金流/涨停/持仓/信号)+ LLM 生成
+- 直接归集报告中心(数据卷持久化), 数据获取失败显式标注, LLM 失败模板降级(不编造)
+- 去掉 Obsidian 依赖(后端/前端/部署配置全清, 其他用户零安装)
+
+### feat(branding) — 改名 + 文档
+
+- 对话机器人 → 数智分析BOT; 登录页/引导弹窗 → 数智分析 SIDA(旧名盯盘侠全库清零)
+- README 完全重写(突出 AI 全链路 + 截图打码入档)
+- 仓库改 PRIVATE(商业分版: 入门版开源 / 专业版闭源)
+
+### compliance — 合规加固
+
+- 免责声明全链路: 对话 SYSTEM_PROMPT(买卖倾向必须附「仅供参考, 不构成投资建议」)/ 登录页 / 预测页 / 报告
+- 移除 GPL 依赖 backtrader(TradingAgents 间接安装但未使用, 商业镜像不再含 GPL 代码)
+
 ## 2026-08-14 (v0.2.36)
 
 ### fix(darkflow) — 跨日残留洗白 + AI 反证层 db 自建(生产热修, 已 docker cp 生效)
@@ -173,6 +478,14 @@
 
 # Changelog
 
+## 2026-08-18
+
+### feat — AuditMiddleware 操作审计全覆盖 (v0.2.65.5)
+
+- 所有 2xx 写操作(POST/PUT/PATCH/DELETE)自动落 audit_logs, 补齐渠道/服务商/数据源/设置/用户等管理操作审计
+- 内部自行 decode JWT, 独立 session 异步落库, 失败静默不阻塞
+- 排除 auth(已有埋点)/静态/health/webhook
+
 ## 2026-08-13 (v0.2.24)
 
 ### fix(ai) — 场景绑定跨服务商 404 "model is not found"
@@ -192,6 +505,14 @@ agent_configs 里 premarket_outlook/daily_report 绑定商汤 deepseek-v4-flash,
 
 # Changelog
 
+## 2026-08-18
+
+### feat — AuditMiddleware 操作审计全覆盖 (v0.2.65.5)
+
+- 所有 2xx 写操作(POST/PUT/PATCH/DELETE)自动落 audit_logs, 补齐渠道/服务商/数据源/设置/用户等管理操作审计
+- 内部自行 decode JWT, 独立 session 异步落库, 失败静默不阻塞
+- 排除 auth(已有埋点)/静态/health/webhook
+
 ## 2026-08-13 (v0.2.23)
 
 ### refactor(settings) — 删除多余模型引擎配置(统一 LLM 配置中心)
@@ -206,6 +527,14 @@ agent_configs 里 premarket_outlook/daily_report 绑定商汤 deepseek-v4-flash,
 - 后端 settings 相关测试 17 passed
 
 # Changelog
+
+## 2026-08-18
+
+### feat — AuditMiddleware 操作审计全覆盖 (v0.2.65.5)
+
+- 所有 2xx 写操作(POST/PUT/PATCH/DELETE)自动落 audit_logs, 补齐渠道/服务商/数据源/设置/用户等管理操作审计
+- 内部自行 decode JWT, 独立 session 异步落库, 失败静默不阻塞
+- 排除 auth(已有埋点)/静态/health/webhook
 
 ## 2026-08-13 (v0.2.22)
 

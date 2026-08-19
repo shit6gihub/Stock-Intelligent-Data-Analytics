@@ -39,9 +39,15 @@ const PUSH_LABEL: Record<string, string> = {
   pending: '推送中',
 }
 
+/** 后端时间 = SQLite UTC 无时区标记, 裸字符串按 UTC 解析(否则偏移 8 小时) */
+function parseServerTime(iso: string): Date {
+  const hasTz = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(iso.trim())
+  return new Date(hasTz ? iso : `${iso}Z`)
+}
+
 function timeAgo(iso: string): string {
   if (!iso) return ''
-  const t = new Date(iso).getTime()
+  const t = parseServerTime(iso).getTime()
   if (Number.isNaN(t)) return ''
   const diff = Date.now() - t
   if (diff < 60_000) return '刚刚'

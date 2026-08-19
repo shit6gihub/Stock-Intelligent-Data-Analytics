@@ -46,12 +46,12 @@ export async function showBrowserNotification(item: BrowserNotificationItem): Pr
   if ('serviceWorker' in navigator) {
     const registration = await navigator.serviceWorker.getRegistration()
     if (registration) {
-      await registration.showNotification(item.title || 'PanWatch 通知', options)
+      await registration.showNotification(item.title || 'SIDA 通知', options)
       return true
     }
   }
 
-  const notification = new Notification(item.title || 'PanWatch 通知', options)
+  const notification = new Notification(item.title || 'SIDA 通知', options)
   notification.onclick = () => {
     window.focus()
     if (item.link) window.location.assign(item.link)

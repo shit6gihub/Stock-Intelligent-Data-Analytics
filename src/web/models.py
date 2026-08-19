@@ -38,8 +38,29 @@ class User(Base):
     token_version = Column(Integer, default=1, nullable=False)
     # 影子账户交易画像(交割单分析落库, profile.to_dict()); NULL=未上传过交割单
     shadow_profile_json = Column(JSON, nullable=True)
+    # 个人中心(2026-08-15): 昵称/头像
+    nickname = Column(String(64), nullable=True)
+    avatar = Column(String(255), nullable=True)  # 头像(base64 data URL 或路径)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class AuditLog(Base):
+    """操作审计日志(2026-08-15): 记录关键写操作(登录/配置修改/用户管理/导出等)。
+
+    owner 视角审计: 谁在什么时候改了什么。不记录读操作(避免噪音)。
+    """
+
+    __tablename__ = "audit_logs"
+    __table_args__ = (Index("ix_audit_logs_created", "created_at"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), nullable=True)  # 操作者(系统任务为 NULL)
+    username = Column(String(64), default="")
+    action = Column(String(64), nullable=False)  # login / logout / update_profile / update_password / manage_user / update_settings / update_datasource / export / register
+    detail = Column(String(255), default="")
+    ip = Column(String(64), default="")
+    created_at = Column(DateTime, server_default=func.now())
 
 
 class ReportSubscription(Base):
@@ -77,6 +98,26 @@ class AIService(Base):
     )
 
 
+class UserAIService(Base):
+    """用户 BYOK AI 服务(2026-08-15 SIDA 账号权限控制): 用户自配模型服务。
+
+    用户级 LLM 解析(get_model_for_scene ①)查此表: models_json 为 JSON 数组
+    [{"name","model","is_default","scene","capabilities"}], scene 匹配或
+    is_default 的模型优先于平台模型使用。
+    """
+
+    __tablename__ = "user_ai_services"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), index=True, nullable=False)  # users.id(UUID)
+    name = Column(String, nullable=False)  # 服务名, 如 "我的DeepSeek"
+    base_url = Column(String, nullable=False)
+    api_key = Column(String, default="")
+    # 模型列表 JSON 字符串: [{"name","model","is_default","scene","capabilities"}]
+    models_json = Column(Text, nullable=False, default="[]")
+    created_at = Column(DateTime, server_default=func.now())
+
+
 class AIModel(Base):
     """AI 模型（属于某个服务商）"""
 
@@ -89,6 +130,8 @@ class AIModel(Base):
     )
     model = Column(String, nullable=False)  # 实际模型标识，如 "glm-4-flash"
     is_default = Column(Boolean, default=False)
+    # 功能选型(2026-08-15): 逗号分隔能力标签 chat,vision,image,video,tools; 空串=默认 chat(兼容存量模型)
+    capabilities = Column(Text, nullable=False, default="")
     created_at = Column(DateTime, server_default=func.now())
 
     service = relationship("AIService", back_populates="models")
@@ -313,7 +356,7 @@ class DataSource(Base):
     name = Column(String, nullable=False)  # "雪球资讯"
     type = Column(
         String, nullable=False
-    )  # "news" / "chart" / "quote" / "kline" / "capital_flow"
+    )  # "news" / "quote" / "kline" / "capital_flow"
     provider = Column(String, nullable=False)  # "xueqiu" / "eastmoney" / "tencent"
     config = Column(JSON, default={})  # 配置参数
     enabled = Column(Boolean, default=True)
@@ -1190,4 +1233,24 @@ class Notification(Base):
     # 当次实际尝试的渠道回执（仅 ID/名称/类型/状态/错误，不保存密钥）
     push_channels = Column(JSON, default=list)
     read_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class LLMUsage(Base):
+    """LLM 调用日志(2026-08-15): 每次 AI 调用的 token 用量/耗时/场景, 用于成本统计。
+
+    轻量设计: 不存 prompt/回复原文, 只存计数。一个月几千行, 无性能压力。
+    记录失败静默(不影响主流程)。
+    """
+
+    __tablename__ = "llm_usage"
+    __table_args__ = (Index("ix_llm_usage_created", "created_at"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    # 场景: chat(对话助手) / premarket(盘前报告) / postmarket(盘后报告) / referee(AI裁判) / selfcheck / insights / other
+    scene = Column(String, nullable=False, default="other", index=True)
+    model_name = Column(String, default="")
+    prompt_tokens = Column(Integer, default=0)
+    completion_tokens = Column(Integer, default=0)
+    latency_ms = Column(Integer, default=0)
     created_at = Column(DateTime, server_default=func.now())
