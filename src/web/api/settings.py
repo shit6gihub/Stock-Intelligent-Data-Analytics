@@ -68,6 +68,7 @@ SETTING_DESCRIPTIONS = {
 
 # 敏感 key:列表接口不回显完整值,只返回是否已配置
 SECRET_SETTING_KEYS = {"wudao_mcp_token", "zhitu_token", "tdx_api_key", "ths_password"}
+SECRET_MASK = "********"
 
 SETTING_KEYS = list(SETTING_DESCRIPTIONS.keys())
 
@@ -114,10 +115,15 @@ def list_settings(db: Session = Depends(get_db)):
     db.commit()
 
     # 敏感 key 不回显完整值(只暴露是否已配置,前端用掩码占位)
+    # 注意: 必须返回新对象,不能改 ORM 对象 s.value —— 改了会挂起脏写,
+    # 下一次同会话查询(autoflush)会把字面掩码写回 DB 覆盖真 token,并加剧 SQLite 锁竞争
+    response = []
     for s in result:
-        if s.key in SECRET_SETTING_KEYS and s.value:
-            s.value = "********"
-    return result
+        val = s.value
+        if s.key in SECRET_SETTING_KEYS and val:
+            val = SECRET_MASK
+        response.append(SettingResponse(key=s.key, value=val, description=s.description))
+    return response
 
 
 AVATAR_KEY = "ui_avatar"  # DB 仅存文件名;图片本体落在 data/avatars/

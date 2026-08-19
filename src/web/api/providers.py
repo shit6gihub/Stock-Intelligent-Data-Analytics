@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from src.web.database import get_db
 from src.web.models import AIService, AIModel, AISceneBinding
@@ -12,12 +12,13 @@ router = APIRouter()
 
 # 全量场景注册表: scene → 显示名 + 描述。新增使用点需在此登记。
 SCENES = {
-    "chat": {"name": "对话助手", "desc": "日常对话 / 个股问答助手"},
+    "chat": {"name": "数智分析BOT", "desc": "日常对话 / 个股问答助手"},
     "trading_agents": {"name": "TradingAgents 深度分析", "desc": "多智能体深度分析报告"},
     "reports": {"name": "报告复盘 Agent", "desc": "盘前 / 盘后复盘报告生成"},
     "referee": {"name": "AI 裁判", "desc": "多模型结果裁决 / 交叉验证"},
     "selfcheck": {"name": "自检", "desc": "AI 自检 / 质量检查"},
     "insights": {"name": "机会评分", "desc": "投资机会评分 / 洞察"},
+    "vision": {"name": "视觉代理(图片识别)", "desc": "图片内容理解(需支持视觉的多模态模型, 对话/微信发图时自动调用)"},
 }
 
 
@@ -107,12 +108,62 @@ class ServiceUpdate(BaseModel):
     api_key: str | None = None
 
 
+# 模型能力标签(2026-08-15): chat=对话, vision=视觉/图片理解, image=图像生成, video=视频生成, tools=工具调用
+CAPABILITY_TAGS = ("chat", "vision", "image", "video", "tools")
+
+
+def infer_capabilities(model_name: str, service_name: str = "") -> list[str]:
+    """按模型名/服务商名自动推断能力(2026-08-15): 未手动配置 capabilities 的
+    存量模型也能自动显示真实功能。保守规则, 命中关键词才标, 不猜。"""
+    n = f"{model_name} {service_name}".lower()
+    caps: set[str] = set()
+    # 视频生成
+    if any(k in n for k in ("video", "cinema", "animate", "mov", "video-gen")):
+        caps.add("video")
+    # 图像生成
+    if any(k in n for k in ("image", "img-", "img_", "dall-e", "sdxl", "flux", "draw", "t2i", "paint")):
+        caps.add("image")
+    # 视觉理解(多模态); 注意不能用 "see"(deepseek/seed 会误命中)
+    if any(k in n for k in ("vision", "vl", "4v", "omni", "multimodal", "visual", "caption", "vlm", "image-understanding")):
+        caps.add("vision")
+    # 已知多模态特例(实测): Agnes 2.5 Flash 支持 chat/vision/image/video/tools
+    # 注意: 只匹配模型名(服务商名 "Agnes 2.5 Flash" 会误命中全部模型)
+    mn = model_name.lower()
+    if "agnes-2.5" in mn or "agnes 2.5" in mn:
+        caps.update(("vision", "image", "video"))
+    # 工具调用(主流对话模型默认支持)
+    if any(k in n for k in ("deepseek", "glm", "doubao", "agnes", "sensenova", "qwen", "minimax", "gpt", "claude", "kimi", "moonshot", "yi", "ernie", "baichuan", "chat", "abab", "step", "hunyuan")):
+        caps.add("tools")
+    # chat 基础能力(对话/生成模型都有; 纯生成模型如 cinema-generate 不含)
+    if any(k in n for k in ("chat", "flash", "lite", "fast", "mini", "max", "pro", "turbo", "deepseek", "glm", "agnes", "doubao", "sensenova", "qwen", "minimax", "gpt", "claude")):
+        caps.add("chat")
+    if not caps:
+        caps.add("chat")  # 兜底: 未知模型至少可对话
+    order = ["chat", "vision", "image", "video", "tools"]
+    return [t for t in order if t in caps]
+
+
+def _parse_capabilities(raw) -> list[str]:
+    """从存储串(逗号分隔)解析能力标签; 空串/None = 默认 chat(兼容存量模型)。"""
+    if isinstance(raw, list):
+        return raw or ["chat"]
+    if not raw or not str(raw).strip():
+        return ["chat"]
+    return [t.strip() for t in str(raw).split(",") if t.strip()]
+
+
 class ModelResponse(BaseModel):
     id: int
     name: str
     service_id: int
     model: str
     is_default: bool
+    capabilities: list[str] = []
+
+    @field_validator("capabilities", mode="before")
+    @classmethod
+    def _validate_capabilities(cls, v):
+        return _parse_capabilities(v)
 
     class Config:
         from_attributes = True
@@ -136,13 +187,26 @@ def list_services(db: Session = Depends(get_db)):
 
 
 def _service_to_response(service: AIService) -> dict:
+    # 安全(2026-08-15): api_key 不回显明文, 已配置显示掩码占位(与 settings 的 SECRET_MASK 一致)
+    api_key = service.api_key or ""
+    if api_key:
+        api_key = "********"
     return {
         "id": service.id,
         "name": service.name,
         "base_url": service.base_url,
-        "api_key": service.api_key or "",
+        "api_key": api_key,
         "models": [
-            {"id": m.id, "name": m.name, "service_id": m.service_id, "model": m.model, "is_default": m.is_default}
+            {
+                "id": m.id,
+                "name": m.name,
+                "service_id": m.service_id,
+                "model": m.model,
+                "is_default": m.is_default,
+                "capabilities": _parse_capabilities(m.capabilities)
+                if str(m.capabilities or "").strip()
+                else infer_capabilities(m.model, service.name),
+            }
             for m in service.models
         ],
     }
@@ -164,6 +228,9 @@ def update_service(service_id: int, body: ServiceUpdate, db: Session = Depends(g
         raise HTTPException(404, "AI 服务商不存在")
 
     for key, value in body.model_dump(exclude_unset=True).items():
+        # 掩码占位不覆盖真 key(前端编辑时未修改会回传 "********")
+        if key == "api_key" and value in ("********", "", None):
+            continue
         setattr(service, key, value)
 
     db.commit()
@@ -188,6 +255,8 @@ class ModelCreate(BaseModel):
     service_id: int
     model: str
     is_default: bool = False
+    # None/缺省 = 不指定(存空串, 读回默认 chat), 兼容存量前端
+    capabilities: list[str] | None = None
 
 
 class ModelUpdate(BaseModel):
@@ -195,6 +264,7 @@ class ModelUpdate(BaseModel):
     service_id: int | None = None
     model: str | None = None
     is_default: bool | None = None
+    capabilities: list[str] | None = None  # None = 不变
 
 
 class BatchModelItem(BaseModel):
@@ -224,6 +294,12 @@ def create_model(body: ModelCreate, db: Session = Depends(get_db)):
     data = body.model_dump()
     if not data["name"]:
         data["name"] = data["model"]
+    # capabilities: list/None → 逗号分隔存储串(空=自动推断标注, 兼容存量)
+    caps = data.get("capabilities")
+    if caps:
+        data["capabilities"] = ",".join(caps)
+    else:
+        data["capabilities"] = ",".join(infer_capabilities(data["model"], service.name))
     model = AIModel(**data)
     db.add(model)
     db.commit()
@@ -240,6 +316,13 @@ def update_model(model_id: int, body: ModelUpdate, db: Session = Depends(get_db)
     data = body.model_dump(exclude_unset=True)
     if data.get("is_default"):
         db.query(AIModel).update({"is_default": False})
+
+    # capabilities: None = 不变(不覆盖); list = 覆盖为逗号分隔存储串
+    caps = data.get("capabilities")
+    if caps is None:
+        data.pop("capabilities", None)
+    else:
+        data["capabilities"] = ",".join(caps)
 
     for key, value in data.items():
         setattr(model, key, value)

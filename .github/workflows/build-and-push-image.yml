@@ -31,14 +31,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install frontend deps
         working-directory: frontend
-        run: npm install
+        run: pnpm install --frozen-lockfile
 
       - name: Frontend typecheck (门禁 · tsc -b)
         working-directory: frontend
@@ -82,8 +89,9 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: xiaoze-hub
+          # GITHUB_TOKEN 在仓库公开后推 ghcr 偶发 write_package 拒绝,改用经典 PAT(write:packages)
+          password: ${{ secrets.GHCR_PAT }}
 
       - name: Determine image tag
         id: meta
@@ -91,8 +99,8 @@ jobs:
           if [ -n "${{ inputs.tag }}" ]; then
             TAG="${{ inputs.tag }}"
           elif [ -n "${{ github.ref_name }}" ] && [ "${{ github.ref_name }}" != "main" ]; then
-            # tag 触发: 去掉 v 前缀(如 v0.1.0 → 0.1.0)
-            TAG="${GITHUB_REF_NAME#v}"
+            # tag 触发: 保留 v 前缀(与 ghcr 现有 v0.2.x tag 一致)
+            TAG="${GITHUB_REF_NAME}"
           else
             TAG="latest"
           fi
@@ -106,6 +114,8 @@ jobs:
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            VERSION=${{ steps.meta.outputs.tag }}
           tags: |
             ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:latest
             ghcr.io/xiaoze-hub/stock-intelligent-data-analytics:${{ steps.meta.outputs.tag }}
@@ -113,10 +123,10 @@ jobs:
           cache-to: type=gha,mode=max
           provenance: false
           labels: |
-            org.opencontainers.image.title=PanWatch
+            org.opencontainers.image.title=数智分析 SIDA
             org.opencontainers.image.description=数智分析 · 自托管 AI 盯盘助手
-            org.opencontainers.image.source=https://github.com/xiaoze-hub/PanWatch
-            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.source=https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics
+            org.opencontainers.image.licenses=AGPL-3.0
 
       - name: Debug failure
         if: failure()

@@ -17,7 +17,8 @@ from src.web.api.chat import (
 )
 from src.collectors.market_http import TTLCache
 from src.web.database import get_db
-from src.web.models import Stock
+from src.web.models import Stock, User
+from src.web.api.auth import get_current_user
 import asyncio
 import logging
 import time
@@ -40,6 +41,9 @@ class InsightsBatchRequest(BaseModel):
 
 
 def _parse_market(market: str) -> MarketCode:
+    # 兼容数据源返回的交易所代码(SH/SZ/BJ 均属 A股 CN 市场)
+    if (market or "").upper() in ("SH", "SZ", "BJ"):
+        market = "CN"
     try:
         return MarketCode(market)
     except ValueError:
@@ -201,7 +205,7 @@ async def _fetch_message_context(db: Session, symbol: str, market: str) -> str:
 
 
 @router.post("/add-position-eval")
-async def add_position_eval(req: AddPositionEvalRequest, db: Session = Depends(get_db)):
+async def add_position_eval(req: AddPositionEvalRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """加仓快速评估:按服务端口径算摊薄成本 + 让 AI 给 适合/谨慎/不适合 结论。"""
     market = _parse_market(req.market).value
     cur_q = max(0.0, float(req.current_quantity or 0))
@@ -254,10 +258,11 @@ async def add_position_eval(req: AddPositionEvalRequest, db: Session = Depends(g
         client = _get_ai_client(db, req.model_id)
         # 2026-08-13 统一 LLM 配置中心: insights 场景绑定覆盖(client 整体重建,
         # 跨服务商绑定必须连 base_url/api_key 一起换, 否则 404 model not found)
+        # 2026-08-16 传 user: 走 BYOK/平台授权用户级解析
         try:
             from src.core.ai_client import get_model_for_scene
 
-            scene_client = _client_from_scene_cfg(db, get_model_for_scene(db, "insights"))
+            scene_client = _client_from_scene_cfg(db, get_model_for_scene(db, "insights", user=user))
             if scene_client is not None:
                 client = scene_client
         except Exception:
@@ -322,7 +327,7 @@ class AnnouncementEvalRequest(BaseModel):
 
 
 @router.post("/announcement-eval")
-async def announcement_eval(req: AnnouncementEvalRequest, db: Session = Depends(get_db)):
+async def announcement_eval(req: AnnouncementEvalRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """近期公告 → AI 逐条判利好/利空/中性 + 一句话。降级:无全文则用标题。"""
     market = _parse_market(req.market).value
     cache_key = f"{market}:{req.symbol}"
@@ -351,10 +356,11 @@ async def announcement_eval(req: AnnouncementEvalRequest, db: Session = Depends(
     try:
         client = _get_ai_client(db, req.model_id)
         # 2026-08-13 统一 LLM 配置中心: insights 场景绑定覆盖(client 整体重建)
+        # 2026-08-16 传 user: 走 BYOK/平台授权用户级解析
         try:
             from src.core.ai_client import get_model_for_scene
 
-            scene_client = _client_from_scene_cfg(db, get_model_for_scene(db, "insights"))
+            scene_client = _client_from_scene_cfg(db, get_model_for_scene(db, "insights", user=user))
             if scene_client is not None:
                 client = scene_client
         except Exception:

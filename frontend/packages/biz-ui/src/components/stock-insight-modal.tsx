@@ -12,7 +12,7 @@ import {
   type HistoryComparisonResponse,
 } from '@panwatch/api'
 import { getMarketBadge } from '@panwatch/biz-ui'
-import { useLocalStorage } from '@/lib/utils'
+import { useLocalStorage, parseServerTime } from '@/lib/utils'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@panwatch/base-ui/components/ui/dialog'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@panwatch/base-ui/components/ui/select'
@@ -194,7 +194,7 @@ function formatMarketCap(value: number | null | undefined, market?: string): str
 
 function formatTime(isoTime?: string): string {
   if (!isoTime) return ''
-  const d = new Date(isoTime)
+  const d = parseServerTime(isoTime)
   if (isNaN(d.getTime())) return ''
   return d.toLocaleString('zh-CN', {
     month: '2-digit',
@@ -207,7 +207,7 @@ function formatTime(isoTime?: string): string {
 
 function parseToMs(input?: string): number | null {
   if (!input) return null
-  const d = new Date(input)
+  const d = parseServerTime(input)
   if (!isNaN(d.getTime())) return d.getTime()
   const m = input.match(/^(\d{4})-(\d{2})-(\d{2})$/)
   if (!m) return null

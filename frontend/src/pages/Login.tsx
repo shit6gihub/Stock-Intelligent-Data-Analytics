@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { TrendingUp, Lock, Eye, EyeOff, User } from 'lucide-react'
-import { authApi } from '@panwatch/api'
+import { authApi, fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Input } from '@panwatch/base-ui/components/ui/input'
 import { Label } from '@panwatch/base-ui/components/ui/label'
@@ -16,6 +16,8 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [isSetup, setIsSetup] = useState(false)
+  // 2026-08-17 注册功能已关闭(只允许 owner 手动建号, 后端 app_settings.allow_register=false)
+  const registerMode = false
   const [checking, setChecking] = useState(true)
 
   useEffect(() => {
@@ -32,7 +34,16 @@ export default function LoginPage() {
     e.preventDefault()
     if (!username || !password) return
 
-    if (isSetup) {
+    if (false) { // 注册模式已永久关闭
+      if (password !== confirmPassword) {
+        toast('两次密码不一致', 'error')
+        return
+      }
+      if (password.length < 8) {
+        toast('密码长度至少 8 位', 'error')
+        return
+      }
+    } else if (isSetup) {
       if (password !== confirmPassword) {
         toast('两次密码不一致', 'error')
         return
@@ -45,6 +56,16 @@ export default function LoginPage() {
 
     setLoading(true)
     try {
+      if (false) { // 注册模式已永久关闭
+        // 注册(member 账号); 失败时 fetchAPI 抛出后端 message(如 403 注册未开放)
+        const data = await fetchAPI<{ message?: string }>('/auth/register', {
+          method: 'POST',
+          body: JSON.stringify({ username, password }),
+        })
+        toast(data?.message || '注册成功, 请登录', 'success')
+        return
+      }
+
       const data = await authApi.login({ username, password })
 
       // 保存 token
@@ -80,8 +101,8 @@ export default function LoginPage() {
           <div className="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center mb-4">
             <TrendingUp className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-foreground">盯盘侠</h1>
-          <p className="text-sm text-muted-foreground mt-1">数智分析</p>
+          <h1 className="text-2xl font-bold text-foreground">数智分析 SIDA</h1>
+          <p className="text-sm text-muted-foreground mt-1">A股智能分析 · AI 全链路打通</p>
         </div>
 
         {/* Form */}
@@ -89,11 +110,11 @@ export default function LoginPage() {
           <div className="flex items-center gap-2 mb-6">
             <Lock className="w-5 h-5 text-primary" />
             <h2 className="text-lg font-semibold">
-              {isSetup ? '设置访问密码' : '登录'}
+              {registerMode ? '注册账号' : isSetup ? '设置访问密码' : '登录'}
             </h2>
           </div>
 
-          {isSetup && (
+          {isSetup && !registerMode && (
             <p className="text-sm text-muted-foreground mb-4">
               首次使用，请设置访问密码以保护您的数据
             </p>
@@ -101,7 +122,7 @@ export default function LoginPage() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <Label>用户名</Label>
+              <Label>{registerMode ? '用户名(2-20 位字母数字)' : '用户名'}</Label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
@@ -116,14 +137,14 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <Label>{isSetup ? '设置密码' : '密码'}</Label>
+              <Label>{registerMode || isSetup ? '密码' : '密码'}</Label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  placeholder={isSetup ? '至少 6 位' : '请输入密码'}
+                  placeholder={registerMode || isSetup ? '至少 8 位' : '请输入密码'}
                   className="pl-10 pr-10"
                 />
                 <Button
@@ -138,7 +159,7 @@ export default function LoginPage() {
               </div>
             </div>
 
-            {isSetup && (
+            {(registerMode || isSetup) && (
               <div>
                 <Label>确认密码</Label>
                 <Input
@@ -153,6 +174,8 @@ export default function LoginPage() {
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? (
                 <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : registerMode ? (
+                '注册'
               ) : isSetup ? (
                 '设置密码并进入'
               ) : (
@@ -160,10 +183,12 @@ export default function LoginPage() {
               )}
             </Button>
           </form>
+
+          {/* 2026-08-17: 注册入口已关闭(只允许 owner 手动建号),后端 app_settings.allow_register=false */}
         </div>
 
         <p className="text-center text-xs text-muted-foreground mt-6">
-          AI 驱动的股票监控助手
+          AI 驱动的股票数据分析助手 · 分析结果仅供参考，不构成投资建议
         </p>
       </div>
     </div>

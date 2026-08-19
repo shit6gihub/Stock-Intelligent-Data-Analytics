@@ -8,6 +8,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Label } from '@panwatch/base-ui/components/ui/label'
 import { Input } from '@panwatch/base-ui/components/ui/input'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
+import { parseServerTime } from '@/lib/utils'
+import ErrorBanner from '@/components/ErrorBanner'
 
 interface AgentConfig {
   id: number
@@ -155,6 +157,8 @@ export default function AgentsPage() {
   const [services, setServices] = useState<AIService[]>([])
   const [channels, setChannels] = useState<NotifyChannel[]>([])
   const [loading, setLoading] = useState(true)
+  // 初始加载失败提示(失败≠空态:不把"加载失败"误读为"暂无 Agent")
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [triggering, setTriggering] = useState<string | null>(null)
 
   const [bindDialogAgent, setBindDialogAgent] = useState<AgentConfig | null>(null)
@@ -184,7 +188,7 @@ export default function AgentsPage() {
 
   const formatPreviewTime = (iso: string, tz?: string): string => {
     try {
-      const d = new Date(iso)
+      const d = parseServerTime(iso)
       if (isNaN(d.getTime())) return iso
       return d.toLocaleString('zh-CN', {
         timeZone: tz || undefined,
@@ -200,12 +204,13 @@ export default function AgentsPage() {
   }
 
   const load = async () => {
+    setLoadError(null)
     try {
       const [agentData, stockData, servicesData, channelData] = await Promise.all([
-        fetchAPI<AgentConfig[]>('/agents'),
-        fetchAPI<StockConfig[]>('/stocks'),
-        fetchAPI<AIService[]>('/providers/services'),
-        fetchAPI<NotifyChannel[]>('/channels'),
+        fetchAPI<AgentConfig[]>('/agents', { cacheMode: 'reload' }),
+        fetchAPI<StockConfig[]>('/stocks', { cacheMode: 'reload' }),
+        fetchAPI<AIService[]>('/providers/services', { cacheMode: 'reload' }),
+        fetchAPI<NotifyChannel[]>('/channels', { cacheMode: 'reload' }),
       ])
       setAgents(agentData)
       setStocks(stockData)
@@ -226,6 +231,7 @@ export default function AgentsPage() {
       setPreviews(Object.fromEntries(previewPairs))
     } catch (e) {
       console.error(e)
+      setLoadError(e instanceof Error ? e.message : '加载失败')
     } finally {
       setLoading(false)
     }
@@ -491,6 +497,11 @@ export default function AgentsPage() {
 
   return (
     <div>
+      {/* 2026-08-17 闭环修正:错误态系统统一(B 报告 P0-3) */}
+      <ErrorBanner
+        errors={loadError ? [{ source: 'Agent 配置', message: loadError, retry: () => void load() }] : []}
+        onDismiss={() => setLoadError(null)}
+      />
       <div className="mb-4 md:mb-8">
         <h1 className="text-[20px] md:text-[22px] font-bold text-foreground tracking-tight">Agent</h1>
         <p className="text-[12px] md:text-[13px] text-muted-foreground mt-0.5 md:mt-1">自动化任务管理与调度</p>
@@ -521,7 +532,18 @@ export default function AgentsPage() {
         )}
       </div>
 
-      {agents.length === 0 ? (
+      {loadError ? (
+        <div className="card flex flex-col items-center justify-center py-20">
+          <p className="text-[13px] text-muted-foreground">加载失败{loadError ? `: ${loadError}` : ''}</p>
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="mt-3 rounded-md px-2 py-1 text-[11px] text-primary transition-colors hover:bg-accent"
+          >
+            重试
+          </button>
+        </div>
+      ) : agents.length === 0 ? (
         <div className="card flex flex-col items-center justify-center py-20">
           <div className="w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
             <Bot className="w-6 h-6 text-primary" />

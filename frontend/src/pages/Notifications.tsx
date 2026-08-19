@@ -19,6 +19,8 @@ import remarkGfm from 'remark-gfm'
 import { fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import SkeletonRows from '@/components/SkeletonRows'
+import { parseServerTime } from '@/lib/utils'
+import ErrorBanner from '@/components/ErrorBanner'
 
 interface NotificationItem {
   id: number
@@ -67,17 +69,17 @@ const CATEGORY_LABELS: Record<string, string> = {
 }
 
 const LEVEL_META = {
-  success: { label: '成功', icon: CheckCircle2, className: 'text-emerald-500 bg-emerald-500/10' },
-  error: { label: '失败', icon: AlertCircle, className: 'text-rose-500 bg-rose-500/10' },
-  warning: { label: '警告', icon: AlertTriangle, className: 'text-amber-500 bg-amber-500/10' },
+  success: { label: '成功', icon: CheckCircle2, className: 'text-emerald-700 dark:text-emerald-700 bg-emerald-500/10' },
+  error: { label: '失败', icon: AlertCircle, className: 'text-rose-600 dark:text-rose-600 bg-rose-500/10' },
+  warning: { label: '警告', icon: AlertTriangle, className: 'text-amber-700 dark:text-amber-500 bg-amber-500/10' },
   info: { label: '信息', icon: Info, className: 'text-primary bg-primary/10' },
 }
 
 const PUSH_META: Record<string, { label: string; className: string }> = {
-  sent: { label: '已外部推送', className: 'text-emerald-500 bg-emerald-500/10' },
-  failed: { label: '外部推送失败', className: 'text-rose-500 bg-rose-500/10' },
+  sent: { label: '已外部推送', className: 'text-emerald-700 dark:text-emerald-700 bg-emerald-500/10' },
+  failed: { label: '外部推送失败', className: 'text-rose-600 dark:text-rose-600 bg-rose-500/10' },
   skipped: { label: '仅站内通知', className: 'text-muted-foreground bg-accent/60' },
-  pending: { label: '正在推送', className: 'text-amber-500 bg-amber-500/10' },
+  pending: { label: '正在推送', className: 'text-amber-700 dark:text-amber-500 bg-amber-500/10' },
 }
 
 const CHANNEL_TYPE_LABELS: Record<string, string> = {
@@ -87,6 +89,7 @@ const CHANNEL_TYPE_LABELS: Record<string, string> = {
   dingtalk: '钉钉',
   wecom: '企业微信',
   hermes: 'Hermes',
+  wechat_ilink: '个人微信',
   lark: '飞书',
   serverchan: 'Server酱',
   discord: 'Discord',
@@ -106,7 +109,7 @@ function channelSummary(item: NotificationItem): string {
 
 function formatDateTime(iso: string): string {
   if (!iso) return '时间未知'
-  const value = new Date(iso)
+  const value = parseServerTime(iso)
   if (Number.isNaN(value.getTime())) return iso
   return value.toLocaleString('zh-CN', {
     year: 'numeric', month: '2-digit', day: '2-digit',
@@ -175,7 +178,7 @@ export default function NotificationsPage() {
     setLoading(true)
     setError('')
     try {
-      const result = await fetchAPI<{ items: NotificationItem[]; unread: number; configured_channels: ConfiguredChannel[] }>('/notifications?limit=200')
+      const result = await fetchAPI<{ items: NotificationItem[]; unread: number; configured_channels: ConfiguredChannel[] }>('/notifications?limit=200', { cacheMode: 'reload' })
       const next = result?.items || []
       setItems(next)
       setConfiguredChannels(result?.configured_channels || [])
@@ -333,9 +336,7 @@ export default function NotificationsPage() {
         </div>
       </div>
 
-      {error && (
-        <div className="rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-[12px] text-rose-500">{error}</div>
-      )}
+      <ErrorBanner errors={error ? [{ source: '通知', message: error, retry: () => void load() }] : []} onDismiss={() => setError('')} />
 
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/50 bg-card/70 p-1.5">
         <div className="flex shrink-0 items-center gap-1 rounded-lg bg-background/45 p-1">
@@ -445,9 +446,9 @@ export default function NotificationsPage() {
                       )}
                     </span>
                     <span className="mt-1 block line-clamp-2 text-[11px] leading-5 text-muted-foreground">{item.body || '无正文'}</span>
-                    <span className="mt-1.5 flex items-center gap-2 text-[10px] text-muted-foreground/70">
-                      <span>{formatDateTime(item.created_at)}</span>
-                      {item.push_status && <span className={item.push_status === 'failed' ? 'text-rose-500' : item.push_status === 'sent' ? 'text-emerald-500' : ''}>{channelSummary(item)}</span>}
+                    <span className="mt-1.5 flex min-w-0 items-center gap-2 text-[10px] text-muted-foreground/70">
+                      <span className="shrink-0">{formatDateTime(item.created_at)}</span>
+                      {item.push_status && <span className={`min-w-0 truncate ${item.push_status === 'failed' ? 'text-rose-600 dark:text-rose-600' : item.push_status === 'sent' ? 'text-emerald-700 dark:text-emerald-700' : ''}`}>{channelSummary(item)}</span>}
                     </span>
                   </span>
                   <span className={`mt-1.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors ${isSelected ? 'bg-primary text-primary-foreground' : 'text-muted-foreground/50 group-hover:bg-accent group-hover:text-foreground'}`}>
@@ -473,7 +474,7 @@ export default function NotificationsPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="text-[17px] font-semibold text-foreground">{selected.title || '未命名通知'}</h2>
                       <span className="rounded-full bg-accent/60 px-2 py-0.5 text-[10px] text-muted-foreground">{CATEGORY_LABELS[selected.category] || selected.category || '系统'}</span>
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] ${selected.read ? 'bg-accent/60 text-muted-foreground' : 'bg-rose-500/10 text-rose-500'}`}>{selected.read ? '已读' : '未读'}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] ${selected.read ? 'bg-accent/60 text-muted-foreground' : 'bg-rose-500/10 text-rose-600 dark:text-rose-600'}`}>{selected.read ? '已读' : '未读'}</span>
                     </div>
                     <div className="mt-1 text-[11px] text-muted-foreground">{formatDateTime(selected.created_at)}</div>
                   </div>
@@ -489,7 +490,7 @@ export default function NotificationsPage() {
               <div className="grid gap-3 border-b border-border/40 py-5 sm:grid-cols-2 xl:grid-cols-4">
                 <div className="rounded-xl bg-accent/30 p-3">
                   <div className="text-[10px] text-muted-foreground">站内状态</div>
-                  <div className="mt-1 flex items-center gap-1.5 text-[12px] font-medium text-foreground"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />已送达消息中心</div>
+                  <div className="mt-1 flex items-center gap-1.5 text-[12px] font-medium text-foreground"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-700" />已送达消息中心</div>
                 </div>
                 <div className="rounded-xl bg-accent/30 p-3">
                   <div className="text-[10px] text-muted-foreground">推送渠道</div>
@@ -501,10 +502,10 @@ export default function NotificationsPage() {
                           title={channel.error || ''}
                           className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
                             channel.status === 'sent'
-                              ? 'bg-emerald-500/10 text-emerald-500'
+                              ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-700'
                               : channel.status === 'failed'
-                                ? 'bg-rose-500/10 text-rose-500'
-                                : 'bg-amber-500/10 text-amber-500'
+                                ? 'bg-rose-500/10 text-rose-600 dark:text-rose-600'
+                                : 'bg-amber-500/10 text-amber-700 dark:text-amber-500'
                           }`}
                         >
                           <Send className="h-3 w-3" />
@@ -539,8 +540,8 @@ export default function NotificationsPage() {
 
               {selected.push_error && (
                 <div className="mt-5 rounded-xl border border-rose-500/25 bg-rose-500/8 p-4">
-                  <div className="flex items-center gap-2 text-[12px] font-medium text-rose-500"><AlertCircle className="h-4 w-4" />推送失败详情</div>
-                  <div className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-rose-400">{selected.push_error}</div>
+                  <div className="flex items-center gap-2 text-[12px] font-medium text-rose-600 dark:text-rose-600"><AlertCircle className="h-4 w-4" />推送失败详情</div>
+                  <div className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-rose-700 dark:text-rose-400">{selected.push_error}</div>
                 </div>
               )}
 
@@ -551,10 +552,10 @@ export default function NotificationsPage() {
                     <div className="flex flex-wrap items-center justify-end gap-1.5 text-[10px]">
                       <span className={`rounded-full px-2 py-0.5 font-medium ${
                         task.status === 'success'
-                          ? 'bg-emerald-500/10 text-emerald-500'
+                          ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-700'
                           : task.status === 'skipped'
-                            ? 'bg-amber-500/10 text-amber-500'
-                            : 'bg-rose-500/10 text-rose-500'
+                            ? 'bg-amber-500/10 text-amber-700 dark:text-amber-500'
+                            : 'bg-rose-500/10 text-rose-600 dark:text-rose-600'
                       }`}>
                         {task.status === 'success' ? '执行成功' : task.status === 'skipped' ? '已跳过' : '执行失败'}
                       </span>
@@ -568,9 +569,9 @@ export default function NotificationsPage() {
                     <RefreshCw className="mr-2 h-4 w-4 animate-spin" />正在读取本次任务结果…
                   </div>
                 ) : detailError ? (
-                  <div className="rounded-xl border border-rose-500/25 bg-rose-500/8 p-4 text-[12px] text-rose-500">{detailError}</div>
+                  <div className="rounded-xl border border-rose-500/25 bg-rose-500/8 p-4 text-[12px] text-rose-600 dark:text-rose-600">{detailError}</div>
                 ) : task?.error ? (
-                  <div className="rounded-xl border border-rose-500/25 bg-rose-500/8 p-4 font-mono text-[12px] leading-6 text-rose-400 whitespace-pre-wrap break-words">{task.error}</div>
+                  <div className="rounded-xl border border-rose-500/25 bg-rose-500/8 p-4 font-mono text-[12px] leading-6 text-rose-700 dark:text-rose-400 whitespace-pre-wrap break-words">{task.error}</div>
                 ) : task?.result ? (
                   <MarkdownBlock content={task.result} />
                 ) : selected.trace_id ? (

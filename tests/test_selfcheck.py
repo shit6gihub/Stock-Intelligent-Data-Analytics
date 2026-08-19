@@ -276,26 +276,13 @@ def test_run_selfcheck_keys_filter(monkeypatch):
 
 # --------------------------- 端点 ---------------------------
 
-def test_selfcheck_endpoint(monkeypatch):
-    """端点调用 run_selfcheck 并原样返回看板。"""
-    from src.web.api import health
-
-    async def fake_run(*, notify_send=False, keys=None):
-        return {"items": [], "summary": {"total": 0, "ok": 0, "slow": 0, "fail": 0},
-                "notify_send": notify_send}
-
-    monkeypatch.setattr(health, "run_selfcheck", fake_run)
-    # 直接调用路由函数需显式传参(Query 默认值仅在 HTTP 请求时解析)
-    res = asyncio.run(health.selfcheck(notify_send=True, list_only=False, keys=None))
-    assert res["summary"]["total"] == 0
-    assert res["notify_send"] is True
-
-
-def test_selfcheck_route_mounted():
-    """/api/health/selfcheck 已挂载到 app。"""
+def test_health_metrics_routes_mounted():
+    """v0.2.65 重构后: /api/health(健康检查) 与 /api/health/metrics(Prometheus) 已挂载。"""
     from src.web.app import app
 
-    assert "/api/health/selfcheck" in set(app.openapi().get("paths", {}).keys())
+    paths = set(app.openapi().get("paths", {}).keys())
+    assert "/api/health" in paths or "/api/health/health" in paths
+    assert "/api/health/metrics" in paths
 
 
 # --------------------------- CLI doctor ---------------------------

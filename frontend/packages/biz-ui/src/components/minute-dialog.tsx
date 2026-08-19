@@ -83,7 +83,7 @@ export function MinuteDialog({ open, onOpenChange, symbol, market, stockName }: 
         </DialogHeader>
 
         {loading && <div className="py-8 text-center text-muted-foreground">加载中…</div>}
-        {error && <div className="py-8 text-center text-red-500">加载失败: {error}</div>}
+        {error && <div className="py-8 text-center text-red-600">加载失败: {error}</div>}
         {!loading && !error && points.length === 0 && (
           <div className="py-8 text-center text-muted-foreground">暂无分时数据(非交易日或停牌)</div>
         )}
@@ -91,7 +91,7 @@ export function MinuteDialog({ open, onOpenChange, symbol, market, stockName }: 
         {!loading && !error && points.length > 1 && (
           <div className="space-y-3">
             <div className="flex items-center justify-between text-sm">
-              <span className={up ? 'text-rose-400' : 'text-emerald-400'}>
+              <span className={up ? 'text-rose-700 dark:text-rose-400' : 'text-emerald-700 dark:text-emerald-400'}>
                 现价 {last?.price?.toFixed(2)} {up ? '↑' : '↓'}
               </span>
               <span className="text-muted-foreground">均价 {last?.avg?.toFixed(2)}</span>

@@ -33,24 +33,54 @@ class Migration:
         return hashlib.sha256(raw).hexdigest()
 
 
+def _dialect_is_pg(conn: Connection) -> bool:
+    return conn.dialect.name == "postgresql"
+
+
 def _has_table(conn: Connection, table: str) -> bool:
-    row = conn.execute(
-        text(
-            """
+    if _dialect_is_pg(conn):
+        row = conn.execute(
+            text(
+                """
+SELECT table_name AS name
+FROM information_schema.tables
+WHERE table_schema = 'public' AND table_name = :table
+LIMIT 1
+"""
+            ),
+            {"table": table},
+        ).first()
+    else:
+        row = conn.execute(
+            text(
+                """
 SELECT name
 FROM sqlite_master
 WHERE type='table' AND name=:table
 LIMIT 1
 """
-        ),
-        {"table": table},
-    ).first()
+            ),
+            {"table": table},
+        ).first()
     return bool(row)
 
 
 def _has_column(conn: Connection, table: str, column: str) -> bool:
     if not _has_table(conn, table):
         return False
+    if _dialect_is_pg(conn):
+        rows = conn.execute(
+            text(
+                """
+SELECT column_name
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = :table AND column_name = :column
+LIMIT 1
+"""
+            ),
+            {"table": table, "column": column},
+        ).fetchall()
+        return bool(rows)
     rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
     for r in rows:
         # PRAGMA table_info schema: cid, name, type, notnull, dflt_value, pk
@@ -67,17 +97,30 @@ def _add_column_if_missing(conn: Connection, table: str, column: str, sql: str) 
 
 
 def _create_index_if_missing(conn: Connection, name: str, sql: str) -> None:
-    row = conn.execute(
-        text(
-            """
+    if _dialect_is_pg(conn):
+        row = conn.execute(
+            text(
+                """
+SELECT indexname AS name
+FROM pg_indexes
+WHERE schemaname = 'public' AND indexname = :name
+LIMIT 1
+"""
+            ),
+            {"name": name},
+        ).first()
+    else:
+        row = conn.execute(
+            text(
+                """
 SELECT name
 FROM sqlite_master
 WHERE type='index' AND name=:name
 LIMIT 1
 """
-        ),
-        {"name": name},
-    ).first()
+            ),
+            {"name": name},
+        ).first()
     if not row:
         conn.execute(text(sql))
 

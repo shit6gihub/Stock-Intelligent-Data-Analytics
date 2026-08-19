@@ -6,6 +6,7 @@ import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@panwatch/base-ui/components/ui/dialog'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import PriceAlertFormDialog, { type AlertConditionItem, type PriceAlertFormState, type PriceAlertSubmitPayload } from '@panwatch/biz-ui/components/price-alert-form-dialog'
+import { parseServerTime } from '@/lib/utils'
 
 type RuleOp = 'and' | 'or'
 
@@ -62,7 +63,7 @@ const DEFAULT_FORM: PriceAlertFormState = {
 
 function fmt(iso?: string | null): string {
   if (!iso) return '--'
-  const d = new Date(iso)
+  const d = parseServerTime(iso)
   if (isNaN(d.getTime())) return '--'
   return d.toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
@@ -104,9 +105,9 @@ export default function PriceAlertsPage() {
     setLoading(true)
     try {
       const [ruleData, stockData, channelData] = await Promise.all([
-        fetchAPI<AlertRule[]>('/price-alerts'),
+        fetchAPI<AlertRule[]>('/price-alerts', { cacheMode: 'reload' }),
         stocksApi.list(),
-        fetchAPI<NotifyChannel[]>('/channels'),
+        fetchAPI<NotifyChannel[]>('/channels', { cacheMode: 'reload' }),
       ])
       setRules(ruleData || [])
       setStocks(stockData || [])
@@ -312,13 +313,13 @@ export default function PriceAlertsPage() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[14px] font-semibold">{r.name || `${r.stock_name} 提醒`}</span>
-                    <span className="text-[11px] px-2 py-0.5 rounded bg-accent/50 text-muted-foreground">{r.market}:{r.stock_symbol}</span>
-                    <span className={`text-[11px] px-2 py-0.5 rounded ${r.enabled ? 'bg-emerald-500/15 text-emerald-500' : 'bg-muted text-muted-foreground'}`}>{r.enabled ? '启用' : '暂停'}</span>
+                    <span className="text-[12px] px-2 py-0.5 rounded bg-accent/50 text-muted-foreground">{r.market}:{r.stock_symbol}</span>
+                    <span className={`text-[12px] px-2 py-0.5 rounded ${r.enabled ? 'bg-emerald-500/15 text-emerald-700' : 'bg-muted text-muted-foreground'}`}>{r.enabled ? '启用' : '暂停'}</span>
                   </div>
                   <div className="mt-2 text-[12px] text-muted-foreground">
                     {(r.condition_group?.items || []).map(conditionText).join(r.condition_group?.op === 'or' ? ' 或 ' : ' 且 ')}
                   </div>
-                  <div className="mt-1 text-[11px] text-muted-foreground/80">
+                  <div className="mt-1 text-[12px] text-muted-foreground/80">
                     冷却 {r.cooldown_minutes} 分钟 · 日上限 {r.max_triggers_per_day} 次 · 最近触发 {fmt(r.last_trigger_at)}
                   </div>
                 </div>
@@ -333,12 +334,12 @@ export default function PriceAlertsPage() {
               </div>
               {/* Mobile: buttons at bottom */}
               <div className="flex md:hidden items-center gap-1.5 mt-3 pt-3 border-t border-border/30">
-                <Button variant="secondary" size="sm" className="h-7 px-2 text-[11px]" onClick={() => testRule(r)}>测试</Button>
-                <Button variant="secondary" size="sm" className="h-7 px-2 text-[11px]" onClick={() => openHits(r)}><BarChart3 className="w-3 h-3" /></Button>
-                <Button variant="secondary" size="sm" className="h-7 px-2 text-[11px]" onClick={() => openEdit(r)}>编辑</Button>
+                <Button variant="secondary" size="sm" className="h-7 px-2 text-[12px]" onClick={() => testRule(r)}>测试</Button>
+                <Button variant="secondary" size="sm" className="h-7 px-2 text-[12px]" onClick={() => openHits(r)}><BarChart3 className="w-3 h-3" /></Button>
+                <Button variant="secondary" size="sm" className="h-7 px-2 text-[12px]" onClick={() => openEdit(r)}>编辑</Button>
                 <div className="flex-1" />
-                <Button variant={r.enabled ? 'destructive' : 'default'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => toggleRule(r)}>{r.enabled ? '停用' : '启用'}</Button>
-                <Button variant="secondary" size="sm" className="h-7 px-2 text-[11px]" onClick={() => removeRule(r)}><Trash2 className="w-3 h-3" /></Button>
+                <Button variant={r.enabled ? 'destructive' : 'default'} size="sm" className="h-7 px-2 text-[12px]" onClick={() => toggleRule(r)}>{r.enabled ? '停用' : '启用'}</Button>
+                <Button variant="secondary" size="sm" className="h-7 px-2 text-[12px]" onClick={() => removeRule(r)}><Trash2 className="w-3 h-3" /></Button>
               </div>
             </div>
           ))}
@@ -371,11 +372,11 @@ export default function PriceAlertsPage() {
               <div key={h.id} className="rounded border border-border/40 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-[12px] text-muted-foreground">{fmt(h.trigger_time)}</div>
-                  <div className={`text-[11px] ${h.notify_success ? 'text-emerald-500' : 'text-rose-500'}`}>
+                  <div className={`text-[12px] ${h.notify_success ? 'text-emerald-700' : 'text-rose-600'}`}>
                     {h.notify_success ? '通知成功' : `通知失败 ${h.notify_error || ''}`}
                   </div>
                 </div>
-                <div className="mt-2 text-[11px] bg-accent/20 rounded p-2 font-mono overflow-x-auto scrollbar">
+                <div className="mt-2 text-[12px] bg-accent/20 rounded p-2 font-mono overflow-x-auto scrollbar">
                   {JSON.stringify(h.trigger_snapshot || {}, null, 2)}
                 </div>
               </div>

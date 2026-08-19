@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { Check, Eye, EyeOff, Plus, Pencil, Trash2, Star, Send, Cpu, Play, Download, Upload, FileJson, BarChart3, User, Radar, RefreshCw, QrCode, MonitorUp, MailCheck } from 'lucide-react'
-import { fetchAPI, listSceneBindings, setSceneBinding, type AIService, type AIModel, type NotifyChannel, type SceneBinding, type UserInfo, type SubscriptionItem, authApi } from '@panwatch/api'
+import { Check, Eye, EyeOff, Plus, Pencil, Trash2, Star, Send, Cpu, Play, Download, Upload, FileJson, BarChart3, User, Radar, RefreshCw, QrCode, MonitorUp, MailCheck, Copy, KeyRound, Activity, Search } from 'lucide-react'
+import { fetchAPI, listSceneBindings, setSceneBinding, wechatBindStart, wechatBindStatus, wechatBindUnbind, wechatBindGet, type AIService, type AIModel, type NotifyChannel, type SceneBinding, type UserInfo, type SubscriptionItem, type WechatBindStartResult, type WechatBindInfo, authApi } from '@panwatch/api'
+import { QRCodeSVG } from 'qrcode.react'
 import UserManagement from '@/components/UserManagement'
 import { useAvatar, saveAvatar, fileToAvatarDataUrl } from '@/hooks/use-avatar'
 import { Input } from '@panwatch/base-ui/components/ui/input'
@@ -69,6 +70,34 @@ interface ModelForm {
   name: string
   service_id: number | null
   model: string
+  capabilities: string[]
+}
+
+// BYOK(我的服务商): 用户自定义 LLM 服务商(2026-08-15)
+interface MyModelItem {
+  name: string
+  model: string
+  is_default: boolean
+  scene: string
+  capabilities: string[]
+}
+interface MyAIService {
+  id: number
+  name: string
+  base_url: string
+  api_key: string
+  models: MyModelItem[]
+  created_at?: string | null
+}
+interface MyServiceForm {
+  name: string
+  base_url: string
+  api_key: string
+  model_name: string
+  model: string
+  is_default: boolean
+  scene: string
+  capabilities: string[]
 }
 
 interface ChannelForm {
@@ -85,7 +114,7 @@ interface ChannelFieldDef {
   required?: boolean
 }
 
-const CHANNEL_TYPE_FIELDS: Record<string, { label: string; fields: ChannelFieldDef[] }> = {
+const CHANNEL_TYPE_FIELDS: Record<string, { label: string; fields: ChannelFieldDef[]; hint?: string }> = {
   telegram: {
     label: 'Telegram',
     fields: [
@@ -135,6 +164,11 @@ const CHANNEL_TYPE_FIELDS: Record<string, { label: string; fields: ChannelFieldD
       { key: 'topic', label: '群组编码', placeholder: '选填，群组推送时填写' },
     ],
   },
+  wechat_ilink: {
+    label: '个人微信(iLink 直连)',
+    fields: [],
+    hint: '个人微信直通(腾讯官方 iLink 通道)。前往「设置 → 个人微信」扫码绑定即可，无需手填。',
+  },
   discord: {
     label: 'Discord',
     fields: [
@@ -152,12 +186,65 @@ const CHANNEL_TYPE_FIELDS: Record<string, { label: string; fields: ChannelFieldD
 }
 
 const emptyServiceForm: ServiceForm = { name: '', base_url: '', api_key: '' }
-const emptyModelForm: ModelForm = { name: '', service_id: null, model: '' }
+const emptyMyServiceForm: MyServiceForm = {
+  name: '', base_url: '', api_key: '',
+  model_name: '', model: '', is_default: true, scene: 'chat', capabilities: [],
+}
+const emptyModelForm: ModelForm = { name: '', service_id: null, model: '', capabilities: [] }
 const emptyChannelForm: ChannelForm = { name: '', type: 'telegram', config: {} }
+
+// 模型功能标签(capabilities): 彩色小徽标展示; key 与后端 capabilities 取值一致
+const MODEL_CAP_META: Record<string, { label: string; badge: string }> = {
+  chat: { label: '对话', badge: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/25' },
+  vision: { label: '视觉', badge: 'bg-sky-500/10 text-sky-700 dark:text-sky-400 border-sky-500/25' },
+  image: { label: '图像', badge: 'bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/25' },
+  video: { label: '视频', badge: 'bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-500/25' },
+  tools: { label: '工具', badge: 'bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 border-cyan-500/25' },
+}
+const MODEL_CAP_ORDER = ['chat', 'vision', 'image', 'video', 'tools']
+
+// 模型功能标签徽标(缺失/未知标签按空处理,兼容后端未部署 capabilities)
+function CapBadges({ caps }: { caps?: string[] }) {
+  const list = (caps || []).filter(c => MODEL_CAP_META[c]).sort((a, b) => MODEL_CAP_ORDER.indexOf(a) - MODEL_CAP_ORDER.indexOf(b))
+  if (list.length === 0) return null
+  return (
+    <span className="inline-flex items-center gap-1">
+      {list.map(c => (
+        <span key={c} className={`inline-flex items-center rounded-full border px-1.5 py-px text-[10px] leading-4 ${MODEL_CAP_META[c].badge}`}>
+          {MODEL_CAP_META[c].label}
+        </span>
+      ))}
+    </span>
+  )
+}
 
 // 敏感设置 key:值不回显(后端已掩码为 ********),输入框用密码态,掩码值不参与编辑
 const SECRET_SETTING_KEYS = new Set(['wudao_mcp_token', 'zhitu_token', 'tdx_api_key'])
 const SECRET_MASK = '********'
+
+// 数据源接口 Key 元信息(与后端 SETTING_DESCRIPTIONS 对齐)
+const DATA_SOURCE_KEYS: Array<{ key: string; name: string; desc: string }> = [
+  { key: 'wudao_mcp_token', name: '悟道', desc: '竞价 / 题材数据源' },
+  { key: 'zhitu_token', name: '智兔', desc: '分红 / 股东数据源 · 200次/天' },
+  { key: 'tdx_api_key', name: '通达信', desc: '问小达 MCP · 自然语言投研 / 选股' },
+]
+
+const STOCK_LINK_OPTIONS: Record<string, string> = { xueqiu: '雪球' }
+
+// 2026-08-17: 全局搜索 — 各 section 可被搜的关键词(闭环修正 P0-1:用户搜'openai'应命中 AI 区块)
+const sectionSearchHints: Record<string, string[]> = {
+  'sec-ai': ['AI', '服务商', '模型', 'openai', 'deepseek', 'chatgpt', 'claude', 'gpt'],
+  'sec-notify': ['通知', '渠道', '微信', 'pushplus', 'server酱', 'webhook', '邮箱'],
+  'sec-my-services': ['BYOK', '我的服务商', '自配', 'API Key'],
+  'sec-subscriptions': ['订阅', '报告订阅', '定时', 'cron'],
+  'sec-users': ['用户', '多用户', '权限', '管理员', 'owner', 'member'],
+  'sec-keys': ['接口Key', '凭证', 'api key', 'token', 'key'],
+  'sec-ths': ['同花顺', 'ths', '扫码', '登录'],
+  'sec-system': ['系统', '偏好', '主题', '深色', '密度'],
+  'sec-pack': ['配置包', '导入', '导出', '模板', '备份'],
+  'sec-feedback': ['反馈', '有用', '没用'],
+  'sec-llm-usage': ['LLM', '用量', 'token', '费用', 'API 用量'],
+}
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Setting[]>([])
@@ -168,7 +255,6 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [health, setHealth] = useState<AgentsHealth | null>(null)
   const [saving, setSaving] = useState<string | null>(null)
-  const [saved, setSaved] = useState<string | null>(null)
   const [edited, setEdited] = useState<Record<string, string>>({})
   // 多用户(2026-08-10 阶段5): 当前用户 + 订阅
   const [currentUser, setCurrentUser] = useState<UserInfo | null>(null)
@@ -180,6 +266,29 @@ export default function SettingsPage() {
   const [thsLoading, setThsLoading] = useState(false)
 
   const [systemQuery, setSystemQuery] = useState('')
+  // 2026-08-17: 全局搜索(覆盖所有 section)
+  const [globalQuery, setGlobalQuery] = useState('')
+  // 2026-08-17: 全局搜索 trimmed — 标题/hint/子内容匹配 + 命中数反馈(闭环修正 P0-1)
+  const trimmedGlobal = globalQuery.trim().toLowerCase()
+  const hasGlobalQuery = trimmedGlobal.length > 0
+  // 哪些 section id 匹配 — 由各 section 声明, 默认 fallback 只看标题
+  const matchedSections = new Set<string>(
+    (Object.keys(sectionSearchHints) as string[]).filter(id => {
+      if (!hasGlobalQuery) return true
+      const hints = sectionSearchHints[id] || []
+      return hints.some(h => h.toLowerCase().includes(trimmedGlobal))
+    })
+  )
+  const sectionMatches = (id: string) =>
+    !hasGlobalQuery || matchedSections.has(id)
+  const matchCount = hasGlobalQuery ? matchedSections.size : Object.keys(sectionSearchHints).length
+  // sectionMatches 移到 module 顶层(被 LlmUsageSection 复用)
+
+  // 接口 Key 管理第二窗口(Dialog): 单个数据源凭证编辑
+  const [keyDialogKey, setKeyDialogKey] = useState<string | null>(null)
+  const [keyInputVisible, setKeyInputVisible] = useState(false)
+  // 系统设置编辑第二窗口(Dialog)
+  const [sysDialogKey, setSysDialogKey] = useState<string | null>(null)
 
   // Service dialog
   const [serviceDialogOpen, setServiceDialogOpen] = useState(false)
@@ -187,10 +296,23 @@ export default function SettingsPage() {
   const [editServiceId, setEditServiceId] = useState<number | null>(null)
   const [serviceKeyVisible, setServiceKeyVisible] = useState(false)
 
+  // BYOK(我的服务商) dialog
+  const [myServices, setMyServices] = useState<MyAIService[]>([])
+  const [myServicesLoading, setMyServicesLoading] = useState(true)
+  const [mySvcDialogOpen, setMySvcDialogOpen] = useState(false)
+  const [mySvcForm, setMySvcForm] = useState<MyServiceForm>(emptyMyServiceForm)
+  const [editMySvcId, setEditMySvcId] = useState<number | null>(null)
+  const [mySvcKeyVisible, setMySvcKeyVisible] = useState(false)
+  const [mySvcSaving, setMySvcSaving] = useState(false)
+
   // Model dialog
   const [modelDialogOpen, setModelDialogOpen] = useState(false)
   const [modelForm, setModelForm] = useState<ModelForm>(emptyModelForm)
   const [editModelId, setEditModelId] = useState<number | null>(null)
+
+  // 模型管理第二窗口(Dialog): 查看/增删某服务商下的模型
+  const [modelsDialogOpen, setModelsDialogOpen] = useState(false)
+  const [modelsDialogServiceId, setModelsDialogServiceId] = useState<number | null>(null)
 
   // 批量选择嗅探到的模型
   const [batchOpen, setBatchOpen] = useState(false)
@@ -215,6 +337,15 @@ export default function SettingsPage() {
   const [testingModel, setTestingModel] = useState<number | null>(null)
   const [browserPushEnabled, setBrowserPushEnabled] = useState(browserNotificationsEnabled)
   const [browserPushTesting, setBrowserPushTesting] = useState(false)
+
+  // 扫码绑定个人微信(iLink 渠道)
+  const [wechatBindInfo, setWechatBindInfo] = useState<WechatBindInfo | null>(null)
+  const [wechatBindStarting, setWechatBindStarting] = useState(false)
+  const [wechatUnbinding, setWechatUnbinding] = useState(false)
+  const [wechatQrOpen, setWechatQrOpen] = useState(false)
+  const [wechatQr, setWechatQr] = useState<WechatBindStartResult | null>(null)
+  const [wechatQrStatus, setWechatQrStatus] = useState<'waiting' | 'success' | 'scaned' | 'expired'>('waiting')
+  const wechatPollRef = useRef<number | null>(null)
 
   // 头像
   const avatar = useAvatar()
@@ -288,14 +419,16 @@ export default function SettingsPage() {
 
   const load = async () => {
     try {
-      const [settingsData, keyDataSourcesData, servicesData, channelsData, versionData, healthData, sceneBindingsData] = await Promise.all([
+      const [settingsData, keyDataSourcesData, servicesData, channelsData, versionData, healthData, sceneBindingsData, myServicesData] = await Promise.all([
         fetchAPI<Setting[]>('/settings'),
-        fetchAPI<KeyDataSource[]>('/datasources'),
-        fetchAPI<AIService[]>('/providers/services'),
-        fetchAPI<NotifyChannel[]>('/channels'),
+        fetchAPI<KeyDataSource[]>('/datasources', { cacheMode: 'reload' }),
+        fetchAPI<AIService[]>('/providers/services', { cacheMode: 'reload' }),
+        fetchAPI<NotifyChannel[]>('/channels', { cacheMode: 'reload' }),
         fetchAPI<{ version: string }>('/settings/version'),
         fetchAPI<AgentsHealth>('/agents/health'),
         listSceneBindings(),
+        // BYOK: 用户自己的服务商(demo 账号后端 403, 静默降级为空列表)
+        fetchAPI<MyAIService[]>('/my-ai-services', { cacheMode: 'reload' }).catch(() => [] as MyAIService[]),
       ])
       setSettings(settingsData)
       setKeyDataSources(keyDataSourcesData)
@@ -305,11 +438,15 @@ export default function SettingsPage() {
       setHealth(healthData)
       setSceneBindings(sceneBindingsData)
       setSceneBindingsLoading(false)
+      setMyServices(myServicesData)
+      setMyServicesLoading(false)
       // 同花顺登录态(静默加载,失败不阻塞)
       try {
         const ths = await fetchAPI<any>('/ths/session')
         setThsSession(ths?.data ?? ths)
       } catch { /* 静默 */ }
+      // 个人微信绑定状态(静默加载,失败不阻塞)
+      void loadWechatBind()
     } catch (e) {
       console.error(e)
     } finally {
@@ -439,6 +576,9 @@ export default function SettingsPage() {
 
   useEffect(() => { load(); loadFeedbackStats() }, [])
 
+  // 卸载时停止扫码轮询
+  useEffect(() => () => stopWechatPoll(), [])
+
   // 多用户: 当前用户 + 订阅(2026-08-10 阶段5)
   useEffect(() => {
     try {
@@ -480,6 +620,7 @@ export default function SettingsPage() {
       await saveAvatar(dataUrl)
       toast('头像已更新', 'success')
     } catch (err) {
+      console.error('[Settings] 头像保存失败:', err)  // 2026-08-17: 闭环修正 P0-5 — 留痕便于排障
       toast(err instanceof Error ? err.message : '头像保存失败', 'error')
     } finally {
       setAvatarSaving(false)
@@ -487,7 +628,7 @@ export default function SettingsPage() {
   }
 
 
-  const handleSave = async (key: string) => {
+  const handleSave = async (key: string): Promise<boolean> => {
     setSaving(key)
     try {
       const existing = settings.find(s => s.key === key)?.value
@@ -497,9 +638,7 @@ export default function SettingsPage() {
         const newEdited = { ...edited }
         delete newEdited[key]
         setEdited(newEdited)
-        setSaved(key)
-        setTimeout(() => setSaved(null), 2000)
-        return
+        return true
       }
       await fetchAPI(`/settings/${key}`, {
         method: 'PUT',
@@ -508,13 +647,55 @@ export default function SettingsPage() {
       const newEdited = { ...edited }
       delete newEdited[key]
       setEdited(newEdited)
-      setSaved(key)
-      setTimeout(() => setSaved(null), 2000)
       load()
+      return true
     } catch {
       toast('保存失败', 'error')
+      return false
     } finally {
       setSaving(null)
+    }
+  }
+
+  // 接口 Key 管理 Dialog 打开/关闭
+  const openKeyDialog = (key: string) => {
+    // 打开即清空该 key 的未保存编辑,以当前 DB 状态为准
+    setEdited(prev => {
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+    setKeyInputVisible(false)
+    setKeyDialogKey(key)
+  }
+  const closeKeyDialog = () => {
+    setKeyDialogKey(null)
+    setKeyInputVisible(false)
+  }
+  const saveKeyDialog = async () => {
+    if (!keyDialogKey) return
+    const ok = await handleSave(keyDialogKey)
+    if (ok) {
+      closeKeyDialog()
+      toast('接口 Key 已保存', 'success')
+    }
+  }
+
+  // 系统设置编辑 Dialog
+  const openSysDialog = (setting: Setting) => {
+    setEdited(prev => {
+      const next = { ...prev }
+      delete next[setting.key]
+      return next
+    })
+    setSysDialogKey(setting.key)
+  }
+  const saveSysDialog = async () => {
+    if (!sysDialogKey) return
+    const ok = await handleSave(sysDialogKey)
+    if (ok) {
+      setSysDialogKey(null)
+      toast('设置已保存', 'success')
     }
   }
 
@@ -633,10 +814,104 @@ export default function SettingsPage() {
     }
   }
 
+  // ── BYOK(我的服务商): 用户自定义 LLM 服务商, 用自己的 API Key(2026-08-15) ──
+  const isDemo = currentUser?.username === 'demo'
+  const reloadMyServices = async () => {
+    try {
+      const data = await fetchAPI<MyAIService[]>('/my-ai-services', { cacheMode: 'reload' })
+      setMyServices(data)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '加载我的服务商失败', 'error')
+    }
+  }
+  const openMySvcDialog = (svc?: MyAIService) => {
+    if (svc) {
+      const m = svc.models?.[0]
+      setMySvcForm({
+        name: svc.name,
+        base_url: svc.base_url,
+        api_key: svc.api_key,
+        model_name: m?.name || '',
+        model: m?.model || '',
+        is_default: m?.is_default ?? true,
+        scene: m?.scene || 'chat',
+        capabilities: m?.capabilities || [],
+      })
+      setEditMySvcId(svc.id)
+    } else {
+      setMySvcForm(emptyMyServiceForm)
+      setEditMySvcId(null)
+    }
+    setMySvcKeyVisible(false)
+    setMySvcDialogOpen(true)
+  }
+  const saveMySvc = async () => {
+    if (!mySvcForm.name.trim() || !mySvcForm.base_url.trim()) return
+    setMySvcSaving(true)
+    try {
+      const models: MyModelItem[] = mySvcForm.model.trim()
+        ? [{
+            name: mySvcForm.model_name.trim() || mySvcForm.model.trim(),
+            model: mySvcForm.model.trim(),
+            is_default: mySvcForm.is_default,
+            scene: mySvcForm.scene,
+            capabilities: mySvcForm.capabilities,
+          }]
+        : []
+      const payload = {
+        name: mySvcForm.name.trim(),
+        base_url: mySvcForm.base_url.trim(),
+        api_key: mySvcForm.api_key,
+        models,
+      }
+      if (editMySvcId) {
+        await fetchAPI(`/my-ai-services/${editMySvcId}`, { method: 'PUT', body: JSON.stringify(payload) })
+        toast('已保存', 'success')
+      } else {
+        await fetchAPI('/my-ai-services', { method: 'POST', body: JSON.stringify(payload) })
+        toast('已添加，调用时将优先使用你的服务商', 'success')
+      }
+      setMySvcDialogOpen(false)
+      reloadMyServices()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '保存失败', 'error')
+    } finally {
+      setMySvcSaving(false)
+    }
+  }
+  const deleteMySvc = async (id: number) => {
+    if (!confirm('删除后将无法使用该服务商调用，确定？')) return
+    try {
+      await fetchAPI(`/my-ai-services/${id}`, { method: 'DELETE' })
+      toast('已删除', 'success')
+      reloadMyServices()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '删除失败', 'error')
+    }
+  }
+
   // Model CRUD
+  const openModelsDialog = (svc: AIService) => {
+    setModelsDialogServiceId(svc.id)
+    setModelsDialogOpen(true)
+  }
+
+  const closeModelsDialog = () => {
+    setModelsDialogOpen(false)
+    setModelsDialogServiceId(null)
+  }
+
+  // 模型管理 Dialog 当前服务商(删除服务商后自动失效)
+  const modelsSvc = services.find(s => s.id === modelsDialogServiceId) ?? null
+
   const openModelDialog = (serviceId?: number, model?: AIModel) => {
     if (model) {
-      setModelForm({ name: model.name, service_id: model.service_id, model: model.model })
+      setModelForm({
+        name: model.name,
+        service_id: model.service_id,
+        model: model.model,
+        capabilities: model.capabilities || [],
+      })
       setEditModelId(model.id)
     } else {
       setModelForm({ ...emptyModelForm, service_id: serviceId ?? null })
@@ -647,10 +922,11 @@ export default function SettingsPage() {
 
   const saveModel = async () => {
     try {
+      const payload = { ...modelForm, capabilities: modelForm.capabilities || [] }
       if (editModelId) {
-        await fetchAPI(`/providers/models/${editModelId}`, { method: 'PUT', body: JSON.stringify(modelForm) })
+        await fetchAPI(`/providers/models/${editModelId}`, { method: 'PUT', body: JSON.stringify(payload) })
       } else {
-        await fetchAPI('/providers/models', { method: 'POST', body: JSON.stringify(modelForm) })
+        await fetchAPI('/providers/models', { method: 'POST', body: JSON.stringify(payload) })
       }
       setModelDialogOpen(false)
       load()
@@ -788,6 +1064,84 @@ export default function SettingsPage() {
     }
   }
 
+  // ── 扫码绑定个人微信(iLink 渠道) ──
+  const loadWechatBind = async () => {
+    try {
+      const info = await wechatBindGet()
+      setWechatBindInfo(info)
+    } catch { /* 后端未实现/未绑定时不阻塞设置页 */ }
+  }
+
+  const stopWechatPoll = () => {
+    if (wechatPollRef.current !== null) {
+      window.clearInterval(wechatPollRef.current)
+      wechatPollRef.current = null
+    }
+  }
+
+  const startWechatPoll = (qrcode: string) => {
+    stopWechatPoll()
+    wechatPollRef.current = window.setInterval(async () => {
+      try {
+        const st = await wechatBindStatus(qrcode)
+        setWechatQrStatus(st.status)
+        if (st.status === 'success') {
+          stopWechatPoll()
+          setWechatQrOpen(false)
+          toast('微信绑定成功', 'success')
+          void loadWechatBind()
+          load()
+        } else if (st.status === 'expired') {
+          stopWechatPoll()
+        }
+      } catch { /* 网络抖动忽略，下轮重试 */ }
+    }, 3000)
+  }
+
+  const startWechatBind = async () => {
+    setWechatBindStarting(true)
+    try {
+      const res = await wechatBindStart()
+      setWechatQr(res)
+      setWechatQrStatus('waiting')
+      setWechatQrOpen(true)
+      startWechatPoll(res.qrcode)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '发起绑定失败，请稍后重试', 'error')
+    } finally {
+      setWechatBindStarting(false)
+    }
+  }
+
+  const closeWechatQr = () => {
+    stopWechatPoll()
+    setWechatQrOpen(false)
+  }
+
+  const copyWechatLink = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url)
+      toast('链接已复制，请在微信中打开', 'success')
+    } catch {
+      toast('复制失败，请手动复制链接', 'error')
+    }
+  }
+
+  const unbindWechat = async () => {
+    if (!confirm('确定解除个人微信绑定？解除后将无法通过微信接收通知。')) return
+    setWechatUnbinding(true)
+    try {
+      await wechatBindUnbind()
+      toast('已解除微信绑定', 'success')
+      setWechatBindInfo(null)
+      load()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '解除绑定失败', 'error')
+    } finally {
+      setWechatUnbinding(false)
+    }
+  }
+
   const toggleBrowserPush = async (enabled: boolean) => {
     if (!enabled) {
       setBrowserNotificationsEnabled(false)
@@ -813,7 +1167,7 @@ export default function SettingsPage() {
       setBrowserPushEnabled(true)
       await showBrowserNotification({
         id: Date.now(),
-        title: 'PanWatch 电脑推送已开启',
+        title: 'SIDA 电脑推送已开启',
         body: '页面打开或在后台运行时，新消息会直接显示为电脑系统通知。',
         link: '/settings',
       })
@@ -830,7 +1184,7 @@ export default function SettingsPage() {
     try {
       const shown = await showBrowserNotification({
         id: Date.now(),
-        title: 'PanWatch 电脑推送测试',
+        title: 'SIDA 电脑推送测试',
         body: '如果你看到这条系统通知，说明 Web 推送已正常工作。',
         link: '/settings',
       })
@@ -852,10 +1206,22 @@ export default function SettingsPage() {
   const defaultModel = allModels.find(m => m.is_default)
   const defaultChannel = channels.find(c => c.is_default)
   const enabledChannels = channels.filter(c => c.enabled)
-  // 场景分配下拉选项: 模型池全部模型(模型名 + 服务商名)
+  // 场景分配下拉选项: 模型池全部模型(模型名 + 服务商名 + 功能徽标)
   const sceneModelOptions = services.flatMap(svc =>
-    (svc.models || []).map(m => ({ id: m.id, label: `${m.name} · ${svc.name}` })),
+    (svc.models || []).map(m => ({
+      id: m.id,
+      label: `${m.name} · ${svc.name}`,
+      caps: m.capabilities || [],
+    })),
   )
+  // 场景下拉选项生成器: vision 场景把含视觉能力的模型排前面
+  const sceneOptionsFor = (scene: string) => {
+    if (scene !== 'vision') return sceneModelOptions
+    const hasVision = (c: string[]) => (c || []).includes('vision')
+    return [...sceneModelOptions].sort(
+      (a, b) => (hasVision(b.caps) ? 1 : 0) - (hasVision(a.caps) ? 1 : 0),
+    )
+  }
 
   const filteredSettings = settings.filter(s => {
     // 敏感接口 key 由独立"接口 Key"区块管理,系统区块不重复展示
@@ -865,13 +1231,16 @@ export default function SettingsPage() {
     return (s.description || '').toLowerCase().includes(q) || (s.key || '').toLowerCase().includes(q)
   })
 
+  // 权限细化(2026-08-16): 平台级管理区块仅 owner 可见, member 只见个人配置
+  const isOwner = currentUser?.role === 'owner'
+
   // 按“重要性”排序：常用优先，低频靠后
   const jumpItems: Array<{ id: string; label: string; hint?: string }> = [
-    { id: 'sec-ai', label: 'AI', hint: `${services.length} 服务 / ${allModels.length} 模型` },
+    ...(isOwner ? [{ id: 'sec-ai', label: 'AI', hint: `${services.length} 服务 / ${allModels.length} 模型` } as const] : []),
     { id: 'sec-notify', label: '通知', hint: `${enabledChannels.length}/${channels.length} 启用` },
-    { id: 'sec-keys', label: '接口Key', hint: `${settings.filter(s => SECRET_SETTING_KEYS.has(s.key) && s.value === SECRET_MASK).length}/${SECRET_SETTING_KEYS.size} 已配` },
-    { id: 'sec-system', label: '系统', hint: health?.timezone ? `TZ ${health.timezone}` : undefined },
-    { id: 'sec-pack', label: '配置包' },
+    ...(isOwner ? [{ id: 'sec-keys', label: '接口Key', hint: `${settings.filter(s => SECRET_SETTING_KEYS.has(s.key) && s.value === SECRET_MASK).length}/${SECRET_SETTING_KEYS.size} 已配` } as const] : []),
+    ...(isOwner ? [{ id: 'sec-system', label: '系统', hint: health?.timezone ? `TZ ${health.timezone}` : undefined } as const] : []),
+    ...(isOwner ? [{ id: 'sec-pack', label: '配置包' } as const] : []),
     { id: 'sec-feedback', label: '反馈' },
   ]
 
@@ -880,6 +1249,8 @@ export default function SettingsPage() {
     if (!el) return
     el.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
+
+  // 2026-08-17: 全局搜索过滤 section(不匹配的 section 直接隐藏) —
 
   return (
     <div>
@@ -907,16 +1278,20 @@ export default function SettingsPage() {
                 </span>
               </button>
               <span className="mx-1 hidden h-4 w-px bg-border/50 sm:block" />
-              <div className="px-2.5 py-1 rounded-full bg-background/70 border border-border/50 text-[11px] text-muted-foreground">
-                <span className="font-mono text-foreground/90">{services.length}</span> 服务商
-              </div>
-              <div className="px-2.5 py-1 rounded-full bg-background/70 border border-border/50 text-[11px] text-muted-foreground">
-                <span className="font-mono text-foreground/90">{allModels.length}</span> 模型
-              </div>
+              {isOwner && (
+                <>
+                  <div className="px-2.5 py-1 rounded-full bg-background/70 border border-border/50 text-[11px] text-muted-foreground">
+                    <span className="font-mono text-foreground/90">{services.length}</span> 服务商
+                  </div>
+                  <div className="px-2.5 py-1 rounded-full bg-background/70 border border-border/50 text-[11px] text-muted-foreground">
+                    <span className="font-mono text-foreground/90">{allModels.length}</span> 模型
+                  </div>
+                </>
+              )}
               <div className="px-2.5 py-1 rounded-full bg-background/70 border border-border/50 text-[11px] text-muted-foreground">
                 <span className="font-mono text-foreground/90">{enabledChannels.length}</span>/<span className="font-mono">{channels.length}</span> 渠道启用
               </div>
-              {defaultModel ? (
+              {isOwner && defaultModel ? (
                 <div className="px-2.5 py-1 rounded-full bg-background/70 border border-border/50 text-[11px] text-muted-foreground">
                   默认模型 <span className="font-mono text-foreground/90">{defaultModel.model}</span>
                 </div>
@@ -929,14 +1304,39 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-2">
-            <Button variant="secondary" size="sm" className="h-9" onClick={exportTemplate} disabled={exporting}>
-              <Download className="w-3.5 h-3.5" /> 导出配置包
-            </Button>
-            <Button size="sm" className="h-9" onClick={() => scrollTo('sec-ai')}>
-              <Cpu className="w-3.5 h-3.5" /> 配置 AI
-            </Button>
-          </div>
+          {isOwner && (
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Button variant="secondary" size="sm" className="h-9" onClick={exportTemplate} disabled={exporting}>
+                <Download className="w-3.5 h-3.5" /> 导出配置包
+              </Button>
+              <Button size="sm" className="h-9" onClick={() => scrollTo('sec-ai')}>
+                <Cpu className="w-3.5 h-3.5" /> 配置 AI
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {/* Global Search: 2026-08-17 跨 section 搜索 — 同时跳到目标并自动展开 */}
+        <div className="relative mt-4">
+          <Input
+            value={globalQuery}
+            onChange={e => setGlobalQuery(e.target.value)}
+            placeholder="全局搜索设置项 / 数据源 / AI 服务..."
+            className="h-9 w-full md:max-w-md pl-9"
+           aria-label="全局搜索设置项 / 数据源 / AI 服务..."/>
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          {/* 2026-08-17: end 添加搜索图标与清空按钮 */}
+          {globalQuery.trim() && (
+            <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setGlobalQuery('')}
+                className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+              >
+                清空
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Jump pills */}
@@ -951,12 +1351,49 @@ export default function SettingsPage() {
               {it.hint ? <span className="opacity-60">{it.hint}</span> : null}
             </button>
           ))}
+          {/* 2026-08-17: 清空搜索 快捷按钮 */}
+          {trimmedGlobal && (
+            <div className="ml-auto flex items-center gap-2 text-[11px]">
+              <button
+                type="button"
+                onClick={() => setGlobalQuery('')}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                清空搜索 ×
+              </button>
+              {hasGlobalQuery && (
+                <span className="ml-1 text-[11px] text-muted-foreground/70">
+                  · {matchCount} 个区块匹配
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* 2026-08-17 全局搜索空态: 有搜索但 0 命中(闭环修正 P0-1) */}
+        {hasGlobalQuery && matchCount === 0 && (
+          <div className="col-span-full card p-8 md:p-10 text-center">
+            <Search className="mx-auto h-7 w-7 text-muted-foreground/50 mb-3" />
+            <p className="text-[13px] text-muted-foreground">
+              未找到匹配 &ldquo;<span className="text-foreground font-medium">{globalQuery}</span>&rdquo; 的设置项
+            </p>
+            <p className="text-[11px] text-muted-foreground/70 mt-2">
+              试试搜索关键词,如 openai / 微信 / 凭证 / 主题
+            </p>
+            <button
+              type="button"
+              onClick={() => setGlobalQuery('')}
+              className="mt-3 text-[11px] text-primary hover:text-primary/80 transition-colors"
+            >
+              清空搜索
+            </button>
+          </div>
+        )}
         {/* AI Services + Models Section */}
-        <section id="sec-ai" className="card p-4 md:p-6 lg:col-span-7">
+        {isOwner && (
+        <section id="sec-ai" className="card p-4 md:p-6 lg:col-span-7" style={{ display: sectionMatches('sec-ai') ? undefined : 'none' }}>
           <div className="flex items-start justify-between mb-4 md:mb-5 gap-3">
             <div>
               <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">AI 服务商 & 模型</h3>
@@ -970,75 +1407,37 @@ export default function SettingsPage() {
           {services.length === 0 ? (
             <p className="text-[13px] text-muted-foreground text-center py-6">暂无 AI 服务商，点击"添加服务商"创建</p>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-2">
               {services.map(svc => (
-                <div key={svc.id} className="rounded-xl bg-accent/30 overflow-hidden">
-                  {/* Service header */}
-                  <div className="flex items-center justify-between p-3.5">
+                <div key={svc.id} className="flex items-center justify-between gap-3 rounded-lg bg-accent/30 px-3 py-2.5 hover:bg-accent/50 transition-colors">
+                  <div className="min-w-0 flex items-center gap-2.5">
+                    <Cpu className="w-3.5 h-3.5 text-primary flex-shrink-0" />
                     <div className="min-w-0">
-                      <span className="text-[13px] font-medium text-foreground">{svc.name}</span>
-                      <p className="text-[11px] text-muted-foreground mt-0.5 truncate font-mono">{svc.base_url}</p>
-                    </div>
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      <Button size="sm" variant="ghost" className="h-7 text-[11px]" onClick={() => openModelDialog(svc.id)}>
-                        <Plus className="w-3 h-3" /> 模型
-                      </Button>
-                      <Button
-                        variant="ghost" size="icon" className="h-7 w-7"
-                        title="嗅探模型（自动发现可用模型）"
-                        disabled={discoveringService === svc.id}
-                        onClick={() => discoverForService(svc.id)}
-                      >
-                        <Radar className={`w-3.5 h-3.5 ${discoveringService === svc.id ? 'animate-pulse' : ''}`} />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openServiceDialog(svc)}>
-                        <Pencil className="w-3.5 h-3.5" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-destructive" onClick={() => deleteService(svc.id)}>
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
+                      <span className="text-[12px] font-medium text-foreground">{svc.name}</span>
+                      <p className="text-[10px] text-muted-foreground truncate font-mono">{svc.base_url}</p>
                     </div>
                   </div>
-                  {/* Models under this service */}
-                  {svc.models.length > 0 && (
-                    <div className="px-3.5 pb-3.5 space-y-1.5">
-                      {svc.models.map(m => (
-                        <div key={m.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-background/60">
-                          <div className="flex items-center gap-2">
-                            {m.is_default && <Star className="w-3 h-3 text-amber-500" />}
-                            <Cpu className="w-3 h-3 text-muted-foreground" />
-                            <span className="text-[12px] font-medium text-foreground">{m.name}</span>
-                            <span className="text-[11px] text-muted-foreground font-mono">{m.model}</span>
-                          </div>
-                          <div className="flex items-center gap-0.5">
-                            <Button
-                              variant="ghost" size="icon" className="h-6 w-6"
-                              onClick={() => testModel(m.id)}
-                              disabled={testingModel === m.id}
-                              title="测试模型"
-                            >
-                              {testingModel === m.id ? (
-                                <span className="w-3 h-3 border-2 border-current/30 border-t-current rounded-full animate-spin" />
-                              ) : (
-                                <Play className="w-3 h-3" />
-                              )}
-                            </Button>
-                            {!m.is_default && (
-                              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setDefaultModel(m.id)} title="设为默认">
-                                <Star className="w-3 h-3" />
-                              </Button>
-                            )}
-                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openModelDialog(svc.id, m)}>
-                              <Pencil className="w-3 h-3" />
-                            </Button>
-                            <Button variant="ghost" size="icon" className="h-6 w-6 hover:text-destructive" onClick={() => deleteModel(m.id)}>
-                              <Trash2 className="w-3 h-3" />
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <span className="inline-flex items-center rounded-full border border-border/60 bg-background/60 px-2 py-0.5 text-[10px] text-muted-foreground">
+                      {svc.models.length} 模型
+                    </span>
+                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${
+                      svc.api_key
+                        ? 'border-emerald-700/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                        : 'border-amber-700/25 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+                    }`}>
+                      {svc.api_key ? '已启用' : '未配置 Key'}
+                    </span>
+                    <Button size="sm" variant="secondary" className="h-7 px-2 text-[11px]" onClick={() => openModelsDialog(svc)}>
+                      管理
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openServiceDialog(svc)} title="编辑服务商">
+                      <Pencil className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-destructive" onClick={() => deleteService(svc.id)} title="删除服务商">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1062,7 +1461,10 @@ export default function SettingsPage() {
                       <span className="text-[12px] font-semibold text-foreground">{b.display_name}</span>
                       <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{b.description}</p>
                     </div>
-                    <div className="flex-shrink-0 w-[220px] sm:w-[260px]">
+                    <div className="flex-shrink-0 w-[220px] sm:w-[280px]">
+                      {b.scene === 'vision' && (
+                        <p className="mb-1 text-[10px] text-sky-700/90 dark:text-sky-400/90">优先选择含视觉(vision)能力的模型</p>
+                      )}
                       <Select
                         value={b.model_id != null ? String(b.model_id) : SCENE_DEFAULT_VALUE}
                         onValueChange={v => handleSceneChange(b.scene, v)}
@@ -1073,8 +1475,13 @@ export default function SettingsPage() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value={SCENE_DEFAULT_VALUE}>默认模型</SelectItem>
-                          {sceneModelOptions.map(opt => (
-                            <SelectItem key={opt.id} value={String(opt.id)}>{opt.label}</SelectItem>
+                          {sceneOptionsFor(b.scene).map(opt => (
+                            <SelectItem key={opt.id} value={String(opt.id)}>
+                              <span className="flex items-center gap-1.5">
+                                <span className="truncate">{opt.label}</span>
+                                <CapBadges caps={opt.caps} />
+                              </span>
+                            </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -1085,9 +1492,10 @@ export default function SettingsPage() {
             )}
           </div>
         </section>
+        )}
 
         {/* Notify Channel Section */}
-        <section id="sec-notify" className="card p-4 md:p-6 lg:col-span-5">
+        <section id="sec-notify" className="card p-4 md:p-6 lg:col-span-5" style={{ display: sectionMatches('sec-notify') ? undefined : 'none' }}>
           <div className="flex items-start justify-between mb-4 md:mb-5 gap-3">
             <div>
               <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">通知渠道</h3>
@@ -1126,6 +1534,48 @@ export default function SettingsPage() {
               </Button>
             )}
           </div>
+          {/* 个人微信(iLink): 扫码绑定 */}
+          <div className="mb-3 rounded-xl border border-border/50 bg-accent/20 p-3.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-2.5">
+                <QrCode className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
+                <div className="min-w-0">
+                  <div className="text-[12px] font-medium text-foreground">个人微信(iLink)</div>
+                  {wechatBindInfo?.account_id ? (
+                    <p className="mt-0.5 text-[10.5px] text-muted-foreground">
+                      已绑定：
+                      <span className="font-mono text-foreground">{wechatBindInfo.user_id || wechatBindInfo.account_id}</span>
+                      {wechatBindInfo.nickname ? `（${wechatBindInfo.nickname}）` : ''}
+                    </p>
+                  ) : (
+                    <p className="mt-0.5 text-[10.5px] text-muted-foreground">扫码绑定个人微信，绑定成功后自动创建通知渠道</p>
+                  )}
+                </div>
+              </div>
+              {wechatBindInfo?.account_id ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 shrink-0 px-2 text-[11px] hover:text-destructive"
+                  onClick={() => void unbindWechat()}
+                  disabled={wechatUnbinding}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {wechatUnbinding ? '解除中…' : '解除绑定'}
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  className="h-7 shrink-0 px-2 text-[11px]"
+                  onClick={() => void startWechatBind()}
+                  disabled={wechatBindStarting}
+                >
+                  <QrCode className="h-3.5 w-3.5" />
+                  {wechatBindStarting ? '发起中…' : '绑定个人微信'}
+                </Button>
+              )}
+            </div>
+          </div>
           {channels.length === 0 ? (
             <p className="text-[13px] text-muted-foreground text-center py-6">暂无通知渠道，点击"添加"创建</p>
           ) : (
@@ -1133,7 +1583,7 @@ export default function SettingsPage() {
               {channels.map(ch => (
                 <div key={ch.id} className="flex items-center justify-between p-3.5 rounded-xl bg-accent/30 hover:bg-accent/50 transition-colors">
                   <div className="flex items-center gap-3 min-w-0">
-                    {ch.is_default && <Star className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
+                    {ch.is_default && <Star className="w-3.5 h-3.5 text-amber-700 dark:text-amber-500 flex-shrink-0" />}
                     <div className="min-w-0">
                       <span className="text-[13px] font-medium text-foreground">{ch.name}</span>
                       <p className="text-[11px] text-muted-foreground mt-0.5">{CHANNEL_TYPE_FIELDS[ch.type]?.label || ch.type}</p>
@@ -1171,8 +1621,65 @@ export default function SettingsPage() {
           )}
         </section>
 
+        {/* 我的服务商(BYOK): 用户自定义 LLM 服务商, 用自己的 API Key(2026-08-15) */}
+        <section id="sec-my-services" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('sec-my-services') ? undefined : 'none' }}>
+          <div className="flex items-start justify-between mb-4 md:mb-5 gap-3">
+            <div>
+              <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">我的服务商 (BYOK)</h3>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                配置你自己的模型服务商，使用你自己的 API Key 调用（不影响平台配置）。demo 账号不可用。
+              </p>
+            </div>
+            {!isDemo && (
+              <Button size="sm" className="h-8" onClick={() => openMySvcDialog()}>
+                <Plus className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">添加我的服务商</span>
+              </Button>
+            )}
+          </div>
+
+          {isDemo ? (
+            <div className="rounded-xl border border-border/50 bg-accent/20 p-3.5 text-[12px] text-muted-foreground">
+              演示账号为只读浏览模式，不可配置自己的服务商。
+            </div>
+          ) : myServicesLoading ? (
+            <p className="text-[13px] text-muted-foreground text-center py-6">加载中...</p>
+          ) : myServices.length === 0 ? (
+            <p className="text-[13px] text-muted-foreground text-center py-6">暂无我的服务商，点击"添加我的服务商"创建</p>
+          ) : (
+            <div className="space-y-2">
+              {myServices.map(svc => (
+                <div key={svc.id} className="flex items-center justify-between gap-3 rounded-lg bg-accent/30 px-3 py-2.5 hover:bg-accent/50 transition-colors">
+                  <div className="min-w-0 flex items-center gap-2.5">
+                    <Cpu className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                    <div className="min-w-0">
+                      <span className="text-[12px] font-medium text-foreground">{svc.name}</span>
+                      <p className="text-[10px] text-muted-foreground truncate font-mono">{svc.base_url}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${
+                      svc.api_key
+                        ? 'border-emerald-700/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                        : 'border-amber-700/25 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+                    }`}>
+                      {svc.api_key ? '********' : '未配置 Key'}
+                    </span>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openMySvcDialog(svc)} title="编辑我的服务商">
+                      <Pencil className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 hover:text-destructive" onClick={() => deleteMySvc(svc.id)} title="删除我的服务商">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
         {/* 多用户: 定时报告订阅 + 用户管理(2026-08-10 阶段5) */}
-        <section id="sec-subscriptions" className="card p-4 md:p-6 lg:col-span-12">
+        <section id="sec-subscriptions" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('sec-subscriptions') ? undefined : 'none' }}>
           <div className="mb-3 flex items-center gap-2">
             <h2 className="flex items-center gap-2 text-sm font-semibold">
               <MailCheck className="h-4 w-4 text-primary" />
@@ -1206,16 +1713,19 @@ export default function SettingsPage() {
         </section>
 
         {currentUser?.role === 'owner' && (
-          <section id="sec-users" className="card p-4 md:p-6 lg:col-span-12">
+          <section id="sec-users" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('sec-users') ? undefined : 'none' }}>
             <UserManagement currentUser={currentUser} />
           </section>
         )}
 
+        {/* AI 调用统计(2026-08-15): LLM token 用量与费用估算 */}
+        <LlmUsageSection />
+
         {/* General Settings */}
-        {settings.length > 0 && (
+        {isOwner && settings.length > 0 && (
           <>
           {/* 接口 Key 区块(数据源凭证维护) */}
-          <section id="sec-keys" className="card p-4 md:p-6 lg:col-span-12">
+          <section id="sec-keys" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('sec-keys') ? undefined : 'none' }}>
             <div className="flex items-start justify-between mb-4 gap-3">
               <div>
                 <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">接口 Key</h3>
@@ -1232,59 +1742,38 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
-            <div className="space-y-4">
-              {/* 数据源 Token 组 */}
-              <div className="text-[11px] font-medium text-muted-foreground mt-1">数据源 Token</div>
-              {settings.filter(s => s.key === 'wudao_mcp_token' || s.key === 'zhitu_token' || s.key === 'tdx_api_key').map(setting => {
-                const isChanged = setting.key in edited
+            <div className="space-y-2">
+              {DATA_SOURCE_KEYS.map(item => {
+                const setting = settings.find(s => s.key === item.key)
+                const configured = !!setting && setting.value === SECRET_MASK
                 return (
-                  <div key={setting.key} className="rounded-xl bg-accent/30 p-3.5">
-                    <Label className="text-[12px]">{setting.description || setting.key}</Label>
-                    <div className="flex items-center gap-2.5 mt-2">
-                      <div className="flex-1 relative">
-                        <Input
-                          type="password"
-                          value={isChanged ? (edited[setting.key] ?? '') : ''}
-                          onChange={e => setEdited({ ...edited, [setting.key]: e.target.value })}
-                          className={`font-mono ${isChanged ? 'ring-2 ring-primary/20 border-primary/30' : ''}`}
-                          placeholder={setting.value === SECRET_MASK ? '已配置（输入新 Key 可替换，留空不变）' : '未配置，输入接口 Key'}
-                        />
-                        {!isChanged && setting.value === SECRET_MASK && (
-                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-emerald-500">已配置</span>
-                        )}
+                  <div key={item.key} className="flex items-center justify-between gap-3 rounded-lg bg-accent/30 px-3 py-2.5 hover:bg-accent/50 transition-colors">
+                    <div className="min-w-0 flex items-center gap-2.5">
+                      <KeyRound className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                      <div className="min-w-0">
+                        <span className="text-[12px] font-medium text-foreground">{item.name}</span>
+                        <p className="text-[10px] text-muted-foreground truncate">{item.desc}</p>
                       </div>
-                      <button
-                        onClick={() => handleSave(setting.key)}
-                        disabled={!isChanged || saving === setting.key}
-                        className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
-                          saved === setting.key
-                            ? 'bg-emerald-500/10 text-emerald-600'
-                            : isChanged
-                              ? 'bg-primary text-white'
-                              : 'text-muted-foreground/30'
-                        }`}
-                      >
-                        {saving === setting.key ? (
-                          <span className="w-4 h-4 border-2 border-current/30 border-t-current rounded-full animate-spin" />
-                        ) : (
-                          <Check className="w-4 h-4" />
-                        )}
-                      </button>
                     </div>
-                    <p className="text-[10px] text-muted-foreground mt-2">
-                      {setting.key === 'wudao_mcp_token'
-                        ? '悟道 MCP Token（竞价/题材数据）'
-                        : setting.key === 'tdx_api_key'
-                        ? '通达信问小达 MCP Token（自然语言投研/选股数据源）'
-                        : '智兔数据接口 Token（分红/股东数据，200次/天）'}。读取优先级：设置页 &gt; 环境变量 &gt; 内置默认。
-                    </p>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${
+                        configured
+                          ? 'border-emerald-700/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                          : 'border-amber-700/25 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+                      }`}>
+                        {configured ? '已配置' : '未配置'}
+                      </span>
+                      <Button size="sm" variant="secondary" className="h-7 px-2 text-[11px]" onClick={() => openKeyDialog(item.key)}>
+                        管理
+                      </Button>
+                    </div>
                   </div>
                 )
               })}
             </div>
           </section>
           {/* 同花顺登录区块 */}
-          <section id="sec-ths" className="card p-4 md:p-6 lg:col-span-12">
+          <section id="sec-ths" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('sec-ths') ? undefined : 'none' }}>
             <div className="flex items-start justify-between mb-4 gap-3">
               <div>
                 <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">同花顺登录</h3>
@@ -1307,7 +1796,7 @@ export default function SettingsPage() {
                   <div><span className="text-muted-foreground">账号:</span> <span className="font-mono">{thsSession.account}</span></div>
                   <div><span className="text-muted-foreground">UserID:</span> <span className="font-mono">{thsSession.userid}</span></div>
                   <div><span className="text-muted-foreground">过期:</span> <span className="font-mono">{thsSession.expires?.replace('T', ' ').slice(0, 19)}</span></div>
-                  <div><span className="text-emerald-500">✓ 已登录 · 自动续期</span></div>
+                  <div><span className="text-emerald-700 dark:text-emerald-500">✓ 已登录 · 自动续期</span></div>
                 </div>
               ) : (
                 <div className="text-[12px] text-muted-foreground">未登录。点击「扫码登录」后用手机同花顺 APP 扫描二维码。</div>
@@ -1323,7 +1812,7 @@ export default function SettingsPage() {
               )}
             </div>
           </section>
-          <section id="sec-system" className="card p-4 md:p-6 lg:col-span-12">
+          <section id="sec-system" className="card p-4 md:p-6 lg:col-span-12" style={{ display: sectionMatches('sec-system') ? undefined : 'none' }}>
             <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 mb-4 md:mb-5">
               <div>
                 <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">系统</h3>
@@ -1335,7 +1824,7 @@ export default function SettingsPage() {
                   onChange={e => setSystemQuery(e.target.value)}
                   placeholder="搜索设置项（描述 / key）"
                   className="h-9 w-full md:w-[320px]"
-                />
+                 aria-label="搜索设置项（描述 / key）"/>
                 {health?.timezone ? (
                   <div className="hidden md:flex px-2.5 h-9 items-center rounded-lg border border-border/50 bg-accent/20 text-[11px] text-muted-foreground">
                     TZ <span className="ml-1 font-mono text-foreground/90">{health.timezone}</span>
@@ -1344,62 +1833,24 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            <div className="space-y-5">
+            <div className="space-y-2">
               {filteredSettings.map(setting => {
                 const currentValue = edited[setting.key] ?? setting.value
                 const isChanged = setting.key in edited
-                const STOCK_LINK_OPTIONS: Record<string, string> = { xueqiu: '雪球' }
+                const summary = setting.key === 'stock_link_platform'
+                  ? (STOCK_LINK_OPTIONS[currentValue] ?? currentValue) || '未设置'
+                  : currentValue || '未设置'
                 return (
-                  <div key={setting.key}>
-                    <Label>{setting.description || setting.key}</Label>
-                    <div className="flex items-center gap-2.5">
-                      {setting.key === 'stock_link_platform' ? (
-                        <Select
-                          value={currentValue || 'xueqiu'}
-                          onValueChange={v => setEdited({ ...edited, [setting.key]: v })}
-                        >
-                          <SelectTrigger className={`${isChanged ? 'ring-2 ring-primary/20 border-primary/30' : ''}`}>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {Object.entries(STOCK_LINK_OPTIONS).map(([val, label]) => (
-                              <SelectItem key={val} value={val}>{label}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                      <div className="flex-1 relative">
-                        <Input
-                          type={SECRET_SETTING_KEYS.has(setting.key) ? 'password' : 'text'}
-                          value={SECRET_SETTING_KEYS.has(setting.key) && !isChanged ? (setting.value === SECRET_MASK ? '' : currentValue) : currentValue}
-                          onChange={e => setEdited({ ...edited, [setting.key]: e.target.value })}
-                          className={`font-mono ${isChanged ? 'ring-2 ring-primary/20 border-primary/30' : ''}`}
-                          placeholder={SECRET_SETTING_KEYS.has(setting.key)
-                            ? (setting.value === SECRET_MASK ? '已配置(留空保存则不变)' : setting.key)
-                            : setting.key}
-                        />
-                        {SECRET_SETTING_KEYS.has(setting.key) && setting.value === SECRET_MASK && !isChanged && (
-                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-emerald-500">已配置</span>
-                        )}
-                      </div>
-                      )}
-                      <button
-                        onClick={() => handleSave(setting.key)}
-                        disabled={!isChanged || saving === setting.key}
-                        className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
-                          saved === setting.key
-                            ? 'bg-emerald-500/10 text-emerald-600'
-                            : isChanged
-                              ? 'bg-primary text-white'
-                              : 'text-muted-foreground/30'
-                        }`}
-                      >
-                        {saving === setting.key ? (
-                          <span className="w-4 h-4 border-2 border-current/30 border-t-current rounded-full animate-spin" />
-                        ) : (
-                          <Check className="w-4 h-4" />
-                        )}
-                      </button>
+                  <div key={setting.key} className="flex items-center justify-between gap-3 rounded-lg bg-accent/30 px-3 py-2.5 hover:bg-accent/50 transition-colors">
+                    <div className="min-w-0">
+                      <span className="text-[12px] font-medium text-foreground">{setting.description || setting.key}</span>
+                      <p className="text-[10px] text-muted-foreground truncate font-mono">{summary}</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {isChanged && <span className="text-[10px] text-amber-700 dark:text-amber-400">未保存</span>}
+                      <Button size="sm" variant="secondary" className="h-7 px-2 text-[11px]" onClick={() => openSysDialog(setting)}>
+                        <Pencil className="w-3 h-3" /> 编辑
+                      </Button>
                     </div>
                   </div>
                 )
@@ -1410,7 +1861,8 @@ export default function SettingsPage() {
         )}
 
         {/* Config Pack (Templates) */}
-        <section id="sec-pack" className="card p-4 md:p-6 lg:col-span-7">
+        {isOwner && (
+        <section id="sec-pack" className="card p-4 md:p-6 lg:col-span-7" style={{ display: sectionMatches('sec-pack') ? undefined : 'none' }}>
           <div className="flex items-start justify-between mb-4 gap-3">
             <div>
               <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">配置包</h3>
@@ -1491,9 +1943,10 @@ export default function SettingsPage() {
             </div>
           </div>
         </section>
+        )}
 
         {/* Feedback Stats */}
-        <section id="sec-feedback" className="card p-4 md:p-6 lg:col-span-5">
+        <section id="sec-feedback" className="card p-4 md:p-6 lg:col-span-5" style={{ display: sectionMatches('sec-feedback') ? undefined : 'none' }}>
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="text-[12px] md:text-[13px] font-semibold text-foreground">建议反馈</h3>
@@ -1558,7 +2011,7 @@ export default function SettingsPage() {
                 value={serviceForm.name}
                 onChange={e => setServiceForm({ ...serviceForm, name: e.target.value })}
                 placeholder="如 OpenAI、智谱、DeepSeek"
-              />
+               aria-label="如 OpenAI、智谱、DeepSeek"/>
             </div>
             <div>
               <Label>Base URL</Label>
@@ -1567,7 +2020,7 @@ export default function SettingsPage() {
                 onChange={e => setServiceForm({ ...serviceForm, base_url: e.target.value })}
                 placeholder="https://api.openai.com/v1"
                 className="font-mono"
-              />
+               aria-label="https://api.openai.com/v1"/>
             </div>
             <div>
               <Label>API Key</Label>
@@ -1578,7 +2031,7 @@ export default function SettingsPage() {
                   onChange={e => setServiceForm({ ...serviceForm, api_key: e.target.value })}
                   placeholder="sk-..."
                   className="font-mono pr-10"
-                />
+                 aria-label="sk-..."/>
                 <Button
                   type="button" variant="ghost" size="icon"
                   className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8"
@@ -1592,6 +2045,132 @@ export default function SettingsPage() {
               <Button variant="ghost" onClick={() => setServiceDialogOpen(false)}>取消</Button>
               <Button onClick={saveService} disabled={!serviceForm.name || !serviceForm.base_url}>
                 {editServiceId ? '保存' : '创建'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 我的服务商(BYOK) Dialog */}
+      <Dialog open={mySvcDialogOpen} onOpenChange={setMySvcDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editMySvcId ? '编辑我的服务商' : '添加我的服务商'}</DialogTitle>
+            <DialogDescription>用自己的 API Key 配置服务商，仅你自己可见（不影响平台配置）</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div>
+              <Label>名称</Label>
+              <Input
+                value={mySvcForm.name}
+                onChange={e => setMySvcForm({ ...mySvcForm, name: e.target.value })}
+                placeholder="如 OpenAI、DeepSeek"
+               aria-label="如 OpenAI、DeepSeek"/>
+            </div>
+            <div>
+              <Label>Base URL</Label>
+              <Input
+                value={mySvcForm.base_url}
+                onChange={e => setMySvcForm({ ...mySvcForm, base_url: e.target.value })}
+                placeholder="https://api.openai.com/v1"
+                className="font-mono"
+               aria-label="https://api.openai.com/v1"/>
+            </div>
+            <div>
+              <Label>API Key</Label>
+              <div className="relative">
+                <Input
+                  type={mySvcKeyVisible ? 'text' : 'password'}
+                  value={mySvcForm.api_key}
+                  onChange={e => setMySvcForm({ ...mySvcForm, api_key: e.target.value })}
+                  placeholder={editMySvcId ? '留空或保持 ******** 则不修改' : 'sk-...'}
+                  className="font-mono pr-10"
+                />
+                <Button
+                  type="button" variant="ghost" size="icon"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8"
+                  onClick={() => setMySvcKeyVisible(!mySvcKeyVisible)}
+                >
+                  {mySvcKeyVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </Button>
+              </div>
+            </div>
+            <div className="rounded-xl border border-border/50 bg-accent/20 p-3 space-y-3">
+              <p className="text-[11px] font-medium text-foreground">模型（单模型简化配置，可留空稍后补充）</p>
+              <div>
+                <Label>模型标识</Label>
+                <Input
+                  value={mySvcForm.model}
+                  onChange={e => setMySvcForm({ ...mySvcForm, model: e.target.value })}
+                  placeholder="gpt-4o / deepseek-chat"
+                  className="font-mono"
+                 aria-label="gpt-4o / deepseek-chat"/>
+              </div>
+              <div>
+                <Label>显示名称 <span className="text-muted-foreground font-normal">(选填，默认同模型标识)</span></Label>
+                <Input
+                  value={mySvcForm.model_name}
+                  onChange={e => setMySvcForm({ ...mySvcForm, model_name: e.target.value })}
+                  placeholder="不填则使用模型标识"
+                 aria-label="不填则使用模型标识"/>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <Label>使用场景</Label>
+                  <Select value={mySvcForm.scene} onValueChange={v => setMySvcForm({ ...mySvcForm, scene: v })}>
+                    <SelectTrigger className="h-9 text-[12px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="chat">日常对话</SelectItem>
+                      <SelectItem value="trading_agents">深度分析</SelectItem>
+                      <SelectItem value="reports">报告生成</SelectItem>
+                      <SelectItem value="referee">AI 裁判</SelectItem>
+                      <SelectItem value="selfcheck">自检</SelectItem>
+                      <SelectItem value="insights">机会评分</SelectItem>
+                      <SelectItem value="vision">视觉(图片识别)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>能力</Label>
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    {(['chat', 'vision', 'tools'] as const).map(cap => (
+                      <button
+                        key={cap}
+                        type="button"
+                        onClick={() => setMySvcForm({
+                          ...mySvcForm,
+                          capabilities: mySvcForm.capabilities.includes(cap)
+                            ? mySvcForm.capabilities.filter(c => c !== cap)
+                            : [...mySvcForm.capabilities, cap],
+                        })}
+                        className={`px-2 py-1 rounded-md text-[11px] border transition-colors ${
+                          mySvcForm.capabilities.includes(cap)
+                            ? 'border-primary/40 bg-primary/10 text-primary'
+                            : 'border-border/60 bg-background/60 text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        {cap === 'chat' ? '对话' : cap === 'vision' ? '视觉' : '工具'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-[12px] text-muted-foreground cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={mySvcForm.is_default}
+                  onChange={e => setMySvcForm({ ...mySvcForm, is_default: e.target.checked })}
+                  className="accent-primary"
+                />
+                设为默认模型
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" onClick={() => setMySvcDialogOpen(false)}>取消</Button>
+              <Button onClick={saveMySvc} disabled={!mySvcForm.name.trim() || !mySvcForm.base_url.trim() || mySvcSaving}>
+                {mySvcSaving ? '保存中…' : editMySvcId ? '保存' : '创建'}
               </Button>
             </div>
           </div>
@@ -1628,7 +2207,7 @@ export default function SettingsPage() {
                 value={modelForm.name}
                 onChange={e => setModelForm({ ...modelForm, name: e.target.value })}
                 placeholder="不填则使用模型标识"
-              />
+               aria-label="不填则使用模型标识"/>
             </div>
             <div>
               <Label>模型标识 <span className="text-muted-foreground font-normal">(可用服务商上的「嗅探」批量发现)</span></Label>
@@ -1640,6 +2219,35 @@ export default function SettingsPage() {
                 className="font-mono"
               />
             </div>
+            <div>
+              <Label>功能 <span className="text-muted-foreground font-normal">(多选，决定模型可用于哪些场景)</span></Label>
+              <div className="flex flex-wrap gap-1.5">
+                {MODEL_CAP_ORDER.map(cap => {
+                  const meta = MODEL_CAP_META[cap]
+                  const checked = modelForm.capabilities.includes(cap)
+                  return (
+                    <button
+                      key={cap}
+                      type="button"
+                      onClick={() => setModelForm({
+                        ...modelForm,
+                        capabilities: checked
+                          ? modelForm.capabilities.filter(c => c !== cap)
+                          : [...modelForm.capabilities, cap],
+                      })}
+                      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+                        checked
+                          ? `${meta.badge} border-transparent`
+                          : 'border-border/60 bg-background/60 text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {checked && <Check className="h-3 w-3" strokeWidth={3} />}
+                      {meta.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="ghost" onClick={() => setModelDialogOpen(false)}>取消</Button>
               <Button onClick={saveModel} disabled={!modelForm.model || !modelForm.service_id}>
@@ -1647,6 +2255,83 @@ export default function SettingsPage() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 模型管理 Dialog(第二窗口): 某服务商下的模型列表 + 添加/嗅探/删除 */}
+      <Dialog open={modelsDialogOpen} onOpenChange={open => { if (!open) closeModelsDialog() }}>
+        <DialogContent className="max-w-2xl">
+          {modelsSvc && (
+            <>
+              <DialogHeader>
+                <DialogTitle>管理模型 · {modelsSvc.name}</DialogTitle>
+                <DialogDescription className="font-mono text-[11px]">{modelsSvc.base_url}</DialogDescription>
+              </DialogHeader>
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <span className="text-[11px] text-muted-foreground">
+                  共 <span className="font-mono text-foreground">{modelsSvc.models.length}</span> 个模型
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="secondary" size="sm" className="h-8 text-[12px]"
+                    disabled={discoveringService === modelsSvc.id}
+                    onClick={() => discoverForService(modelsSvc.id)}
+                  >
+                    <Radar className={`w-3.5 h-3.5 ${discoveringService === modelsSvc.id ? 'animate-pulse' : ''}`} />
+                    嗅探
+                  </Button>
+                  <Button size="sm" className="h-8 text-[12px]" onClick={() => openModelDialog(modelsSvc.id)}>
+                    <Plus className="w-3.5 h-3.5" /> 添加模型
+                  </Button>
+                </div>
+              </div>
+              {modelsSvc.models.length === 0 ? (
+                <p className="py-8 text-center text-[12px] text-muted-foreground">
+                  暂无模型，点击「添加模型」或「嗅探」自动发现
+                </p>
+              ) : (
+                <div className="max-h-[55vh] space-y-1.5 overflow-y-auto scrollbar pr-1">
+                  {modelsSvc.models.map(m => (
+                    <div key={m.id} className="flex items-center justify-between gap-2 rounded-lg border border-border/50 bg-background/60 px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          {m.is_default && <Star className="w-3 h-3 text-amber-700 dark:text-amber-500 flex-shrink-0" />}
+                          <span className="text-[12px] font-medium text-foreground truncate">{m.name}</span>
+                          <CapBadges caps={m.capabilities} />
+                        </div>
+                        <p className="text-[10px] text-muted-foreground font-mono truncate">{m.model}</p>
+                      </div>
+                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                        <Button
+                          variant="ghost" size="icon" className="h-6 w-6"
+                          onClick={() => testModel(m.id)}
+                          disabled={testingModel === m.id}
+                          title="测试模型"
+                        >
+                          {testingModel === m.id ? (
+                            <span className="w-3 h-3 border-2 border-current/30 border-t-current rounded-full animate-spin" />
+                          ) : (
+                            <Play className="w-3 h-3" />
+                          )}
+                        </Button>
+                        {!m.is_default && (
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setDefaultModel(m.id)} title="设为默认">
+                            <Star className="w-3 h-3" />
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openModelDialog(modelsSvc.id, m)} title="编辑模型">
+                          <Pencil className="w-3 h-3" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 hover:text-destructive" onClick={() => deleteModel(m.id)} title="删除模型">
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -1724,6 +2409,49 @@ export default function SettingsPage() {
         </DialogContent>
       </Dialog>
 
+      {/* 微信扫码绑定弹窗 */}
+      <Dialog open={wechatQrOpen} onOpenChange={open => { if (!open) closeWechatQr() }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>绑定个人微信</DialogTitle>
+            <DialogDescription>使用微信「扫一扫」扫描二维码，在手机上确认绑定</DialogDescription>
+          </DialogHeader>
+          <div className="mt-2 flex flex-col items-center gap-3">
+            {wechatQr && (
+              <>
+                <div className="rounded-xl border border-border/50 bg-white p-3">
+                  <QRCodeSVG value={wechatQr.qrcode_url} size={200} />
+                </div>
+                <p className="text-[11px] text-muted-foreground text-center">
+                  请用微信「扫一扫」扫描二维码(约 3 分钟内有效)
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void copyWechatLink(wechatQr.qrcode_url)}
+                  className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border/50 bg-accent/30 px-2.5 py-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                  title="点击复制链接"
+                >
+                  <Copy className="h-3 w-3 flex-shrink-0" />
+                  <span className="truncate font-mono">{wechatQr.qrcode_url}</span>
+                </button>
+                {wechatQrStatus === 'waiting' && (
+                  <p className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                    <span className="h-3 w-3 border-2 border-current/30 border-t-current rounded-full animate-spin" />
+                    等待扫码确认…
+                  </p>
+                )}
+                {wechatQrStatus === 'expired' && (
+                  <p className="text-[11px] text-destructive">二维码已过期，请关闭后重新发起绑定</p>
+                )}
+              </>
+            )}
+            <div className="flex w-full justify-end gap-2 pt-1">
+              <Button variant="ghost" onClick={closeWechatQr}>关闭</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Channel Dialog */}
       <Dialog open={channelDialogOpen} onOpenChange={setChannelDialogOpen}>
         <DialogContent>
@@ -1732,14 +2460,16 @@ export default function SettingsPage() {
             <DialogDescription>配置通知推送方式</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 mt-2">
-            <div>
-              <Label>名称</Label>
-              <Input
-                value={channelForm.name}
-                onChange={e => setChannelForm({ ...channelForm, name: e.target.value })}
-                placeholder="如 我的 Telegram"
-              />
-            </div>
+            {channelForm.type !== 'wechat_ilink' && (
+              <div>
+                <Label>名称</Label>
+                <Input
+                  value={channelForm.name}
+                  onChange={e => setChannelForm({ ...channelForm, name: e.target.value })}
+                  placeholder="如 我的 Telegram"
+                 aria-label="如 我的 Telegram"/>
+              </div>
+            )}
             <div>
               <Label>类型</Label>
               <Select
@@ -1756,39 +2486,156 @@ export default function SettingsPage() {
                 </SelectContent>
               </Select>
             </div>
-            {CHANNEL_TYPE_FIELDS[channelForm.type]?.fields.map(field => (
-              <div key={field.key}>
-                <Label>{field.label}{!field.required && <span className="text-muted-foreground font-normal"> (选填)</span>}</Label>
-                <div className="relative">
-                  <Input
-                    type={field.secret && !channelKeyVisible ? 'password' : 'text'}
-                    value={channelForm.config[field.key] || ''}
-                    onChange={e => setChannelForm({
-                      ...channelForm,
-                      config: { ...channelForm.config, [field.key]: e.target.value },
-                    })}
-                    placeholder={field.placeholder}
-                    className={`font-mono ${field.secret ? 'pr-10' : ''}`}
-                  />
-                  {field.secret && (
-                    <Button
-                      type="button" variant="ghost" size="icon"
-                      className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8"
-                      onClick={() => setChannelKeyVisible(!channelKeyVisible)}
-                    >
-                      {channelKeyVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </Button>
-                  )}
+            {channelForm.type === 'wechat_ilink' ? (
+              <div className="rounded-xl border border-border/50 bg-accent/20 p-4">
+                <div className="flex items-start gap-2.5">
+                  <QrCode className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
+                  <div>
+                    <div className="text-[12px] font-medium text-foreground">扫码绑定个人微信</div>
+                    <p className="mt-0.5 text-[10.5px] text-muted-foreground">
+                      无需填写地址与密钥。点击下方按钮，用微信扫码确认后自动创建「个人微信」渠道。
+                    </p>
+                  </div>
                 </div>
+                <Button className="mt-3" size="sm" onClick={() => void startWechatBind()} disabled={wechatBindStarting}>
+                  <QrCode className="h-3.5 w-3.5" />
+                  {wechatBindStarting ? '发起中…' : '绑定个人微信'}
+                </Button>
               </div>
-            ))}
+            ) : (
+              CHANNEL_TYPE_FIELDS[channelForm.type]?.fields.map(field => (
+                <div key={field.key}>
+                  <Label>{field.label}{!field.required && <span className="text-muted-foreground font-normal"> (选填)</span>}</Label>
+                  <div className="relative">
+                    <Input
+                      type={field.secret && !channelKeyVisible ? 'password' : 'text'}
+                      value={channelForm.config[field.key] || ''}
+                      onChange={e => setChannelForm({
+                        ...channelForm,
+                        config: { ...channelForm.config, [field.key]: e.target.value },
+                      })}
+                      placeholder={field.placeholder}
+                      className={`font-mono ${field.secret ? 'pr-10' : ''}`}
+                    />
+                    {field.secret && (
+                      <Button
+                        type="button" variant="ghost" size="icon"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8"
+                        onClick={() => setChannelKeyVisible(!channelKeyVisible)}
+                      >
+                        {channelKeyVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="ghost" onClick={() => setChannelDialogOpen(false)}>取消</Button>
-              <Button onClick={saveChannel} disabled={!isChannelFormValid() || testing !== null}>
-                {testing !== null ? '测试中…' : (editChannelId ? '保存并测试' : '创建并测试')}
-              </Button>
+              {channelForm.type === 'wechat_ilink' ? (
+                <Button onClick={() => void startWechatBind()} disabled={wechatBindStarting}>
+                  {wechatBindStarting ? '发起中…' : '绑定个人微信'}
+                </Button>
+              ) : (
+                <Button onClick={saveChannel} disabled={!isChannelFormValid() || testing !== null}>
+                  {testing !== null ? '测试中…' : (editChannelId ? '保存并测试' : '创建并测试')}
+                </Button>
+              )}
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 接口 Key 管理 Dialog(第二窗口): 单个数据源凭证编辑 */}
+      <Dialog open={keyDialogKey !== null} onOpenChange={open => { if (!open) closeKeyDialog() }}>
+        <DialogContent className="max-w-md">
+          {keyDialogKey && (() => {
+            const item = DATA_SOURCE_KEYS.find(k => k.key === keyDialogKey)
+            const setting = settings.find(s => s.key === keyDialogKey)
+            const configured = !!setting && setting.value === SECRET_MASK
+            const isChanged = keyDialogKey in edited
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle>管理接口 Key · {item?.name ?? keyDialogKey}</DialogTitle>
+                  <DialogDescription>{item?.desc ?? ''}。读取优先级：设置页 &gt; 环境变量 &gt; 内置默认。</DialogDescription>
+                </DialogHeader>
+                <div className="relative mt-1">
+                  <Input
+                    type={keyInputVisible ? 'text' : 'password'}
+                    value={edited[keyDialogKey] ?? ''}
+                    onChange={e => setEdited({ ...edited, [keyDialogKey]: e.target.value })}
+                    className={`font-mono pr-10 ${isChanged ? 'ring-2 ring-primary/20 border-primary/30' : ''}`}
+                    placeholder={configured ? '已配置（输入新 Key 可替换，留空保存不变）' : '未配置，输入接口 Key'}
+                  />
+                  {!isChanged && configured && (
+                    <span className="absolute right-10 top-1/2 -translate-y-1/2 text-[10px] text-emerald-700 dark:text-emerald-500">已配置</span>
+                  )}
+                  <Button
+                    type="button" variant="ghost" size="icon"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8"
+                    onClick={() => setKeyInputVisible(!keyInputVisible)}
+                  >
+                    {keyInputVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </Button>
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="ghost" onClick={closeKeyDialog}>取消</Button>
+                  <Button onClick={() => void saveKeyDialog()} disabled={!isChanged || saving === keyDialogKey}>
+                    {saving === keyDialogKey ? '保存中…' : '保存'}
+                  </Button>
+                </div>
+              </>
+            )
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* 系统设置编辑 Dialog(第二窗口) */}
+      <Dialog open={sysDialogKey !== null} onOpenChange={open => { if (!open) setSysDialogKey(null) }}>
+        <DialogContent className="max-w-md">
+          {sysDialogKey && (() => {
+            const setting = settings.find(s => s.key === sysDialogKey)
+            if (!setting) return null
+            const isChanged = sysDialogKey in edited
+            const currentValue = edited[sysDialogKey] ?? setting.value
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{setting.description || setting.key}</DialogTitle>
+                  <DialogDescription className="font-mono text-[11px]">{setting.key}</DialogDescription>
+                </DialogHeader>
+                {setting.key === 'stock_link_platform' ? (
+                  <Select
+                    value={currentValue || 'xueqiu'}
+                    onValueChange={v => setEdited({ ...edited, [sysDialogKey]: v })}
+                  >
+                    <SelectTrigger className={isChanged ? 'ring-2 ring-primary/20 border-primary/30' : ''}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(STOCK_LINK_OPTIONS).map(([val, label]) => (
+                        <SelectItem key={val} value={val}>{label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    value={currentValue}
+                    onChange={e => setEdited({ ...edited, [sysDialogKey]: e.target.value })}
+                    className={`font-mono ${isChanged ? 'ring-2 ring-primary/20 border-primary/30' : ''}`}
+                    placeholder={setting.key}
+                  />
+                )}
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="ghost" onClick={() => setSysDialogKey(null)}>取消</Button>
+                  <Button onClick={() => void saveSysDialog()} disabled={!isChanged || saving === sysDialogKey}>
+                    {saving === sysDialogKey ? '保存中…' : '保存'}
+                  </Button>
+                </div>
+              </>
+            )
+          })()}
         </DialogContent>
       </Dialog>
 
@@ -1799,5 +2646,192 @@ export default function SettingsPage() {
         </div>
       )}
     </div>
+  )
+}
+
+// ══════════════════════════════════════════════════════════════════
+// AI 调用统计区块(2026-08-15): LLM token 用量/费用估算/按场景筛选
+// ══════════════════════════════════════════════════════════════════
+interface LlmUsageItem {
+  time: string
+  scene: string
+  scene_key: string
+  model: string
+  tokens: number
+  latency: string
+}
+interface LlmUsageData {
+  summary: { calls: number; tokens: number; cost: number; month_calls: number; month_cost: number; month_tokens: number }
+  items: LlmUsageItem[]
+  scenes: { key: string; label: string }[]
+  note?: string
+}
+
+function LlmUsageSection() {
+  const [range, setRange] = useState<'day' | '7d' | '30d'>('day')
+  const [scene, setScene] = useState('')
+  const [data, setData] = useState<LlmUsageData | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  const load = async (r: 'day' | '7d' | '30d', s: string) => {
+    setLoading(true)
+    try {
+      const d = await fetchAPI<LlmUsageData>(`/llm-usage?range=${r}${s ? `&scene=${s}` : ''}`, { cacheMode: 'reload' })
+      setData(d)
+    } catch {
+      setData(null)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { void load(range, scene) }, [range, scene])
+
+  const fmtNum = (n: number) => (n ?? 0).toLocaleString('en-US')
+  const fmtCost = (n: number) => `¥${(n ?? 0).toFixed(2)}`
+
+  return (
+    <section id="sec-llm-usage" className="card p-4 md:p-6 lg:col-span-12">
+      <div className="mb-3 flex items-center gap-2">
+        <h2 className="flex items-center gap-2 text-sm font-semibold">
+          <Activity className="h-4 w-4 text-primary" />
+          AI 调用统计
+        </h2>
+        <span className="text-[11px] text-muted-foreground">LLM token 用量与费用估算</span>
+      </div>
+
+      {/* 区间 + 场景筛选(分组标签) */}
+      <div className="flex flex-wrap items-center gap-1.5 mb-3">
+        <span className="text-[10px] text-muted-foreground mr-0.5">时间范围</span>
+        {(['day', '7d', '30d'] as const).map(r => (
+          <button
+            key={r}
+            onClick={() => setRange(r)}
+            aria-pressed={range === r}
+            className={`rounded-md px-2.5 py-1.5 text-[11px] transition-colors ${
+              range === r ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent'
+            }`}
+          >
+            {r === 'day' ? '今日' : r === '7d' ? '近7天' : '近30天'}
+          </button>
+        ))}
+        <span className="text-[10px] text-muted-foreground ml-3 mr-0.5">场景</span>
+        <button
+          onClick={() => setScene('')}
+          aria-pressed={scene === ''}
+          className={`rounded-md px-2.5 py-1.5 text-[11px] transition-colors ${
+            scene === '' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent'
+          }`}
+        >
+          全部
+        </button>
+        {(data?.scenes || []).map(s => (
+          <button
+            key={s.key}
+            onClick={() => setScene(s.key)}
+            aria-pressed={scene === s.key}
+            className={`rounded-md px-2.5 py-1.5 text-[11px] transition-colors ${
+              scene === s.key ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-accent'
+            }`}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div className="py-4 text-[12px] text-muted-foreground">加载中…</div>
+      ) : data ? (
+        <>
+          {/* 汇总格: 区间 3 + 本月 2 明确分组 */}
+          <div className="grid grid-cols-3 gap-2 mb-1.5">
+            {[
+              ['区间调用', fmtNum(data.summary.calls), '次'],
+              ['区间 Token', fmtNum(data.summary.tokens), ''],
+              ['区间费用', fmtCost(data.summary.cost), '估算'],
+            ].map(([label, val, suffix]) => (
+              <div key={label} className="rounded-lg border border-border/40 bg-accent/20 px-3 py-2.5">
+                <div className="text-[10px] text-muted-foreground">{label}</div>
+                <div className="font-mono text-[14px] font-semibold text-foreground tabular-nums">
+                  {val}
+                  {suffix && <span className="ml-1 text-[10px] font-normal text-muted-foreground">{suffix}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2 mb-3">
+            {[
+              ['本月调用', fmtNum(data.summary.month_calls), '次'],
+              ['本月费用', fmtCost(data.summary.month_cost), '估算'],
+            ].map(([label, val, suffix]) => (
+              <div key={label} className="rounded-lg border border-border/40 bg-accent/20 px-3 py-2.5">
+                <div className="text-[10px] text-muted-foreground">{label}</div>
+                <div className="font-mono text-[14px] font-semibold text-foreground tabular-nums">
+                  {val}
+                  {suffix && <span className="ml-1 text-[10px] font-normal text-muted-foreground">{suffix}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* 明细表(折叠: 默认收起, 点开才展示日志明细) */}
+          <details className="mt-3 group">
+            <summary className="flex cursor-pointer items-center gap-1.5 text-[12px] text-muted-foreground select-none hover:text-foreground transition-colors">
+              <span className="inline-block transition-transform group-open:rotate-90">▶</span>
+              调用明细
+              {data.items.length > 0 && (
+                <span className="text-[10px] text-muted-foreground/70">(最近 {data.items.length} 条)</span>
+              )}
+            </summary>
+            <div className="mt-2">
+              {data.items.length === 0 ? (
+                <div className="py-3 text-center text-[12px] text-muted-foreground">暂无调用记录</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[12px]">
+                    <thead>
+                      <tr className="text-left text-[10px] text-muted-foreground border-b border-border/40">
+                        <th className="py-1.5 pr-3 font-medium">时间</th>
+                        <th className="py-1.5 pr-3 font-medium">场景</th>
+                        <th className="py-1.5 pr-3 font-medium">模型</th>
+                        <th className="py-1.5 pr-3 font-medium text-right">Tokens</th>
+                        <th className="py-1.5 font-medium text-right">耗时</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.items.map((it, i) => (
+                        <tr key={i} className="border-b border-border/20 hover:bg-accent/30 transition-colors">
+                          <td className="py-1.5 pr-3 text-muted-foreground tabular-nums whitespace-nowrap">{it.time}</td>
+                          <td className="py-1.5 pr-3">
+                            <span className="rounded bg-accent/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">{it.scene}</span>
+                          </td>
+                          <td className="py-1.5 pr-3 font-mono text-[11px] text-muted-foreground">{it.model}</td>
+                          <td className="py-1.5 pr-3 text-right font-mono tabular-nums">{fmtNum(it.tokens)}</td>
+                          <td className="py-1.5 text-right text-muted-foreground tabular-nums">{it.latency}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </details>
+
+          {data.note && (
+            <p className="mt-2 text-[10px] text-muted-foreground">{data.note}</p>
+          )}
+        </>
+      ) : (
+        <div className="py-4 flex items-center justify-center gap-2">
+          <span className="text-[12px] text-muted-foreground">加载失败</span>
+          <button
+            onClick={() => void load(range, scene)}
+            className="rounded-md px-2 py-1 text-[11px] text-primary hover:bg-accent"
+          >
+            重试
+          </button>
+        </div>
+      )}
+    </section>
   )
 }

@@ -194,6 +194,21 @@ async def forecast_backtest(
         raise HTTPException(500, f"回测失败: {e}")
 
 
+@router.get("/forecast/weights")
+async def forecast_weights():
+    """当前 4 模型投票权重(预测页权重透明度展示)。"""
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(f"{FORECAST_ENGINE_URL}/forecast/weights")
+            r.raise_for_status()
+            return r.json()
+    except httpx.ConnectError:
+        raise HTTPException(503, "预测引擎未启动(需在主机运行 forecast_server.py)")
+    except Exception as e:
+        logger.exception("模型权重查询失败")
+        raise HTTPException(500, f"查询失败: {e}")
+
+
 @router.get("/forecast/models")
 async def forecast_models():
     """预测引擎模型清单(设置页展示)。"""

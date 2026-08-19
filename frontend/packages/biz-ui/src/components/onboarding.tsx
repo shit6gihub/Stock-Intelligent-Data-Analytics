@@ -66,7 +66,7 @@ export function Onboarding({ open, onComplete, hasStocks }: OnboardingProps) {
                 <TrendingUp className="w-8 h-8 text-white" />
               </div>
               <h2 className="text-[20px] font-bold text-foreground mb-2">
-                欢迎使用盯盘侠
+                欢迎使用数智分析 SIDA
               </h2>
               <p className="text-[14px] text-muted-foreground mb-6">
                 {hasStocks
@@ -91,7 +91,7 @@ export function Onboarding({ open, onComplete, hasStocks }: OnboardingProps) {
                   </div>
                   <div>
                     <p className="text-[13px] font-medium text-foreground">AI 智能分析</p>
-                    <p className="text-[12px] text-muted-foreground">盘后日报、异动建议、技术分析</p>
+                    <p className="text-[12px] text-muted-foreground">数智分析BOT 对话 · 主力意图 · 技术面 · 4模型预测</p>
                   </div>
                 </div>
                 <div className="flex items-start gap-3 p-3 rounded-xl bg-accent/30">
