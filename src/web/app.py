@@ -522,8 +522,8 @@ try:
 
     app.include_router(
         auction.router,
-        prefix="/api/auction",
-        tags=["auction"],
+        prefix="/api/auction-snapshot",
+        tags=["auction-snapshot"],
         dependencies=protected,
     )
 except ImportError:

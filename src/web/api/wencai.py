@@ -168,7 +168,7 @@ try:
 
     router = APIRouter(tags=["wencai"])
 
-    @router.get("/wencai")
+    @router.get("")
     def api_wencai(query: str = Query(..., description="问财自然语言选股条件(URL 编码)")) -> dict:
         return run_wencai(query)
 

@@ -30,7 +30,6 @@ from typing import Optional
 
 from fastapi import APIRouter, Query
 
-from src.core import thsdk_alert
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +81,11 @@ def get_auction_snapshot(
         tsym = _normalize_symbol(symbol)
     except ValueError as exc:
         return _empty(None, f"参数错误: {exc}")
+
+    try:
+        from src.core import thsdk_alert
+    except ImportError:
+        return _empty(None, "thsdk 不可用(L2 竞价数据源未接入), 无法获取竞价快照")
 
     try:
         with thsdk_alert.THS() as ths:

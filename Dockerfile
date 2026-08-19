@@ -125,6 +125,7 @@ RUN pip install --no-cache-dir --timeout 300 --retries 8 -i https://mirrors.aliy
 
 # 复制后端代码
 COPY src/ ./src/
+COPY data_source/ ./data_source/
 COPY server.py ./
 COPY prompts/ ./prompts/
 COPY strategies/ ./strategies/
