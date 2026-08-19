@@ -269,6 +269,45 @@ app.include_router(
     dependencies=protected,
 )
 
+# ---- L2 轻接口(2026-08-20): OB 失衡条/竞价快照/问小达 容错注册 ----
+# 三个模块由并行子任务创建; 模块未就绪(尚未创建)或依赖缺失时 import 抛 ImportError,
+# 被 try/except 吸收后跳过注册 → 启动/import 永不因这三个路由而崩。
+try:
+    from src.web.api import orderbook
+
+    app.include_router(
+        orderbook.router,
+        prefix="/api/orderbook-ob",
+        tags=["orderbook-ob"],
+        dependencies=protected,
+    )
+except ImportError:
+    pass
+
+try:
+    from src.web.api import auction
+
+    app.include_router(
+        auction.router,
+        prefix="/api/auction",
+        tags=["auction"],
+        dependencies=protected,
+    )
+except ImportError:
+    pass
+
+try:
+    from src.web.api import wencai
+
+    app.include_router(
+        wencai.router,
+        prefix="/api/wencai",
+        tags=["wencai"],
+        dependencies=protected,
+    )
+except ImportError:
+    pass
+
 
 @app.get("/api/health")
 async def health():

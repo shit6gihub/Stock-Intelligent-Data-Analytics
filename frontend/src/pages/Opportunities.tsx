@@ -21,6 +21,7 @@ import { useLocalStorage } from '@/lib/utils'
 import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
 import FactorWeightsPanel from '@/components/FactorWeightsPanel'
 import SignalScoreShareCard from '@/components/SignalScoreShareCard'
+import WencaiPanel from '@panwatch/biz-ui/components/WencaiPanel'
 
 type SourceFilter = 'all' | 'market_scan' | 'watchlist' | 'mixed'
 type HoldingFilter = 'all' | 'held' | 'unheld'
@@ -1164,6 +1165,9 @@ export default function OpportunitiesPage() {
           </div>
         )}
       </div>
+
+      {/* ── 问财选股(L2 数据源面板) ── */}
+      <WencaiPanel />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {groupedItems.map((group) => {

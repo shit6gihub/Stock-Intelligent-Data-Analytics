@@ -4,6 +4,7 @@ import { fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import MinuteLwcChart from './MinuteLwcChart'
 import DarkFlowCards from './DarkFlowCards'
+import AuctionSnapshotCard from './AuctionSnapshotCard'
 
 type BusinessDay = { year: number; month: number; day: number }
 
@@ -890,6 +891,8 @@ export default function InteractiveKline(props: {
                 <span>腾讯实时分时 · 每30秒自动刷新 · {minutePoints.length} 个点</span>
               </div>
               {/* 分时模式专属: 主力意图 + 内盘外盘 双卡片(2026-08-13, 仅 A 股) */}
+              {/* 竞价快览单行卡(2026-08-19, 仅 A 股, 挂在主力意图卡上方) */}
+              {props.market === 'CN' ? <AuctionSnapshotCard symbol={props.symbol} market={props.market} /> : null}
               {props.market === 'CN' ? <DarkFlowCards symbol={props.symbol} market={props.market} /> : null}
             </>
           )}
