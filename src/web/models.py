@@ -6,6 +6,7 @@ from sqlalchemy import (
     Float,
     Boolean,
     DateTime,
+    Date,
     JSON,
     ForeignKey,
     UniqueConstraint,
@@ -1254,3 +1255,68 @@ class LLMUsage(Base):
     completion_tokens = Column(Integer, default=0)
     latency_ms = Column(Integer, default=0)
     created_at = Column(DateTime, server_default=func.now())
+
+
+class Board(Base):
+    """thsdk 板块/概念注册表(阶段2.1, v0.3.0)。
+
+    - block_code: thsdk 板块代码, URFI 前缀(如 URFI883404), 唯一
+    - board_type: "industry"(行业) / "concept"(概念)
+    - 由工作日 08:30 cron 从 fetch_ths_industry / fetch_ths_concept 同步
+    """
+
+    __tablename__ = "boards"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    block_code = Column(String, unique=True, nullable=False, index=True)  # URFI883404
+    name = Column(String, nullable=True)
+    board_type = Column(String, nullable=True)  # "industry" / "concept"
+    last_synced_at = Column(DateTime, nullable=True)
+
+
+class BoardDaily(Base):
+    """板块日线(阶段2.1, v0.3.0): 每板块每日涨跌幅/资金净流入/量能。
+
+    - date: 交易日 (YYYY-MM-DD)
+    - change_pct: 当日涨跌幅(%)
+    - fund_net: 当日资金净流入(单位与 thsdk 一致, 元/万元视源而定)
+    - volume: 当日量能(成交额 元 或 成交量, 视源而定)
+    同一 (block_code, date) 唯一, 重复同步时更新不重复插入。
+    """
+
+    __tablename__ = "board_daily"
+    __table_args__ = (
+        UniqueConstraint("block_code", "date", name="uq_board_daily_code_date"),
+        Index("ix_board_daily_code_date", "block_code", "date"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    block_code = Column(String, nullable=False)
+    date = Column(Date, nullable=False)  # YYYY-MM-DD
+    change_pct = Column(Float, nullable=True)
+    fund_net = Column(Float, nullable=True)  # 资金净流入
+    volume = Column(Float, nullable=True)
+
+
+class AuctionAnomalyRecord(Base):
+    """竞价异动池落库(阶段1.2, v0.3.0): 工作日 09:25 竞价异动股快照。
+
+    - 由 cron(register_cron, 挂 report_scheduler)+ POST /api/auction/sync 写入
+    - 每交易日开盘前把当日竞价异动股按行追加, created_at 打时间戳, 供
+      get_anomaly_history 做多日历史追踪(某股连日竞价异动 = 强关注信号)。
+    - 不做唯一约束: 同日允许重复快照(手动 sync + cron 双写), 历史查询去向重/取最新。
+    """
+
+    __tablename__ = "auction_anomaly_records"
+    __table_args__ = (
+        Index("ix_auction_anomaly_sym_created", "symbol", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(16), nullable=False, index=True)  # 6 位 A 股代码
+    name = Column(String(64), default="")
+    gap_pct = Column(Float, nullable=True)        # 高开幅度 / 涨跌幅 %
+    withdraw_rate = Column(Float, nullable=True)  # 撤单率 (0~1 或 %, 视源而定)
+    volume_ratio = Column(Float, nullable=True)   # 量比
+    note = Column(String(255), default="")
+    created_at = Column(DateTime, server_default=func.now(), index=True)

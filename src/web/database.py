@@ -384,6 +384,37 @@ def _migrate(engine):
             )
             conn.commit()
 
+        # 竞价异动池(阶段1.2, v0.3.0): 工作日 09:25 竞价异动股落库。
+        # create_all 通常已建表(ORM 注册), 这里兜底保证存量库直接升级也有该表。
+        if not _has_table(conn, "auction_anomaly_records"):
+            conn.execute(
+                text(
+                    _ddl_autoincrement(
+                        """CREATE TABLE IF NOT EXISTS auction_anomaly_records (
+  id {pk},
+  symbol VARCHAR(16) NOT NULL,
+  name VARCHAR(64) DEFAULT '',
+  gap_pct REAL,
+  withdraw_rate REAL,
+  volume_ratio REAL,
+  note VARCHAR(255) DEFAULT '',
+  created_at {ts} DEFAULT CURRENT_TIMESTAMP
+);"""
+                    )
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_auction_anomaly_sym ON auction_anomaly_records(symbol);"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_auction_anomaly_sym_created ON auction_anomaly_records(symbol, created_at);"
+                )
+            )
+            conn.commit()
+
 
 def _migrate_old_providers(engine):
     """如果存在旧的 ai_providers 表，迁移数据到 ai_services + ai_models"""

@@ -1362,6 +1362,15 @@ def build_scheduler() -> AgentScheduler:
     finally:
         db.close()
 
+    # 板块数据每日同步(阶段2.1/2.2): 复用主调度器的 AsyncIOScheduler,
+    # 工作日 08:30 拉取行业+概念列表并写板块日线。不新建调度器。
+    try:
+        from src.core.thsdk_board import register_board_sync_job
+
+        register_board_sync_job(sched.scheduler)
+    except Exception as e:  # noqa: BLE001 - 注册失败不阻断调度器构建
+        logger.warning(f"板块数据同步任务注册失败: {e}")
+
     return sched
 
 
@@ -1781,6 +1790,16 @@ async def lifespan(app):
         logger.info("SIDA 报告调度器已启动")
     except Exception as e:
         logger.error(f"SIDA 报告调度器启动失败: {e}")
+    # 竞价异动同步 job(v0.3.0 阶段1.2): 复用 report_scheduler 的底层 APScheduler,
+    # 不新开 scheduler。工作日 09:25 拉竞价异动股落库(OFF-hook, 失败不崩)。
+    try:
+        settings = Settings()
+        from src.core.auction_pool import register_cron
+
+        if not register_cron(locals().get("report_scheduler", None) and locals().get("report_scheduler").scheduler):
+            logger.warning("竞价异动 cron 注册未生效(调度器不可用), 09:25 同步将跳过")
+    except Exception as e:
+        logger.error(f"竞价异动 cron 注册失败: {e}")
     # K线每日 backfill(收盘后 18:00, 周一至五, 拉最近 2 天)
     try:
         settings = Settings()

@@ -40,6 +40,9 @@ from src.web.api import (
     shadow,
     ths,
     darkflow,
+    boards,
+    main_flow,
+    auction_pool,
     chat_upload,
     my_ai_services,
     users,
@@ -53,6 +56,7 @@ from src.web.api import notifications
 from src.web.api import health as health_router
 from src.web.api import insights
 from src.web.api import wechat_bind
+from src.web.api import thsdk_snapshot, thsdk_alert as thsdk_alert_router
 from src.web.api.auth import get_current_user
 from src.web.api.settings import get_app_version
 from src.web.response import ResponseWrapperMiddleware
@@ -282,6 +286,13 @@ app.include_router(
 app.include_router(
     insights.router, prefix="/api/insights", tags=["insights"], dependencies=protected
 )
+# v0.3.0 thsdk L2 综合能力落地:个股快照 + 三大算法输出
+app.include_router(
+    thsdk_snapshot.router, prefix="/api/thsdk/snapshot", tags=["thsdk-snapshot"], dependencies=protected
+)
+app.include_router(
+    thsdk_alert_router.router, prefix="/api/thsdk/alert", tags=["thsdk-alert"], dependencies=protected
+)
 app.include_router(
     accounts.router, prefix="/api", tags=["accounts"], dependencies=protected
 )
@@ -499,6 +510,28 @@ app.include_router(
     darkflow.router,
     prefix="/api/dark-flow",
     tags=["dark-flow"],
+    dependencies=protected,
+)
+# 板块数据(阶段2.1/2.2, 2026-08-20): 板块/概念列表 + 详情 + 成分股 + 轮动
+app.include_router(
+    boards.router,
+    prefix="/api/boards",
+    tags=["boards"],
+    dependencies=protected,
+)
+# 主力意图双源对比(阶段1.1, 2026-08-20): 腾讯逐笔 vs thsdk L2
+app.include_router(
+    main_flow.router,
+    prefix="/api/main-flow",
+    tags=["main-flow"],
+    dependencies=protected,
+)
+# 竞价异动池(阶段1.2, 2026-08-20): 异动池 + 历史 + 同步
+# (模块名用 auction_pool, 规避 src/web/api/auction.py 竞价快照占用)
+app.include_router(
+    auction_pool.router,
+    prefix="/api/auction",
+    tags=["auction-pool"],
     dependencies=protected,
 )
 

@@ -34,6 +34,28 @@ Prometheus 抓取不再被限流(60/min)挡成 429。
 (主力意图+筹码逐笔翻页), 与前端其他请求叠加撞 Caddy 30s 反代超时 → 502。
 加 30s 进程内缓存, 单次冷启动后所有同标的请求直接秒回。
 
+### feature — thsdk L2 全能力落地 (v0.3.0)
+
+后端接入 **7 个新接口** + **3 张新表**, 23 个 thsdk L2 能力首次全链路可用:
+
+| 模块 | 后端 | 测试 |
+|---|---|---|
+| **主力意图双源对比** | `src/core/main_flow_compare.py` + `src/web/api/main_flow.py` (GET `/api/main-flow/compare/{symbol}`) | 10 passed |
+| **竞价异动池** | `src/core/auction_pool.py` + `src/web/api/auction_pool.py` (GET `/api/auction/anomaly` + history + sync) + cron 09:25 | 11 passed |
+| **个股 L2 综合快照** | `src/web/api/thsdk_snapshot.py` (GET `/api/thsdk/snapshot/{symbol}`) | 14 passed |
+| **thsdk 三大算法输出** | `src/web/api/thsdk_alert.py` (GET `/api/thsdk/alert/{symbol}`, 包 close_surge/auction/wencai_pool) | 14 passed (合并) |
+| **thsdk 板块数据** | `src/core/thsdk_board.py` + `src/web/api/boards.py` (4 端点) + cron 08:30 | 16 passed |
+| **DB 新表** | `Board` / `BoardDaily` / `AuctionAnomalyRecord`(SQLite/PG 双兼容 + 唯一约束 + 索引) | — |
+
+**测试汇总**: 51 passed (新增) / 694 passed (总回归)。
+
+**前端 UI 组件**:
+- 主力意图双源对比卡(挂在 DarkFlowCards)
+- 竞价异动池 Tab(挂 Opportunities 机会页)
+- 板块详情页 + 板块轮动 Top 5
+
+(前端 UI 在 feature commit 集成)
+
 ## 2026-08-18
 
 ### feat — AuditMiddleware 操作审计全覆盖 (v0.2.65.5)
