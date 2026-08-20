@@ -105,8 +105,25 @@ def test_fetch_thsdk_unavailable_fallback(mock_thsdk_l2):
     assert auction_pool.fetch_auction_anomaly("CN") == []
 
 
+def _thsdk_actually_importable() -> bool:
+    """2026-08-20 辅助: 检测 thsdk 在当前环境下能否真正 import。"""
+    try:
+        import data_source.thsdk_l2  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+@pytest.mark.skipif(
+    _thsdk_actually_importable(),
+    reason="thsdk 实际可 import (本环境已装 thsdk); 这个用例只验证 ImportError 路径",
+)
 def test_fetch_thsdk_module_missing(monkeypatch):
-    """thsdk 模块未安装(ImportError) -> 返回 [] 容错。"""
+    """thsdk 模块未安装(ImportError) -> 返回 [] 容错。
+
+    2026-08-20 修复: 同 test_main_flow_compare.test_thsdk_module_missing
+    — thsdk 实际安装时 delitem 后仍可重导入, 触发不到 ImportError 分支。
+    """
     if "data_source.thsdk_l2" in sys.modules:
         monkeypatch.delitem(sys.modules, "data_source.thsdk_l2")
     assert auction_pool.fetch_auction_anomaly("CN") == []
