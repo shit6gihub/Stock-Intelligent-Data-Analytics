@@ -56,6 +56,43 @@ Prometheus 抓取不再被限流(60/min)挡成 429。
 
 (前端 UI 在 feature commit 集成)
 
+### fix — wencai_nlp + 龙虎榜主源修复 (v0.3.1 hotfix)
+
+**修复 1**: thsdk `wencai_nlp` 端点从来没工作过
+- 症状: `/api/wencai?query=...` 一直返空(运营预设查询/机会页问财选股/AI 工具全靠这个)
+- 根因: `data_source/thsdk_l2.py::get_wencai_nlp` 写的是 `resp.df if hasattr(resp, "df") else pd.DataFrame()`,但 thsdk Response **没有 .df 属性**(只有 .data: list/dict/str)
+- 修法: 改用 `resp.data`, list/dict → DataFrame
+- 验证: "神剑股份昨日龙虎榜买入卖出营业部" 查询返 10 条席位明细(含深股通 -1.48亿 / 机构 3 家 -1.71亿 / 国信浙江互联网 +0.32亿)
+
+**修复 2**: 龙虎榜主源 ftshare → eastmoney
+- 症状: ftshare 海海外节点访问慢, 默认 page_size=20 神剑等"普通上榜"票在 page 2+
+- 改后: eastmoney datacenter 国内节点直连, page_size=500 一次性
+- DB: `data_sources` 表 ftshare.enabled=0, eastmoney.enabled=1 priority=0
+- 验证: 8/19 神剑龙虎榜正常返回 83 行, 含 2 条神剑记录(收盘11.27/-7.01%/净买-2.65亿)
+
+**修复 3**: 东财 vendor YYYYMMDD → YYYY-MM-DD 格式修正
+- 症状: `EastmoneyDragonTigerVendor.fetch(date="20260819")` 直接传给东财 datacenter, 但东财 API 要求 `YYYY-MM-DD` 格式, 否则 '参数预处理错误'
+- 修法: vendor 内部判断 `len(date) == 8` 时自动补短横线
+- 影响: `/api/market-data/dragon-tiger/{YYYYMMDD}` 端点可用
+
+### feat — 龙虎榜席位明细端点 (v0.3.1)
+
+**端点 1**: `/api/market-data/dragon-tiger/{trade_date}`
+- 调东财 vendor 拿汇总(净买/原因/上榜明细)
+- **旁路调 ftshare vendor 拿席位明细**(`top_buyers`/`top_sellers`, 机构/游资/深股通专用)
+- 合并: 每条 item 同时含东财汇总 + ftshare 席位
+- 验证: 8/19 神剑可看 深股通 -1.48亿 / 机构 3 家 -1.71亿 / 国信浙江互联网 +0.32亿
+
+**端点 2**: `/api/market-data/fundamentals-detail/{symbol}?dt_days=N`
+- 已有: 龙虎榜(汇总) / margin / shareholders / dividend / events
+- 新增: 龙虎榜每条 item 加 `top_buyers` / `top_sellers` 字段
+
+### update — ftshare vendor 完善
+
+- 加分页翻页(page 1-10), ftshare 每页固定 20 条需循环
+- `DragonTigerItem` dataclass 加 `top_buyers` / `top_sellers` 字段(可选, 默认 None)
+- 不破坏 v0.3.0 已上线端点(原字段保留, 新增字段向后兼容)
+
 ## 2026-08-18
 
 ### feat — AuditMiddleware 操作审计全覆盖 (v0.2.65.5)
