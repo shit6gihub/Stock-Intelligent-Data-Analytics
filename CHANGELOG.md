@@ -93,6 +93,15 @@ Prometheus 抓取不再被限流(60/min)挡成 429。
 - `DragonTigerItem` dataclass 加 `top_buyers` / `top_sellers` 字段(可选, 默认 None)
 - 不破坏 v0.3.0 已上线端点(原字段保留, 新增字段向后兼容)
 
+### feature — 恒生数据库三源接入主力意图(v0.4.0 预备)
+
+- 新增 `src/core/hengsheng_client.py` (168 行): 聚源/恒生金融数据库 client, Bearer auth + POST
+- 新增 `src/core/hengsheng_fund_flow.py` (174 行): `get_hs_fund_flow(symbol, days=10)` 调 3.1 AStockCashFlow + 2.6 RealStockFundFlow, 30s 缓存
+- `src/core/main_flow_compare.py` 双源→三源(腾讯逐笔 + thsdk L2 + 恒生 DDE), 一致性 = min pairwise, 降级友好
+- `src/web/api/main_flow.py` 响应加 `hengsheng` 字段 (dde_ratio / rising_up_days / 4档资金)
+- **实战心法直接对齐同花顺口径**: `rising_up_days` (连红天数) + `dde_ratio` (资金比) + 4档分化
+- 凭证未提供前 mock 模式跑通; 凭证到位后 .env 加 2 行 (`HENGSHENG_BASE_URL` / `HENGSHENG_API_KEY`) 自动切真接口
+
 ## 2026-08-20
 
 ### feature — thsdk 全能力落地 (v0.3.2)
