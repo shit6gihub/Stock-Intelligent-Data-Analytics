@@ -23,6 +23,7 @@ import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
 import FactorWeightsPanel from '@/components/FactorWeightsPanel'
 import SignalScoreShareCard from '@/components/SignalScoreShareCard'
 import WencaiPanel from '@panwatch/biz-ui/components/WencaiPanel'
+import AuctionAnomalyTab from '@panwatch/biz-ui/components/AuctionAnomalyTab'
 import StrategyLibraryDialog from '@/components/StrategyLibraryDialog'
 
 type SourceFilter = 'all' | 'market_scan' | 'watchlist' | 'mixed'
@@ -254,6 +255,9 @@ export default function OpportunitiesPage() {
   const [sectorResults, setSectorResults] = useState<{ code: string; name: string }[]>([])
   const [snapshotDate, setSnapshotDate] = useState('')
 
+  // 机会页 Tab: 候选池 / 竞价异动(2026-08-20, v0.3.0)
+  const [viewMode, setViewMode] = useLocalStorage<'candidates' | 'auction'>('panwatch_opportunities_viewmode_v1', 'candidates')
+
   const [insightOpen, setInsightOpen] = useState(false)
   const [insightSymbol, setInsightSymbol] = useState('')
   const [insightMarket, setInsightMarket] = useState('CN')
@@ -364,6 +368,15 @@ export default function OpportunitiesPage() {
     setInsightMarket(item.stock_market || 'CN')
     setInsightName(item.stock_name)
     setInsightHasPosition(!!item.is_holding_snapshot)
+    setInsightOpen(true)
+  }, [])
+
+  // 竞价异动 Tab 行点击 → 打开相同的个股洞察弹窗(2026-08-20)
+  const openAuctionDetail = useCallback((symbol: string, market: string, name?: string) => {
+    setInsightSymbol(symbol)
+    setInsightMarket(market || 'CN')
+    setInsightName(name)
+    setInsightHasPosition(false)
     setInsightOpen(true)
   }, [])
 
@@ -815,6 +828,32 @@ export default function OpportunitiesPage() {
         </div>
       </div>
 
+      {/* 机会页 Tab(2026-08-20): 候选池 / 竞价异动 */}
+      <div className="flex items-center gap-1 mb-4">
+        <button
+          type="button"
+          onClick={() => setViewMode('candidates')}
+          className={`rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors ${
+            viewMode === 'candidates' ? 'bg-primary text-primary-foreground' : 'bg-accent/50 text-muted-foreground hover:bg-accent'
+          }`}
+        >
+          候选池
+        </button>
+        <button
+          type="button"
+          onClick={() => setViewMode('auction')}
+          className={`rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors ${
+            viewMode === 'auction' ? 'bg-primary text-primary-foreground' : 'bg-accent/50 text-muted-foreground hover:bg-accent'
+          }`}
+        >
+          竞价异动
+        </button>
+      </div>
+
+      {viewMode === 'auction' ? (
+        <AuctionAnomalyTab market="CN" onOpenDetail={openAuctionDetail} />
+      ) : (
+      <>
       {/* 通达信问小达投研精选(用户主动按板块查询,避免每次进页面自动消耗 tdx ask 配额) */}
             <div className="mb-4">
               <div className="flex items-center justify-between mb-2">
@@ -1383,6 +1422,8 @@ export default function OpportunitiesPage() {
           <FactorWeightsPanel />
         </div>
       </details>
+      </>
+      )}
 
       <StockInsightModal
         open={insightOpen}

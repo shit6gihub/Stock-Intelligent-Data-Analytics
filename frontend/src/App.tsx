@@ -20,6 +20,7 @@ const PaperTradingPage = lazy(() => import('@/pages/PaperTrading'))
 const LoginPage = lazy(() => import('@/pages/Login'))
 const ForecastPage = lazy(() => import('@/pages/Forecast'))
 const IndexDetailPage = lazy(() => import('@/pages/IndexDetail'))
+const BoardDetailPage = lazy(() => import('@/pages/BoardDetail'))
 const ShadowAccountPage = lazy(() => import('@/pages/ShadowAccount'))
 const NotificationsPage = lazy(() => import('@/pages/Notifications'))
 const ProfilePage = lazy(() => import('@/pages/Profile'))
@@ -413,6 +414,7 @@ function App() {
               <Route path="/opportunities" element={<PermGuard perm="view_opportunities" myPerms={myPerms}><OpportunitiesPage /></PermGuard>} />
               <Route path="/forecast" element={<PermGuard perm="view_forecast" myPerms={myPerms}><ForecastPage /></PermGuard>} />
               <Route path="/index/:symbol" element={<IndexDetailPage />} />
+              <Route path="/boards/:blockCode" element={<BoardDetailPage />} />
               <Route path="/portfolio" element={<PermGuard perm="edit_portfolio" myPerms={myPerms}><StocksPage /></PermGuard>} />
               <Route path="/stocks" element={<LegacyStocksRedirect />} />
               <Route path="/agents" element={<PermGuard perm="manage_agents" myPerms={myPerms}><AgentsPage /></PermGuard>} />

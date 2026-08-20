@@ -3,6 +3,7 @@ import { Bot, RefreshCw, ShieldAlert } from 'lucide-react'
 import { fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import OrderBookObBar from './OrderBookObBar'
+import MainFlowCompareCard from './MainFlowCompareCard'
 
 /**
  * 主力意图 + 内盘外盘 双卡片(2026-08-13)
@@ -255,6 +256,9 @@ export default function DarkFlowCards({ symbol, market }: { symbol: string; mark
 
       {/* ============ 卡片③: OB 盘口失衡条(2026-08-20) — 底部挂载 ============ */}
       <OrderBookObBar symbol={symbol} />
+
+      {/* ============ 卡片④: 主力意图双源对比(2026-08-20, v0.3.0) ============ */}
+      <MainFlowCompareCard symbol={symbol} />
     </div>
   )
 }
