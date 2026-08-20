@@ -93,6 +93,47 @@ Prometheus 抓取不再被限流(60/min)挡成 429。
 - `DragonTigerItem` dataclass 加 `top_buyers` / `top_sellers` 字段(可选, 默认 None)
 - 不破坏 v0.3.0 已上线端点(原字段保留, 新增字段向后兼容)
 
+## 2026-08-20
+
+### feature — thsdk 全能力落地 (v0.3.2)
+
+**thsdk_l2.py 扩展 (+404 行)**:
+- 新增 `_to_dataframe()` 静态转换器 (.df / .data list/dict → DataFrame)
+- 新增 `_WENCAI_CACHE` + 30s TTL 增强版问财缓存
+- 新增 7 个方法: get_corporate_action / get_dde / get_hs300_constituents /
+  get_market_data_cn_extended (主力净流入, 游客返0, 正式账户解锁) /
+  get_market_data_bond / get_market_data_fund / get_wencai_enhanced
+- 增强 3 个方法返 DataFrame: get_market_data_index / hk / us
+- `get_news` 支持按 symbol 过滤
+
+**API 端点 (14 个新端点)**:
+- `/api/thsdk/ext/*` (3 个, B 智能体落地):
+  - dde/{symbol} (DDE 主力资金, 同花顺官方)
+  - code/{code} (证券代码补齐, 支持批量)
+  - market/{market} (全市场代码表)
+- `/api/thsdk/*` (11 个, A 智能体落地):
+  - news / corporate_action / dde / hs300
+  - market_data_cn_extended / index / hk / us / bond / fund
+  - wencai_enhanced
+
+**对话助手 (CHAT_TOOLS) 新增 11 个工具** (C 智能体):
+- get_thsdk_news / corporate_action / dde / hs300_constituents
+- market_data_cn_extended / index / hk / us / bond / fund
+- wencai_enhanced
+- 每个工具返 `{available, data, note}`, 失败降级不 panic
+- SYSTEM_PROMPT 加 thsdk 数据源指引
+
+**测试 (40 个新用例全过)**:
+- tests/test_thsdk_ext.py (B): 11 用例
+- tests/test_thsdk_extended.py (A): 14 用例
+- tests/test_chat_thsdk_tools.py (C): 15 用例
+- 回归 738 passed, 6 known failures (与改动无关, network test)
+
+**游客账户限制**:
+- 主力净流入 / 指数 / 港股 端点返 0 行
+- 代码/路由已建好, 等正式同花顺账户解锁
+- 不破坏 v0.3.0 / v0.3.1 已上线功能 (K线 / 分时 / summary / wencai / 龙虎榜端点)
+
 ## 2026-08-18
 
 ### feat — AuditMiddleware 操作审计全覆盖 (v0.2.65.5)
