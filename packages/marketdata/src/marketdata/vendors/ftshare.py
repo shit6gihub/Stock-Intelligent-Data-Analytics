@@ -193,7 +193,21 @@ class FtshareDragonTigerVendor(DragonTigerVendor):
         # YYYY-MM-DD → YYYYMMDD
         compact = date.replace("-", "")
         client = _get_client(config)
-        rows = client.call_tool("ft_abnormal_trading_details", {"date": compact})
+        # 2026-08-20 修复: ftshare 只支持 page 参数(每页固定20条),
+        # 不支持 page_size/limit/size(传了就返0)。必须循环翻页,否则全市场
+        # 只返前 20 条, 神剑等"普通上榜"票在 page 2+ → 全部查不到 → "暂无"
+        all_rows: list = []
+        for page in range(1, 11):  # 上限10页(200条)防失控
+            rows = client.call_tool(
+                "ft_abnormal_trading_details",
+                {"date": compact, "page": page},
+            ) or []
+            if not rows:
+                break
+            all_rows.extend(rows)
+            if len(rows) < 20:
+                break  # 末页(默认20条/页)
+        rows = all_rows
         if not rows:
             return []
 
@@ -204,6 +218,14 @@ class FtshareDragonTigerVendor(DragonTigerVendor):
                 sellers = row.get("top_sellers") or []
                 buy_amt = sum(_to_float(b.get("buy")) or 0.0 for b in buyers if isinstance(b, dict))
                 sell_amt = sum(_to_float(s.get("sell")) or 0.0 for s in sellers if isinstance(s, dict))
+                # 2026-08-20: 填充席位明细, 字段标准化(ftshare 返回 buy/sell/net 是字符串元,转 float)
+                def _norm_seat(s):
+                        return {
+                            "name": str(s.get("name") or ""),
+                            "buy": _to_float(s.get("buy")) or 0.0,
+                            "sell": _to_float(s.get("sell")) or 0.0,
+                            "net": _to_float(s.get("net")) or 0.0,
+                        } if isinstance(s, dict) else {}
                 out.append(
                     DragonTigerItem(
                         trade_date=date,
@@ -216,6 +238,8 @@ class FtshareDragonTigerVendor(DragonTigerVendor):
                         buy_amt=buy_amt,
                         sell_amt=sell_amt,
                         turnover_pct=None,  # ftshare 的 turnover 是成交额(元),非换手率
+                        top_buyers=[_norm_seat(b) for b in buyers if isinstance(b, dict)],
+                        top_sellers=[_norm_seat(s) for s in sellers if isinstance(s, dict)],
                     )
                 )
             except Exception as e:

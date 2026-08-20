@@ -99,6 +99,9 @@ class EastmoneyDragonTigerVendor(DragonTigerVendor):
         date = (config or {}).get("date")
         if not date:
             return []
+        # 2026-08-20 修复: 端点传 "20260819" (YYYYMMDD), 东财 datacenter API 实际要 "2026-08-19" (YYYY-MM-DD)
+        if len(date) == 8:
+            date = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
         filter_str = f"(TRADE_DATE>='{date}')(TRADE_DATE<='{date}')"
         rows = _datacenter_get(_REPORT_DRAGON_TIGER, filter_str, "BILLBOARD_NET_AMT", page_size=500)
 

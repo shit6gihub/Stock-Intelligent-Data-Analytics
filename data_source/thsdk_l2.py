@@ -659,12 +659,20 @@ class THSDKL2:
             - "均线多头排列,MACD金叉,非ST"
             - "主力净流入由大到小排名前20,非ST"
             - "今日涨停,非ST,创业板"
+            - "神剑股份昨日龙虎榜买入卖出营业部" (2026-08-20 实测可用)
         :return: DataFrame,命中的股票列表
 
         注意:返回代码为 300033.SZ 格式,需转换为 USZA300033 再查行情
+
+        2026-08-20 修复: thsdk Response 没 .df 属性, 直接用 .data(原始 list[dict])
         """
         resp = self._query("wencai_nlp", query)
-        return resp.df if hasattr(resp, "df") else pd.DataFrame()
+        data = getattr(resp, "data", None)
+        if isinstance(data, list):
+            return pd.DataFrame(data)
+        if isinstance(data, dict):
+            return pd.DataFrame([data])
+        return pd.DataFrame()
 
     # ========================================================================
     # 第八类:高级分析(自实现)

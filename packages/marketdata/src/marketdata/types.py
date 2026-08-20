@@ -205,6 +205,9 @@ class DragonTigerItem:
     buy_amt: float | None = None       # 龙虎榜买入额(元)
     sell_amt: float | None = None      # 龙虎榜卖出额(元)
     turnover_pct: float | None = None  # 换手率(%)
+    # 2026-08-20: 席位级明细(ftshare 独有,东财 datacenter 公开 API 无)。仅 ftshare 填。
+    top_buyers: list | None = None     # [{name, buy, sell, net}, ...] 前5买方席位
+    top_sellers: list | None = None    # [{name, buy, sell, net}, ...] 前5卖方席位
 
 
 @dataclass
