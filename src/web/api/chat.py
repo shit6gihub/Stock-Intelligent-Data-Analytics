@@ -55,6 +55,7 @@ SYSTEM_PROMPT = """你是数智分析BOT,是 SIDA(Stock-Intelligent-Data-Analyti
 - 用户问「新闻 / 资讯 / 热点 / 今天有什么消息」类问题时，必须调用 get_market_news 工具获取实时资讯热榜与每日简报，再基于返回内容回答；严禁在不调用工具的情况下凭记忆编造新闻、题材或资金流向。若工具返回为空，如实说明「暂无实时资讯数据」并建议盘后重试。
 - 工具选择指引(2026-08-11): 用户问「主力意图/主力在吸筹还是派发/主力想干什么」时, 必须调用 get_main_intent(逐笔口径,含筹码/参与度);「资金流向/主力净流入多少/超大单大单」时调用 get_capital_flow(东财四档口径)。两工具口径不同, 主力意图判断一律以 get_main_intent 为准, get_capital_flow 仅作资金面参考; 若两者方向冲突, 说明口径差异(逐笔vs东财)并优先采信 get_main_intent。严禁用 get_capital_flow 的数据直接下「主力派发/吸筹」结论。
 - 口径标注规则(2026-08-13): 工具返回文本开头自带数据源口径标注(get_main_intent 为「腾讯逐笔·主力意图口径」, get_capital_flow 为「东财四档·资金流向口径」)。回答涉及「主力净流入/净流出」等具体数字时, 必须说明所用口径(逐笔 or 东财四档), 不得省略; 若两个口径数字不同, 要指出差异原因(统计方式不同: 逐笔主动买卖盘 vs 按大中小单四档归类), 再给结论。
+- thsdk 数据源指引(2026-08-20): thsdk 数据源包含 19 个同花顺独有接口, 游客账户可用 15 个(主力净流入/指数/港股返 0)。用户问个股新闻/公司行动/DDE/沪深300/可转债/基金/增强版问财时, 优先用 thsdk 工具(get_thsdk_news/get_thsdk_corporate_action/get_thsdk_dde/get_thsdk_hs300_constituents/get_thsdk_market_data_bond/get_thsdk_market_data_fund/get_wencai_enhanced 等)。thsdk 数据源不可用(工具返回 available=false 或提示数据源不可用)时, 如实告知并回退到其他数据源(东财/腾讯/通达信)。
 - 网页链接处理(2026-08-14): 用户发送网页链接(如 mp.weixin.qq.com 微信公众号文章、新闻/研报网页)或要求分析某链接内容时, 必须先调用 get_web_content 工具抓取链接正文, 再基于抓取内容回答; 严禁不抓取就凭空猜测或编造链接内容。若抓取失败(链接非法/超时/非网页/网络错误), 如实告知用户无法获取链接内容及原因, 不得伪造抓取结果。"""
 
 MAX_HISTORY_MESSAGES = 20
@@ -83,6 +84,17 @@ _TOOL_STAGE_LABELS = {
     "get_irm_qa": "正在查询互动易问答(巨潮官方回应)...",
     "get_market_anomalies": "正在获取异动股池(东财)...",
     "get_hot_stocks": "正在获取同花顺热榜...",
+    "get_thsdk_news": "正在查询同花顺个股新闻...",
+    "get_thsdk_corporate_action": "正在查询公司行动(分红/送转)...",
+    "get_thsdk_dde": "正在查询 DDE 大单动向...",
+    "get_thsdk_hs300_constituents": "正在获取沪深300成分股...",
+    "get_thsdk_market_data_cn_extended": "正在查询 A 股扩展行情(主力净流入)...",
+    "get_thsdk_market_data_index": "正在查询指数实时行情...",
+    "get_thsdk_market_data_hk": "正在查询港股实时行情...",
+    "get_thsdk_market_data_us": "正在查询美股实时行情...",
+    "get_thsdk_market_data_bond": "正在查询可转债行情...",
+    "get_thsdk_market_data_fund": "正在查询基金/ETF行情...",
+    "get_wencai_enhanced": "正在执行增强版问财检索...",
 }
 
 # 画像注入节流: profile_text 截断 + rules 只取前 N 条, 避免每次对话占过多 token
@@ -426,6 +438,74 @@ CHAT_TOOLS = [
         },
     },
 ]
+
+def _build_thsdk_chat_schemas() -> list:
+    """构建 thsdk 工具的 CHAT_TOOLS function schema 列表(延迟 import 避免循环依赖)。"""
+    from src.agents.chat.tools_thsdk import build_thsdk_tool_schemas
+    return build_thsdk_tool_schemas()
+
+
+# thsdk 工具名 → 集合(供 _execute_tool 路由判断)
+_THSDK_TOOL_NAMES_SET: frozenset = frozenset(
+    {
+        "get_thsdk_news",
+        "get_thsdk_corporate_action",
+        "get_thsdk_dde",
+        "get_thsdk_hs300_constituents",
+        "get_thsdk_market_data_cn_extended",
+        "get_thsdk_market_data_index",
+        "get_thsdk_market_data_hk",
+        "get_thsdk_market_data_us",
+        "get_thsdk_market_data_bond",
+        "get_thsdk_market_data_fund",
+        "get_wencai_enhanced",
+    }
+)
+
+
+async def _exec_thsdk_tool(name: str, args: dict) -> str:
+    """执行 thsdk 工具(选项 C, 2026-08-20)。
+
+    通过 tools_thsdk 间接调用 thsdk_l2, 工具函数内部已做降级(available=false),
+    不会抛异常到用户层。同步网络调用包 to_thread 防阻塞事件循环。
+    """
+    import asyncio
+
+    from src.agents.chat.tools_thsdk import (
+        THSDK_TOOL_HANDLERS,
+        format_thsdk_tool_result,
+    )
+
+    handler = THSDK_TOOL_HANDLERS.get(name)
+    if handler is None:
+        # 防御: 若 handler 未注册(新工具未同步 registry), 降级返回
+        return f"[thsdk] 工具 {name} 尚未注册实现。"
+    try:
+        result = await asyncio.to_thread(handler, **_filter_tool_args(handler, args))
+        return format_thsdk_tool_result(name, result)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("thsdk 工具执行失败 %s: %s", name, e)
+        return f"[thsdk] {name} 执行出错: {str(e)[:80]}"
+
+
+def _filter_tool_args(handler, args: dict) -> dict:
+    """按 handler 的可选参数过滤 args, 只传显式提供的参数, 避免 schema 与实现不一致。"""
+    import inspect
+
+    try:
+        sig = inspect.signature(handler)
+    except (TypeError, ValueError):
+        return dict(args or {})
+    allowed = {
+        p.name
+        for p in sig.parameters.values()
+        if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+    }
+    return {k: v for k, v in (args or {}).items() if k in allowed}
+
+
+# 注册 thsdk 11 个高价值工具到对话助手(2026-08-20,选项 C)
+CHAT_TOOLS.extend(_build_thsdk_chat_schemas())
 
 
 def _build_watchlist_context(db: Session) -> str:
@@ -1214,6 +1294,10 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
             import asyncio
             # 同步网络抓取放线程池, 不阻塞事件循环(与 2026-08-14 热修风格一致)
             return await asyncio.to_thread(get_web_content, url)
+        elif name in _THSDK_TOOL_NAMES_SET:
+            # thsdk 11 个高价值工具(2026-08-20, 选项 C): 通过 tools_thsdk 间接调用 thsdk_l2
+            result = await _exec_thsdk_tool(name, args)
+            return result
         else:
             return f"未知工具: {name}"
     except Exception as e:
