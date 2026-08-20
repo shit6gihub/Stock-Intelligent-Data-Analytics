@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from datetime import datetime
+import time as _time
 
 from pydantic import BaseModel, Field
 
@@ -7,6 +8,11 @@ from src.collectors.kline_collector import KlineCollector
 from src.models.market import MarketCode
 
 router = APIRouter()
+
+# 2026-08-20: summary 接口开盘后 20-30s(主力意图逐笔翻页), 与前端并发请求叠加
+# 撞 Caddy 30s 反代超时 → 502 Bad Gateway。加 30s 进程内缓存, 单次冷启动后秒回。
+_SUMMARY_CACHE: dict = {}
+_SUMMARY_TTL = 30.0
 
 
 class KlineItem(BaseModel):
@@ -256,8 +262,17 @@ def get_klines_batch(payload: KlineBatchRequest):
 
 @router.get("/{symbol}/summary")
 def get_kline_summary(symbol: str, market: str = "CN"):
-    """获取单只股票K线摘要"""
+    """获取单只股票K线摘要
+
+    2026-08-20: 加 30s 进程内缓存(主力意图+筹码逐笔翻页冷启动 ~20-30s 撞 502)。
+    盘中 30s 内同标的请求命中缓存, 直接秒回。
+    """
     market_code = _parse_market(market)
+    cache_key = f"summary:{market_code.value}:{symbol}"
+    now = _time.time()
+    cached = _SUMMARY_CACHE.get(cache_key)
+    if cached and (now - cached[0]) < _SUMMARY_TTL:
+        return cached[1]
     collector = KlineCollector(market_code)
     summary = collector.get_kline_summary(symbol)
     # 主力意图+筹码(2026-08-11): A股附加, 供前端个股窗口独立展示
@@ -280,13 +295,15 @@ def get_kline_summary(symbol: str, market: str = "CN"):
                 main_intent_structured = _main_intent_structured(symbol)
             except Exception:
                 main_intent_structured = None
-    return {
+    result = {
         "symbol": symbol,
         "market": market_code.value,
         "summary": summary,
         "main_intent": main_intent,
         "main_intent_structured": main_intent_structured,
     }
+    _SUMMARY_CACHE[cache_key] = (now, result)
+    return result
 
 
 @router.post("/summary/batch")

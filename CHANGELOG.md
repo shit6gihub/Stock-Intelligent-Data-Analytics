@@ -30,6 +30,10 @@ Prometheus 抓取不再被限流(60/min)挡成 429。
 (`/quotes/minute/{symbol}`) 修原 `?symbol=` 撞路由 404 的坑。K线 4 种粒度(分时/日K/周K/月K)
 实测均 < 4s 返回(冷启), 缓存命中 0.01s。
 
+**fix(summary): 502 Bad Gateway** — `/api/klines/{symbol}/summary` 开盘后冷启动 ~20-30s
+(主力意图+筹码逐笔翻页), 与前端其他请求叠加撞 Caddy 30s 反代超时 → 502。
+加 30s 进程内缓存, 单次冷启动后所有同标的请求直接秒回。
+
 ## 2026-08-18
 
 ### feat — AuditMiddleware 操作审计全覆盖 (v0.2.65.5)
