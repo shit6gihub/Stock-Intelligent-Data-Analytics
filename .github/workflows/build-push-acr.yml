@@ -23,7 +23,16 @@ jobs:
       - name: Read VERSION
         id: ver
         run: |
-          V=$(cat VERSION 2>/dev/null || echo "0.0.0")
+          # 2026-08-20 修复: 优先用 git ref (tag push 时 = "v0.3.2"), 避免 VERSION 文件滞后
+          # 导致 push 用错 tag (例如 tag=v0.3.2 但推 v0.3.0)。回退到 VERSION 文件兜底。
+          REF_NAME="${GITHUB_REF_NAME:-}"
+          if [[ "$REF_NAME" == refs/tags/v* ]]; then
+            V="${REF_NAME#refs/tags/}"
+          elif [[ "$REF_NAME" == v* ]]; then
+            V="$REF_NAME"
+          else
+            V=$(cat VERSION 2>/dev/null || echo "0.0.0")
+          fi
           echo "version=$V" >> $GITHUB_OUTPUT
 
       - name: Set up QEMU
