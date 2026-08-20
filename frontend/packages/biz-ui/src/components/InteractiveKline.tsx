@@ -256,9 +256,11 @@ export default function InteractiveKline(props: {
     setMinuteLoading(true)
     setMinuteError('')
     try {
+      // 2026-08-20: 分钟接口冷启动 ~15s(swings 全量逐笔翻页), 前端默认 20s 超时必中招。
+      // timeoutMs: 60000 给冷启动留足空间; 缓存命中后通常 0.01s, 不影响体验。
       const res = await fetchAPI<MinuteResponse>(
         `/quotes/minute/${encodeURIComponent(props.symbol)}?market=${encodeURIComponent(props.market)}`,
-        { cacheMode: 'reload' }  // 分时 30s 轮询需实时, 跳过前端缓存
+        { cacheMode: 'reload', timeoutMs: 60000 }  // 分时 30s 轮询需实时, 跳过前端缓存
       )
       setMinutePoints(res.points || [])
       setMinutePrevClose(res.prev_close ?? null)

@@ -36,7 +36,9 @@ export function MinuteDialog({ open, onOpenChange, symbol, market, stockName }: 
     if (!open) return
     setLoading(true)
     setError(null)
-    fetchAPI<MinuteResponse>(`/quotes/minute?symbol=${symbol}&market=${market}`)
+    // 2026-08-20: 原 `/quotes/minute?symbol=` 撞路由 `/{symbol}` 必 404。
+    // 改为路径式 + 加 60s 超时(分钟接口冷启动可能 15s)。
+    fetchAPI<MinuteResponse>(`/quotes/minute/${encodeURIComponent(symbol)}?market=${encodeURIComponent(market)}`, { timeoutMs: 60000 })
       .then((d) => setPoints(d.points || []))
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false))

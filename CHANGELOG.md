@@ -15,6 +15,21 @@ Prometheus 抓取不再被限流(60/min)挡成 429。
 
 **chore(watchdog)**: 生产 watchdog 改读 `/api/health` 的 database 组件(适配 PG 迁移,脚本本机不入仓)。
 
+### fix — K线/分时双修复 (v0.2.70)
+
+**fix(kline): K线接口 20→24s 串联阻塞** — `data_sources` 表中 `eastmoney.kline`(priority=15)
+和 `stooq.kline`(priority=20) 在海外节点反复 502, 触发 5 源串联降级链(tencent→zhitu→ths→yahoo→eastmoney)。
+20 并发同接口 = 全部 24s 等价堵塞。
+应急 DB 修复: `UPDATE data_sources SET enabled=0 WHERE type='kline' AND provider IN ('eastmoney','stooq'); UPDATE ... SET priority=3 WHERE provider='ths'`。
+效果: 冷启 5.3s → 0.29s, 20 并发 24s → 0.22s(恢复 110x)。
+**根因待修**: marketdata Engine 按 priority 顺次试源无 per-vendor 超时护栏, 需补超时+并行。
+
+**fix(minute): 分时接口 30s 轮询撞前端 20s 超时** — `analyze_swings` 全量逐笔翻页冷启动 ~15s,
+前端默认 20s 超时必中招。后端 `_MINUTE_TTL` 15s → 60s、`_TICKS_TTL` 30s → 90s, 保证 30s 轮询始终命中缓存。
+前端 `InteractiveKline.loadMinute` / `MinuteDialog` 加 `timeoutMs: 60000`, `MinuteDialog` 路径式请求
+(`/quotes/minute/{symbol}`) 修原 `?symbol=` 撞路由 404 的坑。K线 4 种粒度(分时/日K/周K/月K)
+实测均 < 4s 返回(冷启), 缓存命中 0.01s。
+
 ## 2026-08-18
 
 ### feat — AuditMiddleware 操作审计全覆盖 (v0.2.65.5)

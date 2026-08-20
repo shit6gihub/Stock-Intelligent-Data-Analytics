@@ -73,7 +73,9 @@ def _tencent_code(symbol: Symbol) -> str | None:
 # 2026-08-12 增量续拉: 缓存记录"拉到的页码+末条序号", 过期后只从上次页码往后拉新增页
 # (9:35 拉 19 页 → 9:50 只拉 19 页之后), 序号断裂(盘中数据重置)才全量重拉。
 _TICKS_CACHE: dict[str, tuple[float, list[dict], int, int, str]] = {}
-_TICKS_TTL = 30.0
+# 2026-08-20 修复: 分钟接口冷启动 ~15s(swings 需翻页拉全量逐笔)。前 _TICKS_TTL=30s
+# 配合前端 30s 轮询, 几乎每次都冷启动。改为 90s TTL, 保证连续轮询命中缓存。
+_TICKS_TTL = 90.0
 
 
 def _cache_day() -> str:

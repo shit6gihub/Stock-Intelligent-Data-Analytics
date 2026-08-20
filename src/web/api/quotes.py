@@ -215,7 +215,9 @@ async def get_company_info(symbol: str, market: str = "CN"):
 
 # ── 分时走势(腾讯实时, 盘中) ─────────────────────────────────────────────
 _MINUTE_CACHE: dict = {}  # {symbol_market: (ts, points)}
-_MINUTE_TTL = 15.0  # 分时变动快, 短缓存
+# 2026-08-20 修复: 前端 30s 轮询 + 分钟接口冷启动 ~15s(swings 计算) → 必撞前端 20s 超时。
+# 改为 60s TTL 让轮询始终命中缓存。盘中分钟变化微, 60s 仍实时够用。
+_MINUTE_TTL = 60.0
 
 
 def _tencent_minute(symbol: str, market: str) -> tuple[list[dict] | None, float | None]:
