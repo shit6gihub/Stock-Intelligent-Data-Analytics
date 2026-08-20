@@ -39,7 +39,7 @@ RATE_LIMIT_BURST = _env_int("RATE_LIMIT_BURST", 10)  # 突发容忍 10 个
 
 # 例外路径 (跳过限流和日志)
 EXEMPT_PATHS = {
-    "/health", "/metrics", "/api/health", "/favicon.ico",
+    "/health", "/metrics", "/api/health", "/api/metrics", "/favicon.ico",
 }
 
 

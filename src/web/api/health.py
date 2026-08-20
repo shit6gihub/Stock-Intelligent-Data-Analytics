@@ -150,7 +150,18 @@ async def health() -> dict[str, Any]:
             sched = getattr(srv_mod, attr_name, None)
             if sched is not None:
                 name = attr_name.replace("_scheduler", "")
-                running = sched.running if hasattr(sched, "running") else False
+                # 存活判定优先用内部 APScheduler 实例的 .running(真·运行状态)。
+                # 注意: 封装类的 _running 是 job 重入锁(扫描开始置 True、结束置 False,
+                # 平时恒为 False),不能作为调度器存活依据。
+                inner = getattr(sched, "scheduler", None)
+                if inner is not None and hasattr(inner, "running"):
+                    running = bool(inner.running)
+                elif hasattr(sched, "running"):
+                    running = bool(sched.running)
+                elif hasattr(sched, "_running"):
+                    running = bool(sched._running)
+                else:
+                    running = False
                 schedulers.append(name)
                 if running:
                     schedulers_status["running"] += 1

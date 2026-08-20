@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-08-20
+
+### fix — 生产热修补丁合入源码 (v0.2.69.0)
+
+**fix(health): 调度器存活误判修复** — 健康检查不再用封装类的 `_running`(实为 job 重入锁,平时恒 False),
+改为优先探测内部 APScheduler 实例的 `.running`(真·运行状态)。
+修复前: `/api/health` 误报 scheduler: degraded / shutdown=5(实际 5 个调度器正常);
+修复后: `scheduler: {status: ok, running: 5, shutdown: 0}`。
+
+**fix(ratelimit): `/api/metrics` 加入限流豁免** — `EXEMPT_PATHS` 补上 `/api/metrics`,
+Prometheus 抓取不再被限流(60/min)挡成 429。
+修复前: 1 小时 240 次 429, target=down; 修复后: 连打 70 次全 200。
+
+**chore(watchdog)**: 生产 watchdog 改读 `/api/health` 的 database 组件(适配 PG 迁移,脚本本机不入仓)。
+
 ## 2026-08-18
 
 ### feat — AuditMiddleware 操作审计全覆盖 (v0.2.65.5)
