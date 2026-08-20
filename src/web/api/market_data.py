@@ -29,20 +29,32 @@ async def dragon_tiger_proxy(
     trade_date: str,
     market: str = Query("CN", description="市场"),
 ):
-    """龙虎榜(经 marketdata dragon_tiger vendor, 实际用 ftshare)。
+    """龙虎榜(经 marketdata dragon_tiger vendor, 主源东财 + ftshare 补席位)。
 
     trade_date: YYYYMMDD
     key 来自「设置→接口Key」配置的 data_sources(type=dragon_tiger), 实时生效。
+
+    2026-08-20: 东财 datacenter 有汇总(净买/原因/上榜明细)无席位, ftshare 有席位
+    但需全市场翻页。合并:东财做主, ftshare 补同 symbol 行的席位字段。
     """
     try:
         from src.core.marketdata_client import get_market_data
         md = get_market_data()
-        rows = md.dragon_tiger(date=trade_date, market=market)
-        return {
-            "trade_date": trade_date,
-            "market": market,
-            "count": len(rows) if rows else 0,
-            "items": [
+        rows = md.dragon_tiger(date=trade_date, market=market) or []
+
+        # 补席位: 直接调 ftshare vendor(Engine 跳过 enabled=0, 走旁路)
+        try:
+            from marketdata.vendors.ftshare import FtshareDragonTigerVendor
+            _ft = FtshareDragonTigerVendor()
+            ft_rows = _ft.fetch([], {"date": trade_date, "market": market}) or []
+            ft_by_sym = {r.symbol: r for r in ft_rows if r.symbol}
+        except Exception:
+            ft_by_sym = {}
+
+        items = []
+        for i in rows:
+            ft = ft_by_sym.get(i.symbol)
+            items.append(
                 {
                     "trade_date": getattr(i, "trade_date", trade_date),
                     "symbol": getattr(i, "symbol", ""),
@@ -53,9 +65,15 @@ async def dragon_tiger_proxy(
                     "buy_amt": getattr(i, "buy_amt", None),
                     "sell_amt": getattr(i, "sell_amt", None),
                     "reason": getattr(i, "reason", None),
+                    "top_buyers": list(getattr(ft, "top_buyers", []) or []) if ft else [],
+                    "top_sellers": list(getattr(ft, "top_sellers", []) or []) if ft else [],
                 }
-                for i in (rows or [])
-            ],
+            )
+        return {
+            "trade_date": trade_date,
+            "market": market,
+            "count": len(items),
+            "items": items,
         }
     except Exception as e:
         logger.warning(f"龙虎榜代理失败 [{trade_date}]: {e}")
@@ -220,6 +238,12 @@ def fetch_fundamentals_detail(symbol: str, market: str = "CN", dt_days: int = 10
     }
 
     # 1) 龙虎榜(市场级按日, 回溯 dt_days 天按 symbol 过滤; 引擎内存缓存, 重复日期不重复抓)
+    # 2026-08-20: 同时拉 ftshare 补席位明细(东财 datacenter 不公开席位)
+    try:
+        from marketdata.vendors.ftshare import FtshareDragonTigerVendor
+        _ft = FtshareDragonTigerVendor()
+    except Exception:
+        _ft = None
     scanned = max(1, min(int(dt_days), 30))
     d = date.today()
     for _ in range(scanned):
@@ -230,9 +254,18 @@ def fetch_fundamentals_detail(symbol: str, market: str = "CN", dt_days: int = 10
         except Exception as e:
             logger.warning(f"基本面明细-龙虎榜[{ds}]查询失败(跳过): {e}")
             continue
+        # ftshare 旁路补席位(只在该日期有上榜记录时调, 避免空查)
+        ft_by_sym: dict = {}
+        if _ft and rows:
+            try:
+                ft_rows = _ft.fetch([], {"date": ds, "market": market}) or []
+                ft_by_sym = {r.symbol: r for r in ft_rows if r.symbol}
+            except Exception:
+                pass
         for i in rows:
             if getattr(i, "symbol", "") != symbol:
                 continue
+            ft = ft_by_sym.get(symbol)
             out["dragon_tiger"].append(
                 {
                     "trade_date": getattr(i, "trade_date", ds),
@@ -245,6 +278,8 @@ def fetch_fundamentals_detail(symbol: str, market: str = "CN", dt_days: int = 10
                     "buy_amt": getattr(i, "buy_amt", None),
                     "sell_amt": getattr(i, "sell_amt", None),
                     "turnover_pct": getattr(i, "turnover_pct", None),
+                    "top_buyers": list(getattr(ft, "top_buyers", []) or []) if ft else [],
+                    "top_sellers": list(getattr(ft, "top_sellers", []) or []) if ft else [],
                 }
             )
     # 龙虎榜按交易日倒序(新→旧)
