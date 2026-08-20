@@ -88,8 +88,9 @@ import os
 os.environ.setdefault("PYTHONUTF8", "1")
 
 import logging
+import math
 import time
-from typing import Optional, Tuple, List, Dict, Any
+from typing import Optional, Tuple, List, Dict, Any, Union
 
 import pandas as pd
 
@@ -105,6 +106,12 @@ logger = logging.getLogger(__name__)
 
 # 无效数据常量(thsdk 用 uint32 上限表示无效)
 THS_INVALID_UINT32 = 4294967295
+
+# DDE 大单资金流 datatype(2026-08-20 实测, 见 SDK examples/dde.py)
+# 汇总裁定:主力净流入/主力净量/总金额 等
+DDE_DATATYPE_SUMMARY = "6,7,8,9,10,13,19,592888,592890"
+# 分档明细:在汇总基础上追加 主动/被动 × 特大单/大单 × 买入/卖出 金额
+DDE_DATATYPE_DETAIL = "6,7,8,9,10,13,19,223,224,225,226,227,228,229,230"
 
 # 限频保护(实测:游客模式 50ms 不触发封号,正式账户可能更严)
 # 保护策略:
@@ -127,6 +134,10 @@ FAILURE_THRESHOLD = 10  # 60 秒内连续失败 10 次,触发熔断
 FAILURE_WINDOW_SEC = 60
 _circuit_open = False
 _circuit_open_until = 0
+
+# 问财增强版缓存(30s 进程内,避免重复拉 thsdk)
+_WENCAI_CACHE: Dict[str, Tuple[float, pd.DataFrame]] = {}
+_WENCAI_TTL = 30.0
 
 # 默认游客模式提示
 GUEST_MODE_WARNING = """
@@ -313,6 +324,31 @@ class THSDKL2:
             df["金额_万元"] = df[col].astype(float) / 1e4
         return df
 
+    @staticmethod
+    def _to_dataframe(resp) -> pd.DataFrame:
+        """
+        thsdk Response → DataFrame 统一转换。
+
+        thsdk 返回对象形态多样:
+        - 带 `.df` 属性(如 klines / intraday) → 直接返回
+        - 带 `.data` 且为 list[dict](如 news / corporate_action / dde) → DataFrame(list)
+        - 带 `.data` 且为 dict(单行,如 hs300 单条) → DataFrame([dict])
+        - 空 / None → 空 DataFrame
+
+        :param resp: thsdk 查询返回的 Response 对象
+        :return: 转换后的 DataFrame
+        """
+        if resp is None:
+            return pd.DataFrame()
+        if hasattr(resp, "df") and resp.df is not None:
+            return resp.df
+        data = getattr(resp, "data", None)
+        if isinstance(data, list):
+            return pd.DataFrame(data) if data else pd.DataFrame()
+        if isinstance(data, dict):
+            return pd.DataFrame([data])
+        return pd.DataFrame()
+
     # ========================================================================
     # 第一类:代码解析 & 基础信息
     # ========================================================================
@@ -360,44 +396,43 @@ class THSDKL2:
             return resp.data[0] if isinstance(resp.data, list) else resp.data
         return {}
 
-    def get_market_data_index(self, symbol: str = "USHI000001") -> dict:
+    def get_market_data_index(self, symbol: str = "USHI000001") -> pd.DataFrame:
         """
         指数行情(上证综指 / 深证成指 等)
 
         :param symbol: 指数代码(USHI000001 上证 / USZI399001 深证)
-        :return: dict,含最新点位、涨跌幅、成交额等
+        :return: DataFrame,含最新点位、涨跌幅、成交额等
+        注意:游客账户返回 0 行,需正式账户
         """
         resp = self._query("market_data_index", symbol)
-        if hasattr(resp, "data") and resp.data:
-            return resp.data[0] if isinstance(resp.data, list) else resp.data
-        return {}
+        return self._to_dataframe(resp)
 
-    def get_market_data_hk(self, symbol: str = "UHKG00700", extended: str = "基础数据") -> dict:
+    def get_market_data_hk(
+        self, symbol: str = "UHKG00700", extended: str = "基础数据"
+    ) -> pd.DataFrame:
         """
         港股行情(腾讯 00700 等)
 
         :param symbol: 港股代码(UHKG00700 腾讯)
         :param extended: 档位名称(基础数据/扩展1/扩展2)
-        :return: dict
+        :return: DataFrame,含最新价、涨跌幅等
         注意:游客账户返回 0 行,需正式账户
         """
         resp = self._query("market_data_hk", symbol, extended)
-        if hasattr(resp, "data") and resp.data:
-            return resp.data[0] if isinstance(resp.data, list) else resp.data
-        return {}
+        return self._to_dataframe(resp)
 
-    def get_market_data_us(self, symbol: str = "UNQQAAPL", extended: str = "基础数据") -> dict:
+    def get_market_data_us(
+        self, symbol: str = "UNQQAAPL", extended: str = "基础数据"
+    ) -> pd.DataFrame:
         """
         美股行情(苹果 AAPL 等)
 
         :param symbol: 美股代码(UNQQAAPL 苹果)
         :param extended: 档位名称
-        :return: dict
+        :return: DataFrame,含最新价、涨跌幅等
         """
         resp = self._query("market_data_us", symbol, extended)
-        if hasattr(resp, "data") and resp.data:
-            return resp.data[0] if isinstance(resp.data, list) else resp.data
-        return {}
+        return self._to_dataframe(resp)
 
     # ========================================================================
     # 第三类:K 线 / 分时
@@ -624,14 +659,22 @@ class THSDKL2:
     # 第七类:资讯 / IPO / 问财
     # ========================================================================
 
-    def get_news(self) -> pd.DataFrame:
+    def get_news(
+        self, symbol: Optional[str] = None, text_id: int = 0x3814
+    ) -> pd.DataFrame:
         """
         实时财经资讯(约 20 条/次)
 
+        :param symbol: thsdk 股票代码(如 USZA002361)。传 None 拉全局财经资讯;
+            传代码则按该标的拉个股新闻。
+        :param text_id: 资讯频道 ID(默认 0x3814 个股新闻频道)。
         :return: DataFrame,含新闻标题、时间、来源、链接等
         """
-        resp = self._query("news")
-        return resp.df if hasattr(resp, "df") else pd.DataFrame()
+        if symbol:
+            resp = self._query("news", symbol, text_id)
+        else:
+            resp = self._query("news")
+        return self._to_dataframe(resp)
 
     def get_ipo_today(self) -> pd.DataFrame:
         """
@@ -673,6 +716,99 @@ class THSDKL2:
         if isinstance(data, dict):
             return pd.DataFrame([data])
         return pd.DataFrame()
+
+    # ========================================================================
+    # 第七点五类:高价值待接能力落地(v0.3.1 目标 A)
+    # 依赖 thsdk 1.7.18 examples: news / corporate_action / dde / hs300 /
+    #   market_data_cn(扩展1) / market_data_index / market_data_hk / market_data_us /
+    #   market_data_bond / market_data_fund / wencai_nlp(增强)
+    # 注意:market_data_cn(扩展1)/index/hk 对游客账户返 0 行,代码/路由建好等正式账户解锁
+    # ========================================================================
+
+    def get_corporate_action(self, symbol: str = "USZA002361") -> pd.DataFrame:
+        """
+        公司行动(分红/送转/配股等)
+
+        :param symbol: thsdk 股票代码(USZA 深 A / USHA 沪 A)
+        :return: DataFrame,含分红、送转、配股等公司行动记录
+        """
+        resp = self._query("corporate_action", symbol)
+        return self._to_dataframe(resp)
+
+    def get_dde(self, symbol: str = "USZA002361") -> pd.DataFrame:
+        """
+        DDE 大单动向(同花顺 Level-2 DDE 指标)
+
+        :param symbol: thsdk 股票代码
+        :return: DataFrame,含 DDE 大单净量、DDX/DDY/DDZ 等大单动向指标
+        """
+        resp = self._query("dde", symbol)
+        return self._to_dataframe(resp)
+
+    def get_hs300_constituents(self) -> pd.DataFrame:
+        """
+        沪深 300 成分股列表
+
+        :return: DataFrame,沪深 300 全部成分股代码 + 名称
+        """
+        resp = self._query("hs300")
+        return self._to_dataframe(resp)
+
+    def get_market_data_cn_extended(
+        self, symbol: str = "USZA002361", extended: str = "扩展1"
+    ) -> pd.DataFrame:
+        """
+        A 股行情 - 扩展档(含**主力净流入**)
+
+        :param symbol: thsdk 股票代码
+        :param extended: 档位名称:
+            - "基础数据": 最新价/成交量等(与 get_market_data_cn 同源)
+            - "扩展1": 含**主力净流入**(正式账户才解锁,游客返 0 行)
+        :return: DataFrame,含主力净流入等扩展字段
+        """
+        resp = self._query("market_data_cn", symbol, extended)
+        return self._to_dataframe(resp)
+
+    def get_market_data_bond(self, symbol: str = "USBK113550") -> pd.DataFrame:
+        """
+        可转债行情
+
+        :param symbol: 可转债 thsdk 代码(前缀 USBK,如 113550)
+        :return: DataFrame,含最新价、涨跌幅等可转债行情
+        """
+        resp = self._query("market_data_bond", symbol)
+        return self._to_dataframe(resp)
+
+    def get_market_data_fund(self, symbol: str = "USZF510300") -> pd.DataFrame:
+        """
+        基金 / ETF 行情
+
+        :param symbol: 基金/ETF thsdk 代码(前缀 USZF,如 510300 沪深300ETF)
+        :return: DataFrame,含最新价、涨跌幅等基金行情
+        """
+        resp = self._query("market_data_fund", symbol)
+        return self._to_dataframe(resp)
+
+    def get_wencai_enhanced(self, query: str, use_cache: bool = True) -> pd.DataFrame:
+        """
+        问财 NLP 增强版(带 30s 进程内缓存)
+
+        :param query: 自然语言查询条件(与 get_wencai_nlp 同源)
+        :param use_cache: 是否启用 30s 缓存(默认 True,同 query 30s 内不重复拉 thsdk)
+        :return: DataFrame,命中的股票列表
+        """
+        global _WENCAI_CACHE
+        q = (query or "").strip()
+        if use_cache:
+            now = time.time()
+            cached = _WENCAI_CACHE.get(q)
+            if cached and (now - cached[0]) < _WENCAI_TTL:
+                logger.debug(f"[wencai-enhanced] 缓存命中 query={q!r}")
+                return cached[1]
+        df = self._to_dataframe(self._query("wencai_nlp", q))
+        if use_cache:
+            _WENCAI_CACHE[q] = (time.time(), df)
+        return df
 
     # ========================================================================
     # 第八类:高级分析(自实现)
@@ -780,6 +916,164 @@ class THSDKL2:
             "main_flow": self.compute_main_flow(symbol),
         }
 
+    # ========================================================================
+    # 第九类:DDE 主力资金 + 代码补齐 + 市场代码表(v0.3.1 选项B 新增)
+    # ========================================================================
+
+    @staticmethod
+    def _to_float(value: Any) -> Optional[float]:
+        """将 thsdk 数值安全转为 float,无效/NaN 返回 None(便于 JSON 序列化)。"""
+        try:
+            f = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(f):
+            return None
+        return f
+
+    @staticmethod
+    def _amount_cols_to_wan(df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
+        """把指定【元】金额列复制为新列 <col>_万元。"""
+        if df is None or len(df) == 0:
+            return df
+        df = df.copy()
+        for c in cols:
+            if c in df.columns:
+                df[f"{c}_万元"] = df[c].astype(float) / 1e4
+        return df
+
+    def get_dde_flow(
+        self,
+        codelist: str,
+        market: str = "USHA",
+        detail: bool = False,
+    ) -> pd.DataFrame:
+        """
+        同花顺 DDE 大单资金流向(官方主力资金)
+
+        底层走 `query_data`(thsdk 未封装为类方法, 见 SDK examples/dde.py)。
+        实测字段(2026-08-20 神剑/茅台/平安):
+        - summary(detail=False): 价格, 成交量, 总金额, 代码, 主力净量, 主力净流入,
+          昨收价, 开盘价, 最高价, 最低价
+        - detail(detail=True): 追加 主动/被动 × 特大单/大单 × 买入/卖出 金额
+          (主动买入特大单金额, 主动卖出特大单金额, 主动买入大单金额, 主动卖出大单金额,
+           被动买入特大单金额, 被动卖出特大单金额, 被动买入大单金额, 被动卖出大单金额)
+
+        :param codelist: 同市场 6 位代码, 逗号分隔(如 "600519,601318"); 传 THS 代码自动剥前缀
+        :param market: 市场前缀(USHA/USZA/USTM...), codelist 需同属该市场
+        :param detail: True 返回分档明细, False 返回汇总(含 主力净流入/主力净量)
+        :return: DataFrame
+        """
+        codes = [c.strip() for c in codelist.split(",") if c.strip()]
+        # 兼容 THS 代码(USHA600519 → 600519)
+        if codes and codes[0][:4] in ("USHA", "USZA", "USTM", "UNQQ", "UHKG"):
+            codes = [c[4:] for c in codes]
+        datatype = DDE_DATATYPE_DETAIL if detail else DDE_DATATYPE_SUMMARY
+        params = {
+            "id": 200,
+            "codelist": ",".join(codes),
+            "market": market,
+            "datatype": datatype,
+            "service": "zhu",
+        }
+        resp = self._query("query_data", params)
+        df = resp.df if hasattr(resp, "df") else pd.DataFrame()
+        if len(df) == 0:
+            return df
+        amount_cols = [
+            "总金额",
+            "主力净流入",
+            "主动买入特大单金额", "主动卖出特大单金额",
+            "主动买入大单金额", "主动卖出大单金额",
+            "被动买入特大单金额", "被动卖出特大单金额",
+            "被动买入大单金额", "被动卖出大单金额",
+        ]
+        df = self._amount_cols_to_wan(df, amount_cols)
+        return df
+
+    def get_main_flow_official(self, symbol: str) -> Dict[str, Any]:
+        """
+        单只股票 同花顺官方主力资金(汇总 + 分档明细)
+
+        :param symbol: 6 位 A 股代码或 THS 代码
+        :return: dict:
+            {
+                'symbol', 'ths_code', 'price',
+                'total_amount_wan',      # 总成交额(万元)
+                'main_net_amount_wan',   # 主力净流入(万元), 同花顺官方口径
+                'main_net_ratio',        # 主力净量(占比)
+                'summary': {...},        # 汇总行
+                'detail': {...},         # 特大单/大单 主动/被动 明细
+            }
+        """
+        codes = self.complete_ths_code(symbol)
+        if not codes:
+            return {"symbol": symbol, "error": "no_code"}
+        ths_code = codes[0]
+        market = ths_code[:4]
+        six = ths_code[4:]
+
+        summary = self.get_dde_flow(six, market=market, detail=False)
+        detail = self.get_dde_flow(six, market=market, detail=True)
+        row = summary.iloc[0].to_dict() if len(summary) else {}
+        prow = detail.iloc[0].to_dict() if len(detail) else {}
+
+        total_wan = self._to_float(row.get("总金额"))
+        main_net_wan = self._to_float(row.get("主力净流入"))
+
+        return {
+            "symbol": symbol,
+            "ths_code": ths_code,
+            "price": self._to_float(row.get("价格")),
+            "total_amount_wan": total_wan / 1e4 if total_wan is not None else None,
+            "main_net_amount_wan": main_net_wan / 1e4 if main_net_wan is not None else None,
+            "main_net_ratio": self._to_float(row.get("主力净量")),
+            "summary": row,
+            "detail": prow,
+        }
+
+    def complete_ths_code(self, codes: Union[str, List[str]]) -> List[str]:
+        """
+        补齐任意证券代码为标准 THS 代码(A/HK/US 等)
+
+        实测(2026-08-20):
+        - complete_ths_code('002361') → ['USZA002361']
+        - complete_ths_code(['300033','600519','TSLA']) → ['USZA300033','USHA600519','UNQQTSLA']
+        ⚠️ 指数代码(如 '1A0001')不返回, 需自行处理
+
+        :param codes: 单个代码(字符串) 或 代码列表
+        :return: 补齐后的 THS 代码列表
+        """
+        resp = self._query("complete_ths_code", codes)
+        df = resp.df if hasattr(resp, "df") else pd.DataFrame()
+        if len(df) and "代码" in df.columns:
+            return df["代码"].astype(str).tolist()
+        data = getattr(resp, "data", None)
+        if isinstance(data, list):
+            return [d.get("代码", "") for d in data if isinstance(d, dict)]
+        return []
+
+    def get_market_codes(self, market: str = "USHA") -> pd.DataFrame:
+        """
+        市场代码全量列表(代码 + 名称)
+
+        实测(2026-08-20): USHA 2235 行 / USZA 2901 行, 列 ['代码','名称']
+        :param market: 市场前缀(USHA 沪 / USZA 深 / USTM 北 / UNQS 美股纳指等)
+        :return: DataFrame, 列 ['代码','名称']
+        """
+        resp = self._query("market_block", market)
+        return resp.df if hasattr(resp, "df") else pd.DataFrame()
+
+    def get_stock_cn_lists(self) -> pd.DataFrame:
+        """
+        A 股全市场代码列表(5220 行)
+
+        实测(2026-08-20): 列 ['代码','名称']
+        :return: DataFrame
+        """
+        resp = self._query("stock_cn_lists")
+        return resp.df if hasattr(resp, "df") else pd.DataFrame()
+
 
 # ========================================================================
 # 便捷函数(函数式 API)
@@ -810,15 +1104,15 @@ def get_market_data_cn(symbol: str, extended: str = "基础数据") -> dict:
     return _get_default_client().get_market_data_cn(symbol, extended)
 
 
-def get_market_data_index(symbol: str = "USHI000001") -> dict:
+def get_market_data_index(symbol: str = "USHI000001") -> pd.DataFrame:
     return _get_default_client().get_market_data_index(symbol)
 
 
-def get_market_data_hk(symbol: str = "UHKG00700", extended: str = "基础数据") -> dict:
+def get_market_data_hk(symbol: str = "UHKG00700", extended: str = "基础数据") -> pd.DataFrame:
     return _get_default_client().get_market_data_hk(symbol, extended)
 
 
-def get_market_data_us(symbol: str = "UNQQAAPL", extended: str = "基础数据") -> dict:
+def get_market_data_us(symbol: str = "UNQQAAPL", extended: str = "基础数据") -> pd.DataFrame:
     return _get_default_client().get_market_data_us(symbol, extended)
 
 
@@ -884,8 +1178,8 @@ def get_block_constituents(block_code: str = "URFI883404") -> pd.DataFrame:
 
 
 # 第七类:资讯 / IPO / 问财
-def get_news() -> pd.DataFrame:
-    return _get_default_client().get_news()
+def get_news(symbol: Optional[str] = None, text_id: int = 0x3814) -> pd.DataFrame:
+    return _get_default_client().get_news(symbol, text_id)
 
 
 def get_ipo_today() -> pd.DataFrame:
@@ -900,6 +1194,37 @@ def get_wencai_nlp(query: str = "均线多头排列,MACD金叉,非ST") -> pd.Dat
     return _get_default_client().get_wencai_nlp(query)
 
 
+# 第七点五类:高价值待接能力(v0.3.1 目标 A)
+def get_corporate_action(symbol: str = "USZA002361") -> pd.DataFrame:
+    return _get_default_client().get_corporate_action(symbol)
+
+
+def get_dde(symbol: str = "USZA002361") -> pd.DataFrame:
+    return _get_default_client().get_dde(symbol)
+
+
+def get_hs300_constituents() -> pd.DataFrame:
+    return _get_default_client().get_hs300_constituents()
+
+
+def get_market_data_cn_extended(
+    symbol: str = "USZA002361", extended: str = "扩展1"
+) -> pd.DataFrame:
+    return _get_default_client().get_market_data_cn_extended(symbol, extended)
+
+
+def get_market_data_bond(symbol: str = "USBK113550") -> pd.DataFrame:
+    return _get_default_client().get_market_data_bond(symbol)
+
+
+def get_market_data_fund(symbol: str = "USZF510300") -> pd.DataFrame:
+    return _get_default_client().get_market_data_fund(symbol)
+
+
+def get_wencai_enhanced(query: str, use_cache: bool = True) -> pd.DataFrame:
+    return _get_default_client().get_wencai_enhanced(query, use_cache)
+
+
 # 第八类:高级分析
 def compute_main_flow(symbol: str, amount_threshold_yuan: float = 1_000_000.0) -> dict:
     return _get_default_client().compute_main_flow(symbol, amount_threshold_yuan)
@@ -907,6 +1232,27 @@ def compute_main_flow(symbol: str, amount_threshold_yuan: float = 1_000_000.0) -
 
 def get_comprehensive_snapshot(symbol: str) -> dict:
     return _get_default_client().get_comprehensive_snapshot(symbol)
+
+
+# 第九类:DDE 主力资金 + 代码补齐 + 市场代码表
+def get_dde_flow(codelist: str, market: str = "USHA", detail: bool = False) -> pd.DataFrame:
+    return _get_default_client().get_dde_flow(codelist, market, detail)
+
+
+def get_main_flow_official(symbol: str) -> dict:
+    return _get_default_client().get_main_flow_official(symbol)
+
+
+def complete_ths_code(codes) -> list:
+    return _get_default_client().complete_ths_code(codes)
+
+
+def get_market_codes(market: str = "USHA") -> pd.DataFrame:
+    return _get_default_client().get_market_codes(market)
+
+
+def get_stock_cn_lists() -> pd.DataFrame:
+    return _get_default_client().get_stock_cn_lists()
 
 
 # ========================================================================
@@ -1009,19 +1355,15 @@ if __name__ == "__main__":
 
     print(f"\n【第二类】指数行情(上证综指)")
     idx = l2.get_market_data_index("USHI000001")
-    for k in ["最新价", "涨跌幅"]:
-        if k in idx:
-            print(f"  {k}: {idx[k]}")
+    print(f"  返回: {len(idx)} 行" + (f"\n{idx.head(2)}" if len(idx) else " (游客受限)"))
 
     print(f"\n【第二类】港股(腾讯 00700)")
     hk = l2.get_market_data_hk("UHKG00700", "基础数据")
-    print(f"  返回: {hk if hk else '(游客受限)'}")
+    print(f"  返回: {len(hk)} 行" + (f"\n{hk.head(2)}" if len(hk) else " (游客受限)"))
 
     print(f"\n【第二类】美股(苹果 AAPL)")
     us = l2.get_market_data_us("UNQQAAPL", "基础数据")
-    for k in ["最新价", "涨跌幅"]:
-        if k in us:
-            print(f"  {k}: {us[k]}")
+    print(f"  返回: {len(us)} 行" + (f"\n{us.head(2)}" if len(us) else " (游客受限)"))
 
     print(f"\n【第三类】K 线 / 分时")
     try:

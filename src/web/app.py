@@ -57,6 +57,8 @@ from src.web.api import health as health_router
 from src.web.api import insights
 from src.web.api import wechat_bind
 from src.web.api import thsdk_snapshot, thsdk_alert as thsdk_alert_router
+from src.web.api import thsdk_extended as thsdk_extended_router
+from src.web.api import thsdk_ext as thsdk_ext_router
 from src.web.api.auth import get_current_user
 from src.web.api.settings import get_app_version
 from src.web.response import ResponseWrapperMiddleware
@@ -292,6 +294,20 @@ app.include_router(
 )
 app.include_router(
     thsdk_alert_router.router, prefix="/api/thsdk/alert", tags=["thsdk-alert"], dependencies=protected
+)
+# v0.3.1 选项B: DDE 官方主力资金 + 代码补齐 + 市场代码表
+app.include_router(
+    thsdk_ext_router.router,
+    prefix="/api/thsdk/ext",
+    tags=["thsdk-ext"],
+    dependencies=protected,
+)
+# v0.3.1 thsdk 高价值待接能力落地: news/corporate_action/dde/hs300/跨市场/wencai-增强
+app.include_router(
+    thsdk_extended_router.router,
+    prefix="/api/thsdk",
+    tags=["thsdk-extended"],
+    dependencies=protected,
 )
 app.include_router(
     accounts.router, prefix="/api", tags=["accounts"], dependencies=protected
