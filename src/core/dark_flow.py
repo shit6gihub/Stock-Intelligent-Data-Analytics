@@ -243,17 +243,38 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
             if new_first_seq <= 0 or old_last_seq <= 0 or new_first_seq >= old_last_seq:
                 # 序号连续/推进(新 seq ≥ 旧末条 seq) → 合并去重(旧最后一页可能被新完整版覆盖)
                 merged = old_ticks + _new_ticks
-                # 按 seq 去重: 同 seq 保留新数据(后出现的覆盖前面的)
-                dedup: dict[int, dict] = {}
+                # 修复 2026-08-21(国内生产): 盘后腾讯会重排页码/seq, 增量续拉把同一批
+                # 成交以**不同 seq** 再拉一遍 → 仅按 seq 去重失效, 净额翻倍(神剑实测
+                # -15733万 vs 真实 +11853万, 总额超实际成交额 47%)。改用
+                # (时间t, 价格price, 成交额amt) 三元组指纹去重 —— 同一笔成交无论 seq
+                # 怎么变, 三元组不变; 再加总量守恒校验兜底。
+                dedup: dict[tuple, dict] = {}
                 for t in merged:
-                    dedup[t.get("_seq", 0)] = t
-                merged = sorted(dedup.values(), key=lambda t: t.get("_seq", 0))
-                for t in merged:
-                    t.pop("_seq", None)
-                _cache_put(code, now, merged, last_page, last_seq)
-                _ticks_persist()  # 2026-08-12: 快照落盘
-                return merged
-            # 序号断裂(新交易日/数据重置) → 全量重拉
+                    fp = (t.get("t", ""), t.get("price"), round(t.get("amt", 0), 2))
+                    dedup[fp] = t          # 同指纹保留后出现的(带新 seq)
+                merged = sorted(
+                    dedup.values(),
+                    key=lambda t: (t.get("t", ""), t.get("_seq", 0)),
+                )
+                # 总量守恒校验: 合并后总成交额不得超过旧数据+新增量的合理上界。
+                # 若仍超(指纹也撞不出的极端重复), 放弃合并 → 全量重拉。
+                old_amt = sum(x.get("amt", 0) for x in old_ticks)
+                new_amt = sum(x.get("amt", 0) for x in _new_ticks)
+                merged_amt = sum(x.get("amt", 0) for x in merged)
+                if merged_amt > max(old_amt, new_amt) * 1.10 + 1e6:
+                    logger.warning(
+                        f"[dark_flow] {code} 增量合并后总额异常 "
+                        f"(merged={merged_amt/1e8:.2f}亿 > max(old,new)="
+                        f"{max(old_amt, new_amt)/1e8:.2f}亿×1.1), 弃增量全量重拉"
+                    )
+                    _TICKS_CACHE.pop(code, None)
+                else:
+                    for t in merged:
+                        t.pop("_seq", None)
+                    _cache_put(code, now, merged, last_page, last_seq)
+                    _ticks_persist()  # 2026-08-12: 快照落盘
+                    return merged
+            # 序号断裂(新交易日/数据重置) 或 合并校验失败 → 全量重拉
             _TICKS_CACHE.pop(code, None)
         else:
             # 无新增(可能盘前/刚开盘): 刷新缓存时间, 保留旧数据
