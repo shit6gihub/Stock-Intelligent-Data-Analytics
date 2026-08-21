@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import time
 from datetime import datetime, timezone
 from threading import Lock
+
+# 修复 2026-08-21: GitHub release API 缓存, 避免每次 Dashboard 自动刷新都打 1 次 GitHub
+_update_cache: dict = {}
+_update_lock = Lock()
 
 import requests
 from requests import exceptions as req_exc
@@ -175,6 +180,16 @@ def _human_error(err: str | None) -> str | None:
 
 
 def check_update(current_version: str, proxy: str | None = None) -> dict[str, object]:
+    # 修复 2026-08-21: GitHub release API 慢 → 端点 11s+, 拖累 Dashboard 30s 自动刷新
+    # 加进程级内存缓存 (24h TTL)
+    import time as _t
+    now = _t.time()
+    cached = _update_cache.get("data")
+    if cached and (now - cached.get("ts", 0)) < 86400:
+        out = dict(cached["payload"])
+        out["cache_hit"] = True
+        return out
+
     repo = os.getenv("UPDATE_CHECK_DOCKER_REPO", "xiaoze-hub/stock-intelligent-data-analytics")
     force_disable = os.getenv("UPDATE_CHECK_DISABLE", "").strip() in {"1", "true", "True"}
     if force_disable:
@@ -210,7 +225,7 @@ def check_update(current_version: str, proxy: str | None = None) -> dict[str, ob
     latest_sem = _parse_semver(latest)
     update_available = bool(cur_sem and latest_sem and latest_sem > cur_sem)
 
-    return {
+    payload = {
         "enabled": True,
         "source": "docker",
         "current_version": current_norm,
@@ -220,3 +235,7 @@ def check_update(current_version: str, proxy: str | None = None) -> dict[str, ob
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "error": err,
     }
+    # 修复 2026-08-21: 缓存24h, 避免 Dashboard 30s 自动刷新每次都打 GitHub
+    with _update_lock:
+        _update_cache["data"] = {"ts": _t.time(), "payload": payload}
+    return payload

@@ -1,6 +1,8 @@
 """新闻 API - 基于数据源配置"""
 from datetime import datetime, timedelta
-
+import asyncio
+import logging
+import os
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -10,6 +12,7 @@ from src.web.models import Stock, DataSource
 from src.collectors.news_collector import NewsCollector, NewsItem
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # 来源显示名称
 SOURCE_LABELS = {
@@ -41,8 +44,7 @@ async def get_news(
     source: str = Query(default="", description="来源过滤，逗号分隔：xueqiu/eastmoney_news/eastmoney"),
     db: Session = Depends(get_db),
 ):
-    """
-    获取新闻列表（基于数据源配置）
+    """获取新闻列表（基于数据源配置）
 
     - symbols: 股票代码过滤，逗号分隔，空则获取所有自选股相关新闻
     - names: 股票名称过滤，逗号分隔（前端直接传递名称，更稳定）
@@ -50,6 +52,9 @@ async def get_news(
     - limit: 返回数量限制
     - filter_related: 是否只显示与自选股相关的新闻
     """
+    # 修复 2026-08-21: news 端点偶发 15s+ 超时拖累首页, 加 NEWS_DISABLE 紧急开关
+    if os.getenv("NEWS_DISABLE", "").strip() in {"1", "true", "yes"}:
+        return []
     # 获取所有自选股（用于匹配）
     all_stocks = db.query(Stock).all()
     stock_map = {s.symbol: s.name for s in all_stocks}
@@ -82,12 +87,21 @@ async def get_news(
             keywords.add(stock_map[sym])
 
     # 基于数据源配置构建采集器，直接传递股票名称映射避免重复查库
+    # 修复 2026-08-21: news 端点曾因外部源慢导致 15s 超时,
+    # 用 asyncio.wait_for 加硬上限 8s, 超时返回空 list 不阻塞首页
     collector = NewsCollector.from_database()
-    news_items = await collector.fetch_all(
-        symbols=symbol_list,
-        since_hours=hours,
-        symbol_names=passed_symbol_names,  # 直接传递已有的股票名称映射
-    )
+    try:
+        news_items = await asyncio.wait_for(
+            collector.fetch_all(
+                symbols=symbol_list,
+                since_hours=hours,
+                symbol_names=passed_symbol_names,
+            ),
+            timeout=8.0,
+        )
+    except (asyncio.TimeoutError, Exception) as e:
+        logger.warning("news fetch failed/timeout: %s", e)
+        return []
 
     def is_related(item: NewsItem) -> bool:
         """判断新闻是否与自选股相关"""

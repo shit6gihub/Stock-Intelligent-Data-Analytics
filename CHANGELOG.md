@@ -2,6 +2,16 @@
 
 ## 2026-08-21
 
+### update — Dashboard 并发性能三连修(连接池/版本检查缓存/news开关)
+
+**update(perf): PG 连接池扩容 + GitHub 版本检查 24h 缓存 + news 紧急开关**
+
+- database.py: PG pool_size 5→10, max_overflow 10→20(实测 26 并发打满
+  QueuePool 触发 TimeoutError)
+- update_checker.py: GitHub release API 每次调用 11s+ 且无缓存 → 进程级
+  24h TTL 缓存, Dashboard 自动刷新不再被拖累
+- news.py: 加 NEWS_DISABLE=1 紧急开关(偶发 15s+ 超时拖累首页时启用)
+
 ### feature — 产品化加固六件套(哨兵/自检/错误追踪/备份/冒烟/UI统一)
 
 **feature(ops): 数据质量哨兵 + 启动自检 + 错误追踪 + 备份容灾 + 冒烟门禁 + UI统一**

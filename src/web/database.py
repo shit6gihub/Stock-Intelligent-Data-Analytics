@@ -26,8 +26,11 @@ if IS_PG:
         DB_URL,
         echo=False,
         pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=10,
+        # 修复 2026-08-21: 调大连接池, 实测 size=5 + overflow=10 在 26 并发下被打满,
+        # 触发 sqlalchemy.exc.TimeoutError: QueuePool limit of size 5 overflow 10 reached
+        # 调为 10 + 20 (30 总上限) 应对 Dashboard 一次刷新 26 API 并发
+        pool_size=10,
+        max_overflow=20,
         pool_timeout=30,
     )
 else:
