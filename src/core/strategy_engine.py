@@ -1187,6 +1187,19 @@ def _format_signal(
         "news_metric": news_metric,
         "constrained": constrained,
         "constraint_reasons": [str(x) for x in constraint_reasons if str(x).strip()],
+        # P1 多源共振(2026-08-21): meta 里的 resonance_* 透传给前端(机会页 🔥 标记)
+        "candidate_source": (row.payload or {}).get("source")
+        if isinstance(row.payload, dict)
+        else None,
+        "meta": {
+            k: v
+            for k, v in (
+                (row.payload or {}).items()
+                if isinstance(row.payload, dict)
+                else []
+            )
+            if k in ("resonance_count", "resonance_bonus", "resonance_sources", "source_hits", "source")
+        },
         "payload": payload if include_payload else {},
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),

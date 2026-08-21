@@ -184,6 +184,15 @@ export interface StrategySignalItem {
     has_entry_plan?: boolean
   }
   ai_score?: number
+  candidate_source?: string | null
+  meta?: {
+    resonance_count?: number
+    resonance_bonus?: number
+    resonance_sources?: string[]
+    source_hits?: string[]
+    source?: string
+    [k: string]: any
+  }
   factor_explain?: {
     positive?: { factor: string; label: string; contribution: number }[]
     negative?: { factor: string; label: string; contribution: number }[]
@@ -400,7 +409,7 @@ export const recommendationsApi = {
     limit?: number
     refresh?: boolean
     snapshot_date?: string
-    source?: 'market_scan' | 'watchlist' | 'mixed' | 'all'
+    source?: 'market_scan' | 'watchlist' | 'mixed' | 'strategy' | 'auction' | 'tdx' | 'wencai' | 'all'
     holding?: 'held' | 'unheld' | 'all'
     strategy?: string
     trend?: string
@@ -494,7 +503,7 @@ export const recommendationsApi = {
     min_score?: number
     limit?: number
     snapshot_date?: string
-    source_pool?: 'market_scan' | 'watchlist' | 'mixed' | 'all'
+    source_pool?: 'market_scan' | 'watchlist' | 'mixed' | 'strategy' | 'auction' | 'tdx' | 'wencai' | 'all'
     holding?: 'held' | 'unheld' | 'all'
     strategy_code?: string
     risk_level?: 'low' | 'medium' | 'high' | 'all'

@@ -2,6 +2,20 @@
 
 ## 2026-08-21
 
+### feature — 机会页整合 P2 前端: 今日机会榜+共振标记+统一筛选
+
+**feature(web): 机会页漏斗式改版(多源共振可视化)**
+
+- 筛选栏: 来源下拉补4新源(策略/竞价/问小达/问财) + 🔥只看共振开关
+  (过滤 resonance_count>=2, localStorage 持久化)
+- 机会榜排序: 共振票优先 → 市场池 → 分数; 每行标题旁 🔥×N 徽章
+  (hover 显示共振来源明细)
+- 卡片新增"来源"徽章行: 该票被哪些来源命中全部展示
+  (自选建议/盘中扫描/策略信号/竞价异动/问小达/问财)
+- StrategySignalItem 类型补 candidate_source/meta 字段;
+  strategy_engine._format_signal 透传 payload 里的 resonance_* 到 API
+- pnpm build 通过
+
 ### feature — AI 助手新增 get_northbound 北向资金工具
 
 **feature(chat): 激活同花顺北向资金孤儿数据源**

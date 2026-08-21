@@ -26,9 +26,29 @@ import WencaiPanel from '@panwatch/biz-ui/components/WencaiPanel'
 import AuctionAnomalyTab from '@panwatch/biz-ui/components/AuctionAnomalyTab'
 import StrategyLibraryDialog from '@/components/StrategyLibraryDialog'
 
-type SourceFilter = 'all' | 'market_scan' | 'watchlist' | 'mixed'
+type SourceFilter = 'all' | 'market_scan' | 'watchlist' | 'mixed' | 'strategy' | 'auction' | 'tdx' | 'wencai'
 type HoldingFilter = 'all' | 'held' | 'unheld'
 type RiskFilter = 'all' | 'low' | 'medium' | 'high'
+
+// P1 多源整合(2026-08-21): 来源徽章中文映射
+const CANDIDATE_SOURCE_CN: Record<string, string> = {
+  watchlist: '自选建议',
+  market_scan: '盘中扫描',
+  mixed: '市场+自选',
+  strategy: '策略信号',
+  auction: '竞价异动',
+  tdx: '问小达',
+  wencai: '问财选股',
+}
+const sourceCn = (s?: string | null) => (s ? CANDIDATE_SOURCE_CN[s] || s : '')
+
+const resonanceOf = (it: StrategySignalItem): number =>
+  Number(it.meta?.resonance_count || 0)
+
+const resonanceSourcesLabel = (it: StrategySignalItem): string => {
+  const srcs = it.meta?.resonance_sources || []
+  return srcs.map((s) => sourceCn(s)).join(' + ')
+}
 
 type GroupedSignal = {
   key: string
@@ -38,6 +58,8 @@ type GroupedSignal = {
   sourceAgents: string[]
   hasMarketScan: boolean
   topScore: number
+  resonanceCount: number
+  allSources: string[]
 }
 
 const marketLabel = (m?: string) => {
@@ -207,6 +229,8 @@ const toSignalFromCandidate = (row: EntryCandidateItem): StrategySignalItem => {
     news_metric: {},
     constrained: false,
     constraint_reasons: [],
+    candidate_source: source,
+    meta: (row.meta && typeof row.meta === 'object' ? row.meta : {}) as StrategySignalItem['meta'],
     payload: {
       source_meta: {
         plan: row.plan || {},
@@ -245,6 +269,8 @@ export default function OpportunitiesPage() {
 
   const [market, setMarket] = useLocalStorage<'ALL' | 'CN' | 'HK' | 'US'>('panwatch_opportunities_market_v3', DEFAULT_FILTERS.market)
   const [source, setSource] = useLocalStorage<SourceFilter>('panwatch_opportunities_source_v3', DEFAULT_FILTERS.source)
+  // P1 多源整合: 只看共振开关(默认关)
+  const [resonanceOnly, setResonanceOnly] = useLocalStorage('panwatch_opportunities_resonance_v1', false)
   const [holding, setHolding] = useLocalStorage<HoldingFilter>('panwatch_opportunities_holding_v3', DEFAULT_FILTERS.holding)
   const [strategy, setStrategy] = useLocalStorage('panwatch_opportunities_strategy_v3', DEFAULT_FILTERS.strategy)
   const [risk, setRisk] = useLocalStorage<RiskFilter>('panwatch_opportunities_risk_v3', DEFAULT_FILTERS.risk)
@@ -665,6 +691,15 @@ export default function OpportunitiesPage() {
       const sourceAgents = Array.from(new Set(val.members.map((x) => sourceAgentLabel(x.source_agent)).filter((x) => x && x !== '--')))
       const hasMarketScan = val.members.some((x) => x.source_pool === 'market_scan' || x.source_pool === 'mixed')
       const topScore = Math.max(...val.members.map(scoreOf))
+      // P1 多源整合: 聚合组内最大共振数 + 全部来源(candidate_source + meta.source_hits)
+      const resonanceCount = Math.max(0, ...val.members.map(resonanceOf))
+      const sourceSet = new Set<string>()
+      for (const m of val.members) {
+        if (m.candidate_source) sourceSet.add(m.candidate_source)
+        for (const h of m.meta?.source_hits || []) sourceSet.add(h)
+        const rs = m.meta?.resonance_sources || []
+        for (const s of rs) if (s) sourceSet.add(s)
+      }
       out.push({
         key,
         primary: val.primary,
@@ -673,9 +708,14 @@ export default function OpportunitiesPage() {
         sourceAgents,
         hasMarketScan,
         topScore,
+        resonanceCount,
+        allSources: Array.from(sourceSet),
       })
     }
     out.sort((a, b) => {
+      // P1: 共振票优先(多源命中=更高置信), 其次市场池, 再按分数
+      const resDelta = Number(b.resonanceCount >= 2) - Number(a.resonanceCount >= 2)
+      if (resDelta !== 0) return resDelta
       const sourceDelta = Number(b.hasMarketScan) - Number(a.hasMarketScan)
       if (sourceDelta !== 0) return sourceDelta
       const scoreDelta = b.topScore - a.topScore
@@ -691,6 +731,12 @@ export default function OpportunitiesPage() {
     const marketPool = groupedItems.filter((x) => x.hasMarketScan).length
     return { total, unheld, marketPool }
   }, [groupedItems])
+
+  // P1 多源整合: 只看共振过滤(resonance_count>=2)
+  const visibleItems = useMemo(() => {
+    if (!resonanceOnly) return groupedItems
+    return groupedItems.filter((g) => g.resonanceCount >= 2)
+  }, [groupedItems, resonanceOnly])
 
   const globalCoverage = stats?.coverage || null
   const factorStats = stats?.factor_stats || null
@@ -1065,8 +1111,26 @@ export default function OpportunitiesPage() {
               <SelectItem value="market_scan">市场池</SelectItem>
               <SelectItem value="mixed">融合池</SelectItem>
               <SelectItem value="watchlist">关注池</SelectItem>
+              {/* P1 多源入池(2026-08-21) */}
+              <SelectItem value="strategy">策略信号</SelectItem>
+              <SelectItem value="auction">竞价异动</SelectItem>
+              <SelectItem value="tdx">问小达</SelectItem>
+              <SelectItem value="wencai">问财选股</SelectItem>
             </SelectContent>
           </Select>
+          {/* P1: 只看多源共振开关 */}
+          <button
+            type="button"
+            onClick={() => setResonanceOnly(!resonanceOnly)}
+            className={`h-8 rounded-lg px-3 text-[12px] font-medium transition-colors border ${
+              resonanceOnly
+                ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/40'
+                : 'bg-accent/50 text-muted-foreground hover:bg-accent border-transparent'
+            }`}
+            title="只显示被 2 个及以上独立来源同时命中的候选(共振=更高置信)"
+          >
+            🔥 只看共振
+          </button>
           <Select value={holding} onValueChange={(v) => setHolding(v as HoldingFilter)}>
             <SelectTrigger className="h-8 text-[12px]"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -1253,7 +1317,7 @@ export default function OpportunitiesPage() {
       <WencaiPanel />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {groupedItems.map((group) => {
+        {visibleItems.map((group) => {
           const item = group.primary
           const payload = item.payload && typeof item.payload === 'object' ? item.payload as Record<string, unknown> : {}
           const sourceMeta = payload.source_meta && typeof payload.source_meta === 'object' ? payload.source_meta as Record<string, unknown> : {}
@@ -1274,6 +1338,11 @@ export default function OpportunitiesPage() {
           const sourceAgentTailCount = Math.max(0, group.sourceAgents.length - 1)
           const eventScore = toNumberOrNull(newsMetric.event_score)
           const eventCount = Number(newsMetric.news_count || 0)
+          // P1 多源整合: 来源徽章列表(candidate_source + hits + resonance_sources 去重)
+          const badgeSources = group.allSources.length > 0
+            ? group.allSources
+            : [item.candidate_source || item.source_pool || 'watchlist']
+          const resCount = group.resonanceCount
           const sourceFlags: string[] = []
           if (group.hasMarketScan) sourceFlags.push('市场候选')
           if (inWatchlist) sourceFlags.push('已关注标的')
@@ -1286,7 +1355,18 @@ export default function OpportunitiesPage() {
               <button className="w-full text-left" onClick={() => openInsight(item)}>
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
-                    <div className="text-[15px] font-semibold truncate">{item.stock_name || item.stock_symbol}</div>
+                    <div className="text-[15px] font-semibold truncate flex items-center gap-1.5">
+                      <span className="truncate">{item.stock_name || item.stock_symbol}</span>
+                      {/* P1: 多源共振火焰 */}
+                      {resCount >= 2 && (
+                        <span
+                          className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-orange-500/15 text-orange-600 dark:text-orange-400"
+                          title={`多源共振×${resCount}: ${resonanceSourcesLabel(item) || badgeSources.map(sourceCn).join(' + ')}`}
+                        >
+                          🔥×{resCount}
+                        </span>
+                      )}
+                    </div>
                     <div className="text-[11px] text-muted-foreground font-mono">{item.stock_market}:{item.stock_symbol}</div>
                   </div>
                   <div className="text-right">
@@ -1317,6 +1397,18 @@ export default function OpportunitiesPage() {
                   <div>
                     策略: {strategyHead}
                     {strategyTailCount > 0 ? ` +${strategyTailCount}` : ''}
+                  </div>
+                  {/* P1 多源整合: 来源徽章(命中来源全部展示) */}
+                  <div className="flex items-center gap-1 flex-wrap col-span-2">
+                    <span>来源:</span>
+                    {badgeSources.map((s) => (
+                      <span
+                        key={s}
+                        className="inline-flex items-center px-1.5 py-0 rounded text-[10px] rounded-full bg-primary/10 text-primary"
+                      >
+                        {sourceCn(s) || s}
+                      </span>
+                    ))}
                   </div>
                   <div>来源池: {sourcePoolLabel}</div>
                   <div>
