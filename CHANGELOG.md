@@ -2,6 +2,24 @@
 
 ## 2026-08-21
 
+### feature — P1 产品化五连(限流分级/API版本化/个人中心/CSV导出/监控告警)
+
+**feature: 限流分级 + /api/v1 别名 + 个人中心&CSV导出生效 + Prometheus 全链路监控**
+
+- middleware.py 限流分级: GET 60→300/min, 写操作→150/min, 登录等敏感端点
+  单独 20/min 防爆破; 环境变量可调(RATE_LIMIT_DEFAULT/GET/WRITE/SENSITIVE)
+- api_version.py: /api/v1/* → /api/* 透明改写中间件, 为将来 v2 平滑过渡
+- profile/export 路由挂载生效(后端224+250行早已存在, 前端 Profile.tsx 已有
+  路由, 生产容器旧版未挂载 → 热修生效, /api/v1/health 别名实测 200)
+- 监控全链路打通: health.py 补 record_request_metrics/datasource_failures
+  埋点(之前指标定义存在但从未接线), RequestLoggerMiddleware 接入;
+  prometheus.yml target 修复(panwatch 容器接入 panwatch-net, 容器名解析);
+  新增 4 条告警规则(5xx率/P95延迟/服务失联/数据源失败) promtool 校验通过;
+  Grafana datasource 修正 + "SIDA 生产监控"面板(QPS/P95/错误率/状态码/
+  数据源失败/进程内存)已导入(uid=sida-prod)
+- 国内机 alert_forwarder.py: 每2分钟拉 Prometheus firing alerts → pushplus
+  微信推送, 30分钟去重, cron 已配
+
 ### update — Dashboard 并发性能三连修(连接池/版本检查缓存/news开关)
 
 **update(perf): PG 连接池扩容 + GitHub 版本检查 24h 缓存 + news 紧急开关**

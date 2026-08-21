@@ -113,6 +113,12 @@ from src.core.error_tracker import install_error_tracker
 
 install_error_tracker(app)
 
+# API 版本化别名(2026-08-21): /api/v1/* → /api/* 透明改写
+# 现有前端零改动; 将来破坏性 v2 只需新增路由表 + 调整别名, 老路径平滑保留。
+from src.web.api_version import ApiVersionAliasMiddleware
+
+app.add_middleware(ApiVersionAliasMiddleware, prefix="/api/v1")
+
 
 # ════════════════════════════════════════════════════════════════════
 # 账号权限控制(2026-08-15 RBAC): 角色权限驱动, 替代 username==demo 硬编码

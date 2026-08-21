@@ -42,6 +42,7 @@ class _Metrics:
     AI_CALLS: Any = None
     PREDICT_REQUESTS: Any = None
     NOTIFICATIONS_SENT: Any = None
+    DATASOURCE_FAILURES: Any = None
 
 _metrics = _Metrics()
 
@@ -78,6 +79,43 @@ def _init_metrics():
         "Notifications sent by channel and result",
         ["channel", "result"],
     )
+    # 数据源失败计数(2026-08-21): 哨兵/采集器可调用 record_datasource_failure
+    _metrics.DATASOURCE_FAILURES = Counter(
+        "sida_datasource_failures_total",
+        "Datasource failures by provider and kind",
+        ["provider", "kind"],
+    )
+
+
+def record_request_metrics(method: str, path: str, status: int, duration_ms: float) -> None:
+    """HTTP 指标埋点(供 RequestLoggerMiddleware 调用)。
+
+    path 先做归一化(数字段→{id})避免高基数; 失败静默不影响请求。
+    """
+    try:
+        if not _PROMETHEUS_AVAILABLE:
+            return
+        import re as _re
+
+        norm = _re.sub(r"/\d+", "/{id}", path)[:80]
+        _init_metrics()
+        if _metrics.REQUEST_COUNT is None:
+            return
+        _metrics.REQUEST_COUNT.labels(method=method, path=norm, status=str(status)).inc()
+        _metrics.REQUEST_DURATION.labels(method=method, path=norm).observe(duration_ms / 1000.0)
+    except Exception:  # noqa: BLE001 - 指标绝不影响业务
+        pass
+
+
+def record_datasource_failure(provider: str, kind: str = "fetch") -> None:
+    """数据源失败计数(哨兵/采集器调用)。"""
+    try:
+        if not _PROMETHEUS_AVAILABLE:
+            return
+        _init_metrics()
+        _metrics.DATASOURCE_FAILURES.labels(provider=provider, kind=kind).inc()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 @router.get("/metrics")

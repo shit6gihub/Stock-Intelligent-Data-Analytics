@@ -33,9 +33,18 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
-RATE_LIMIT_DEFAULT = _env_int("RATE_LIMIT_DEFAULT", 60)  # 默认 60 req / minute / IP
+# 2026-08-21 限流分级: 全局默认 60 → 300 req/min
+# 原因: Dashboard 单次刷新并发 26 个 GET, 60/min 下多 tab/连续操作极易误伤(实测生产触发)
+RATE_LIMIT_DEFAULT = _env_int("RATE_LIMIT_DEFAULT", 300)  # 默认 300 req / minute / IP
 RATE_LIMIT_WINDOW = 60  # 60 秒滑动窗口
 RATE_LIMIT_BURST = _env_int("RATE_LIMIT_BURST", 10)  # 突发容忍 10 个
+# 敏感端点单独严格档(防爆破/防滥用): 登录/改密等写操作
+RATE_LIMIT_SENSITIVE = _env_int("RATE_LIMIT_SENSITIVE", 20)  # 20 req / min
+_SENSITIVE_PATHS = (
+    "/api/auth/login",
+    "/api/auth/change-password",
+    "/api/auth/reset-password",
+)
 
 # 例外路径 (跳过限流和日志)
 EXEMPT_PATHS = {
@@ -131,12 +140,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if _is_exempt(path):
             return await call_next(request)
 
-        # GET 严格, 写操作稍宽(避免误伤)
+        # 2026-08-21 分级限流: 敏感端点(login等)> 写操作 > GET
         method = request.method
-        if method == "GET":
-            limit = _env_int("RATE_LIMIT_GET", RATE_LIMIT_DEFAULT)  # 60 / min
+        if path.startswith(_SENSITIVE_PATHS):
+            limit = RATE_LIMIT_SENSITIVE  # 登录/改密防爆破: 20/min
+        elif method == "GET":
+            limit = _env_int("RATE_LIMIT_GET", RATE_LIMIT_DEFAULT)  # 300 / min
         else:
-            limit = _env_int("RATE_LIMIT_WRITE", RATE_LIMIT_DEFAULT // 2)  # 30 / min
+            limit = _env_int("RATE_LIMIT_WRITE", max(RATE_LIMIT_DEFAULT // 2, 60))  # 150 / min
 
         # Key: 已登录按 user_id, 否则 IP
         user = getattr(request.state, "user", None)
@@ -205,6 +216,13 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
             duration_ms = int((time.perf_counter() - start) * 1000)
             user = getattr(request.state, "user", None)
             user_id = user.get("user_id") if user else None
+            # Prometheus 指标埋点(2026-08-21): 延迟/计数 → /api/metrics
+            try:
+                from src.web.api.health import record_request_metrics
+
+                record_request_metrics(request.method, request.url.path, status, duration_ms)
+            except Exception:
+                pass
             # 结构化日志(INFO 级 — 让运维聚合)
             try:
                 logger.info(json.dumps({
