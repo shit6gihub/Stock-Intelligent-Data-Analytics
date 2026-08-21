@@ -968,7 +968,15 @@ def get_web_content(url: str) -> str:
 
 
 async def _execute_tool(db: Session, name: str, args: dict) -> str:
-    """执行工具调用，返回结果文本。"""
+    """执行工具调用，返回结果文本。
+
+    修复 2026-08-21(国内生产): get_market_news 等分支的局部 `import asyncio`
+    使 asyncio 成为整个函数作用域的局部名 → get_main_intent / get_rally_analysis
+    等分支引用 asyncio 时抛 UnboundLocalError(线上表现: "主力意图获取失败:
+    cannot access local variable 'asyncio'")。在函数入口统一 import 一次,
+    所有分支可用; 各分支内的重复局部 import 变为冗余但无害。
+    """
+    import asyncio
     try:
         if name == "get_portfolio":
             result = _build_portfolio_context(db)

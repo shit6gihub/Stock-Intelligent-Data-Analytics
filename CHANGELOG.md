@@ -2,6 +2,21 @@
 
 ## 2026-08-21
 
+### fix — AI 助手 get_main_intent 工具线上故障(国内生产)
+
+**fix(chat): _execute_tool 入口统一 import asyncio, 修复 UnboundLocalError**
+
+- 现象: 国内生产 v0.3.3 AI 助手问主力意图 → "主力意图获取失败:
+  cannot access local variable 'asyncio' where it is not associated with a value"
+- 根因: `_execute_tool` 内 `get_market_news` 等分支的局部 `import asyncio`
+  使 asyncio 成为整个函数作用域的局部名; `get_main_intent` /
+  `get_rally_analysis` 分支在绑定前引用 → UnboundLocalError
+- 修复: 函数入口统一 `import asyncio` 一次, 全分支可用;
+  各分支内重复局部 import 变为冗余但无害
+- 验证: 本地 757 passed; 生产容器热修后实测工具返回完整逐笔数据
+
+## 2026-08-21
+
 ### fix — CI 测试门禁修复 (GHCR build 恢复)
 
 **fix(tests): conftest 加 DB 建表 + 模块缓存清理两个 autouse fixture**
