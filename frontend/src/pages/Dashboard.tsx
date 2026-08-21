@@ -191,7 +191,10 @@ export default function DashboardPage() {
   const [shareBench, setShareBench] = useState(false)
   const [shareDiag, setShareDiag] = useState(false)
   const [shareDigest, setShareDigest] = useState(false)
+  // 修复 2026-08-21: 默认关闭 Onboarding(原默认 true → 换浏览器/清缓存后用户被强制挡整页无法点击)
+  // 改由头部"新手引导"按钮主动触发, localStorage 标志仍用于标记"已看过"以避免重复打扰
   const [showOnboarding, setShowOnboarding] = useState(false)
+  const openOnboarding = useCallback(() => setShowOnboarding(true), [])
   const [modal, setModal] = useState<{ open: boolean; symbol: string; market: string; name: string; hasPosition: boolean }>({
     open: false,
     symbol: '',
@@ -317,7 +320,9 @@ export default function DashboardPage() {
 
   useEffect(() => {
     load()
-    if (!localStorage.getItem('panwatch_onboarding_completed')) setShowOnboarding(true)
+    // 修复 2026-08-21: 不再自动弹 Onboarding(避免遮罩拦截点击)
+    // 仅在用户主动点击"新手引导"按钮时打开
+    // 历史兼容: 已看过的用户(localStorage 标志存在)依然不会被打扰
   }, [load])
 
   // 30s 自动刷新:页面可见才轮询(visibilitychange 隐藏时暂停,回到页面立即补一次);
@@ -488,6 +493,16 @@ export default function DashboardPage() {
           <h1 className="text-[20px] font-bold tracking-tight text-foreground md:text-[22px]">今日该看什么</h1>
           <Button onClick={() => load()} disabled={loading} size="sm" variant="ghost" className="h-7 px-2">
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+          </Button>
+          {/* 修复 2026-08-21: Onboarding 默认不弹, 加个低存在感入口让用户主动触发 */}
+          <Button
+            onClick={openOnboarding}
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-[11px] text-muted-foreground"
+            title="查看新手引导"
+          >
+            新手引导
           </Button>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[11px]">

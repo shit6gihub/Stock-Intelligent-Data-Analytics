@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-08-21
+
+### fix — 首页 Onboarding 遮罩拦截点击 (v0.3.3)
+
+**fix(dashboard): Onboarding 不再自动弹出** — `Dashboard.tsx` 移除 `useEffect` 里的
+`if (!localStorage...) setShowOnboarding(true)` 自动触发;改为头部低存在感"新手引导"按钮,用户主动点击才打开。
+
+**根因**: `panwatch_onboarding_completed` 用 localStorage 持久化 → 用户清浏览器缓存 / 换浏览器 / 换设备 → Onboarding 自动全屏遮罩重弹 → **遮罩拦截所有点击** → 用户看到"异动池/热榜点击股票不显示数据"(实际是按钮永远点不到)。
+
+**诊断证据**:
+- Playwright + 生产公网复现: `Onboarding open` 时所有 button 都被 `div.fixed.inset-0.z-50` 遮罩拦截, 报 `<div ...backdrop-blur-sm...> intercepts pointer events`
+- 临时绕过(`localStorage.setItem('panwatch_onboarding_completed', 'true')` + reload)→ 模态框正常打开, 数据完整
+
+**修复后**: 换浏览器/清缓存后不再被强制挡页;老用户(localStorage 已标记)行为不变;新用户第一次进入也不再被强制引导,需主动点"新手引导"按钮。
+
 ## 2026-08-20
 
 ### fix — 生产热修补丁合入源码 (v0.2.69.0)
