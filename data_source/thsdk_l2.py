@@ -860,9 +860,10 @@ class THSDKL2:
         注意:这是"明盘资金"口径(对齐东方财富主力净流入)
         不等于同花顺"暗盘资金"
 
-        ⚠️ 口径说明:get_l2_ticks 返回的 总金额/成交量 为当日累计口径(约 3 秒条),
-        本函数对累计列求和仅用于"大单行筛选"语义;若要逐笔净额,请用
-        src.core.dark_l2.fetch_l2_ticks(内部做相邻行差分还原) + src.core.delta_engine。
+        修复 2026-08-21(国内生产实测): get_l2_ticks 的 总金额/成交量 是**当日累计**
+        口径(约 3 秒条), 直接 sum() 会把净额放大上千倍(神剑实测 -2144亿 vs 腾讯
+        -1.57亿, 放大 1363 倍)。现改为**相邻行差分**还原区间增量后再汇总,
+        与 src.core.dark_l2.fetch_l2_ticks 同一套差分逻辑。
         """
         ticks = self.get_l2_ticks(symbol)
         if len(ticks) == 0:
@@ -870,25 +871,46 @@ class THSDKL2:
 
         ticks["真方向"] = ticks.apply(self.infer_direction, axis=1)
         valid = ticks[ticks["真方向"].isin(["buy", "sell"])].copy()
+        if len(valid) == 0:
+            return {
+                "symbol": symbol,
+                "total_ticks": len(ticks),
+                "valid_ticks": 0,
+                "main_buy_wan": 0.0,
+                "main_sell_wan": 0.0,
+                "net_wan": 0.0,
+                "big_buy_wan": 0.0,
+                "big_sell_wan": 0.0,
+                "big_net_wan": 0.0,
+            }
 
-        buy_total = valid[valid["真方向"] == "buy"]["金额_万元"].sum()
-        sell_total = valid[valid["真方向"] == "sell"]["金额_万元"].sum()
+        # 日累计 → 区间增量差分(与 dark_l2.fetch_l2_ticks 一致):
+        # 按原始行序(时间升序)对 总金额 做相邻差分, 得到每个 3 秒条的成交额增量。
+        # 注意必须用全量行(含中性/无效方向行)做差分基准, 否则累计值断档。
+        amt_series = ticks["金额_元"].astype(float).reset_index(drop=True)
+        delta_amt = amt_series.diff().fillna(amt_series.iloc[0]).clip(lower=0.0)
+        ticks = ticks.reset_index(drop=True)
+        ticks["_delta_amt_yuan"] = delta_amt
 
-        # 大单阈值按元口径比较(金额_元 为原始元值列,2026-08-19 修正)
-        big = valid[valid["金额_元"] >= amount_threshold_yuan]
-        big_buy = big[big["真方向"] == "buy"]["金额_万元"].sum()
-        big_sell = big[big["真方向"] == "sell"]["金额_万元"].sum()
+        valid = ticks[ticks["真方向"].isin(["buy", "sell"])]
+        buy_total_wan = float(valid[valid["真方向"] == "buy"]["_delta_amt_yuan"].sum()) / 1e4
+        sell_total_wan = float(valid[valid["真方向"] == "sell"]["_delta_amt_yuan"].sum()) / 1e4
+
+        # 大单阈值按元口径比较(单条增量为该 3 秒条的成交额)
+        big = valid[valid["_delta_amt_yuan"] >= amount_threshold_yuan]
+        big_buy_wan = float(big[big["真方向"] == "buy"]["_delta_amt_yuan"].sum()) / 1e4
+        big_sell_wan = float(big[big["真方向"] == "sell"]["_delta_amt_yuan"].sum()) / 1e4
 
         return {
             "symbol": symbol,
             "total_ticks": len(ticks),
             "valid_ticks": len(valid),
-            "main_buy_wan": buy_total,
-            "main_sell_wan": sell_total,
-            "net_wan": buy_total - sell_total,
-            "big_buy_wan": big_buy,
-            "big_sell_wan": big_sell,
-            "big_net_wan": big_buy - big_sell,
+            "main_buy_wan": round(buy_total_wan, 2),
+            "main_sell_wan": round(sell_total_wan, 2),
+            "net_wan": round(buy_total_wan - sell_total_wan, 2),
+            "big_buy_wan": round(big_buy_wan, 2),
+            "big_sell_wan": round(big_sell_wan, 2),
+            "big_net_wan": round(big_buy_wan - big_sell_wan, 2),
         }
 
     def get_comprehensive_snapshot(self, symbol: str) -> Dict[str, Any]:

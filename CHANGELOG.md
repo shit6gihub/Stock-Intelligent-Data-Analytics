@@ -2,6 +2,19 @@
 
 ## 2026-08-21
 
+### fix — 主力意图三源对比 thsdk 源净额放大 1363 倍(累计口径未差分)
+
+**fix(thsdk_l2): compute_main_flow 改相邻行差分还原区间增量**
+
+- 现象: 三源对比卡片 thsdk 源 main_net = -2144亿, 腾讯 -1.57亿(放大 1363 倍),
+  一致性恒 0
+- 根因: tick_super_level1 的 总金额 是**当日累计**口径(约 3 秒条),
+  旧实现对累计列直接 sum(); docstring 早有警告但代码没做差分
+- 修复: 与 dark_l2.fetch_l2_ticks 同一套逻辑——按行序对 总金额 相邻 diff
+  还原每条 3 秒棒的成交额增量, 再按方向汇总; 大单阈值同样按增量比较。
+  修复后神剑 thsdk 净额 +3620万(量级与腾讯/恒生可比)
+- 全量 757 passed
+
 ### fix — AI 助手 get_thsdk_dde 工具线上故障(国内生产)
 
 **fix(chat): get_thsdk_dde 改走 get_main_flow_official(THS 无 dde 方法)**
