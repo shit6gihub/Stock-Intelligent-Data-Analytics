@@ -2,6 +2,16 @@
 
 ## 2026-08-21
 
+### feature — AI 助手新增 get_northbound 北向资金工具
+
+**feature(chat): 激活同花顺北向资金孤儿数据源**
+
+- 背景: data_sources id=24 "同花顺北向资金" enabled 但零消费(agents/
+  dashboard/前端均无调用), 实测接口存活(当日 hgt_net=-9.28亿)
+- 新增 get_northbound 工具: 返回当日沪股通净额+口径标注(2024-08 后交易所
+  停止披露实时净买入, 同花顺估算口径仅供参考; 主力意图以 get_main_intent 为准)
+- 生产热修验证: 工具返回完整口径标注文本; 21 chat tests passed
+
 ### feature — P1 产品化五连(限流分级/API版本化/个人中心/CSV导出/监控告警)
 
 **feature: 限流分级 + /api/v1 别名 + 个人中心&CSV导出生效 + Prometheus 全链路监控**

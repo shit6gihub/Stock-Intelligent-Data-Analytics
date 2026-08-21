@@ -83,6 +83,7 @@ _TOOL_STAGE_LABELS = {
     "get_fundamentals_detail": "正在查询基本面明细(龙虎榜/股东/分红/两融/事件)...",
     "get_irm_qa": "正在查询互动易问答(巨潮官方回应)...",
     "get_market_anomalies": "正在获取异动股池(东财)...",
+    "get_northbound": "正在查询北向资金(同花顺口径)...",
     "get_hot_stocks": "正在获取同花顺热榜...",
     "get_thsdk_news": "正在查询同花顺个股新闻...",
     "get_thsdk_corporate_action": "正在查询公司行动(分红/送转)...",
@@ -404,6 +405,18 @@ CHAT_TOOLS = [
                 "properties": {
                     "limit": {"type": "integer", "description": "返回条数，默认 20", "default": 20},
                 },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_northbound",
+            "description": "获取北向资金(沪股通)当日净额：同花顺口径, 返回当日沪股通净买入(亿元)。用于回答「今天北向资金流入还是流出」「北向净买多少」「外资动向」等问题。注意: 2024-08 后交易所停止披露北向实时净买入, 此为同花顺估算口径仅供参考; 深股通数据暂缺。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
                 "required": [],
             },
         },
@@ -1254,6 +1267,60 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
             except Exception as e:
                 logger.warning(f"get_market_anomalies 工具失败: {e}")
                 return f"异动股池查询失败: {e}"
+        elif name == "get_northbound":
+            # 北向资金(同花顺口径): 当日沪股通净额(亿元)。
+            # 2024-08 后交易所停止披露实时净买入, 同花顺估算口径仅供参考; 深股通暂缺。
+            try:
+                import asyncio
+                from src.core.data_collector import DataCollectorManager
+
+                mgr = DataCollectorManager()
+
+                def _fetch_nb():
+                    from src.web.database import SessionLocal
+                    from src.web.models import DataSource
+
+                    db = SessionLocal()
+                    try:
+                        src = db.query(DataSource).filter(DataSource.type == "northbound").first()
+                        if not src:
+                            return None, "未注册北向资金数据源"
+                        return asyncio.run(mgr._test_northbound_source(src)), None
+                    finally:
+                        db.close()
+
+                r, err = await asyncio.to_thread(_fetch_nb)
+                if err or r is None:
+                    return f"北向资金查询失败: {err or '无结果'}"
+                if not r.success:
+                    return f"北向资金查询失败: {(r.error or '数据源异常')[:100]}"
+                data = r.data or []
+                if not data:
+                    return "北向资金暂无数据(非交易时段或数据源未就绪)。"
+                lines = ["【北向资金】(同花顺估算口径, 仅供参考):"]
+                for row in data:
+                    date = row.get("date", "")
+                    hgt = row.get("hgt_net")
+                    total = row.get("total_net")
+                    hgt_s = (
+                        f"沪股通净{'流入' if (hgt or 0) >= 0 else '流出'} {abs(hgt):.2f}亿"
+                        if isinstance(hgt, (int, float))
+                        else "沪股通暂缺"
+                    )
+                    total_s = (
+                        f" | 北向合计净额 {total:.2f}亿"
+                        if isinstance(total, (int, float))
+                        else " | 合计口径暂缺(深股通未披露)"
+                    )
+                    lines.append(f"- {date}: {hgt_s}{total_s}")
+                lines.append(
+                    "注: 2024-08 起交易所停止披露北向实时净买入, 以上为同花顺估算口径; "
+                    "主力意图判断请以 get_main_intent 为准。"
+                )
+                return "\n".join(lines)
+            except Exception as e:
+                logger.warning(f"get_northbound 工具失败: {e}")
+                return f"北向资金查询失败: {e}"
         elif name == "get_hot_stocks":
             # 同花顺热榜(小时榜/日榜): 排名/热度/概念标签/AI归因(analyse)
             period = (args.get("period") or "hour").strip().lower()
