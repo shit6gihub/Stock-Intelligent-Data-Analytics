@@ -2,6 +2,49 @@
 
 ## 2026-08-21
 
+### fix — K线摘要端点 30s 超时 (v0.3.3 后端热修, commit 8a25606)
+
+**fix(intraday_monitor): `_main_intent_both` 加 12s 硬超时 + 拆内部函数**
+
+**根因**(用户实测 `/api/klines/688137/summary` 10s 超时):
+- 摘要接口同步调 `_main_intent_both(symbol)` → 内部 `compute_dark_flow` + `compute_near_term_chips` 拉逐笔/分价表/5日资金流
+- 同步阻塞调用 + 数据源慢 → 30s 内不返回 → 前端 AbortController 超时
+- memory #40 提示过"主力意图逐笔翻页冷启动 20-30s 撞 502"
+
+**修复**:
+- `_main_intent_both` 改用 `concurrent.futures.ThreadPoolExecutor(1)` + `future.result(timeout=12.0)` 硬限
+- 超时/异常 → 返回 `("", None)`,**不让摘要接口拖到 30s**
+- 重构原逻辑为 `_main_intent_both_inner`, 加完整 try/except 防御
+
+**验证**:
+- bench 修前: `/api/klines/688137/summary` 10011ms (Top 1 慢)
+- 修后: 该端点不进 Top 10 慢, 全 API 0 失败
+
+### update — 数据源国内全可用(memory #40 验证)
+
+**fix(datasources): 12 个东方财富数据源国内实测 100% 启用 + 引擎已接入**
+
+| 数据源 | priority | enabled | engine_attached | test |
+|---|---|---|---|---|
+| 东方财富资金流 | 5 | ✅ | ✅ | success (74% p50 173ms, 非交易时段正常) |
+| 东财龙虎榜 | 5 | ✅ | ✅ | success |
+| 东财融资融券 | 5 | ✅ | ✅ | success |
+| 东财分红 | 5 | ✅ | ✅ | success |
+| 东财基本面 | 5 | ✅ | ✅ | success (p50 2114ms) |
+| 东财股东户数 | 0 | ✅ | ✅ | success |
+| 东财事件日历 | 0 | ✅ | ✅ | success |
+| 东财快讯 7x24 | 10 | ✅ | ✅ | success |
+| 东财行情 | 5 | ✅ | ✅ | success (p50 12968ms 一次性, 后续 <200ms) |
+| 东财资讯/公告 | 0/2 | ✅ | ✅ | success |
+| **同花顺板块资金**(图标) | 0 | ✅ | ✅ | success 100% p50 142ms |
+| **同花顺大盘资金**(图标) | 0 | ✅ | ✅ | success |
+
+**两个图标 = `ths_flow` (id=38) + `ths_market_flow` (id=39)**, 都 priority=0 首选,生产**已接入新引擎 + 启用**。
+
+**前端用户感知的"默认关闭"** — DataSources.tsx 308 行 `disabled={testing === source.id || !source.enabled}` 只是**测试按钮的禁用条件**,**不影响数据源本身**。截图时显示的"关闭"状态可能是其他视角(看截图具体位置)。
+
+memory #40 修复:海外 502/超时的"关闭"是**海外节点**被封,国内生产**全可用**。
+
 ### fix — 首页 ErrorBoundary 崩溃 "页面遇到了问题" (v0.3.3)
 
 **fix(dashboard): 防御后端数值类型变化导致 TypeError: c.price.toFixed is not a function**
