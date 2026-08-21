@@ -52,6 +52,11 @@ CANDIDATE_SOURCE_LABELS: dict[str, str] = {
     "watchlist": "关注池",
     "market_scan": "市场池",
     "mixed": "市场+关注",
+    # P1 多源入池(2026-08-21)
+    "strategy": "策略信号",
+    "auction": "竞价异动",
+    "tdx": "问小达",
+    "wencai": "问财选股",
 }
 
 
@@ -486,6 +491,15 @@ def _score_suggestion(
                 evidence.append("建议时效偏旧(48h+)")
         except Exception:
             pass
+
+    # 多源共振加分(2026-08-21 P1): N 个独立来源命中同一票 → (N-1)*8 分
+    meta = suggestion.meta if isinstance(suggestion.meta, dict) else {}
+    resonance = _safe_float(meta.get("resonance_bonus"))
+    if resonance and resonance > 0:
+        n = int(_safe_float(meta.get("resonance_count")) or 2)
+        score += resonance
+        sources = meta.get("resonance_sources") or []
+        evidence.append(f"多源共振×{n}({','.join(sources[:4])})")
 
     score = _clamp(score, 0.0, 100.0)
     return score, evidence[:8]
@@ -1131,6 +1145,271 @@ def _load_market_scan_inputs(limit_per_market: int = 60) -> dict[str, dict]:
     return result
 
 
+# ─── 多源入池适配器(2026-08-21 机会页整合 P1) ─────────────────────────────
+# 把 策略信号/竞价异动/问小达/问财 4 个来源也作为候选池种子, 与
+# watchlist建议/market_scan 同池竞争 + 共振计分。设计原则:
+# - 每个适配器只产出"种子 dict"(与 _load_market_scan_inputs 相同结构),
+#   失败静默返回空(单源故障不影响其他源)。
+# - 种子 meta 里带 source_hits 列表, refresh 阶段按 key 合并去重后计共振分。
+
+def _load_strategy_signal_seeds(snapshot_date: str, limit: int = 60) -> dict[str, dict]:
+    """策略库批量扫描信号 → 候选种子(candidate_source=strategy)。"""
+    from src.web.models import StrategySignalRun
+
+    seeds: dict[str, dict] = {}
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(StrategySignalRun)
+            .filter(
+                StrategySignalRun.snapshot_date == snapshot_date,
+                StrategySignalRun.status == "active",
+                StrategySignalRun.stock_market == "CN",
+            )
+            .order_by(StrategySignalRun.rank_score.desc())
+            .limit(max(10, int(limit)))
+            .all()
+        )
+        for row in rows:
+            symbol = (row.stock_symbol or "").strip()
+            if not symbol:
+                continue
+            key = f"CN:{symbol}"
+            score = _safe_float(row.rank_score) or _safe_float(row.score) or 0.0
+            seed = {
+                "symbol": symbol,
+                "market": "CN",
+                "stock_name": (row.stock_name or symbol).strip(),
+                "candidate_source": "strategy",
+                "source_agent": row.strategy_code or "strategy",
+                "source_suggestion_id": None,
+                "source_trace_id": "",
+                "quote_seed": None,
+                "action": (row.action or "watch").strip().lower(),
+                "action_label": (row.action_label or "观望").strip(),
+                "signal": (row.signal or "").strip(),
+                "reason": (row.signal or "").strip() or f"{row.strategy_name or '策略'}信号(score={score:.0f})",
+                "meta": {
+                    "source": "strategy",
+                    "strategy_name": row.strategy_name or "",
+                    "strategy_score": score,
+                    "collected_at": to_iso_with_tz(utc_now()),
+                },
+                "strategy_tags_seed": [f"strategy:{row.strategy_code or 'unknown'}"],
+            }
+            if key in seeds:
+                # 同股多策略命中 → 记多标签, 共振阶段合并
+                prev = seeds[key]
+                tags = set(prev.get("strategy_tags_seed") or [])
+                tags.update(seed["strategy_tags_seed"])
+                prev["strategy_tags_seed"] = sorted(tags)
+                prev["meta"]["strategy_multi"] = True
+                if score > (_safe_float(prev["meta"].get("strategy_score")) or 0):
+                    prev["meta"]["strategy_score"] = score
+                continue
+            seeds[key] = seed
+        return seeds
+    except Exception as e:  # noqa: BLE001 — 单源失败不拖垮入池
+        logger.warning(f"策略信号入池失败(跳过): {e}")
+        return {}
+    finally:
+        db.close()
+
+
+def _load_auction_anomaly_seeds(limit: int = 40) -> dict[str, dict]:
+    """当日竞价异动池 → 候选种子(candidate_source=auction)。"""
+    from datetime import date as _date, timedelta as _timedelta
+
+    from src.web.models import AuctionAnomalyRecord
+
+    seeds: dict[str, dict] = {}
+    db = SessionLocal()
+    try:
+        today = _date.today().strftime("%Y-%m-%d")
+        since = utc_now() - _timedelta(hours=20)
+        rows = (
+            db.query(AuctionAnomalyRecord)
+            .filter(AuctionAnomalyRecord.created_at >= since)
+            .order_by(AuctionAnomalyRecord.created_at.desc())
+            .limit(max(10, int(limit)))
+            .all()
+        )
+        for row in rows:
+            symbol = (row.symbol or "").strip()
+            if not symbol:
+                continue
+            key = f"CN:{symbol}"
+            if key in seeds:
+                continue
+            gap = _safe_float(row.gap_pct)
+            note = (row.note or "").strip()
+            reason_bits = []
+            if gap is not None:
+                reason_bits.append(f"竞价{'高开' if gap >= 0 else '低开'}{abs(gap):.2f}%")
+            vr = _safe_float(row.volume_ratio)
+            if vr is not None:
+                reason_bits.append(f"量比{vr:.2f}")
+            wr = _safe_float(row.withdraw_rate)
+            if wr is not None:
+                reason_bits.append(f"撤单率{wr:.1f}%")
+            if note:
+                reason_bits.append(note)
+            seeds[key] = {
+                "symbol": symbol,
+                "market": "CN",
+                "stock_name": (row.name or symbol).strip(),
+                "candidate_source": "auction",
+                "source_agent": "auction_anomaly",
+                "source_suggestion_id": None,
+                "source_trace_id": "",
+                "quote_seed": {
+                    "change_pct": gap,
+                },
+                "action": "watch",
+                "action_label": "关注",
+                "signal": "竞价异动",
+                "reason": "、".join(reason_bits) or "当日竞价异动",
+                "meta": {
+                    "source": "auction",
+                    "gap_pct": gap,
+                    "volume_ratio": vr,
+                    "withdraw_rate": wr,
+                    "snapshot_date": today,
+                    "collected_at": to_iso_with_tz(utc_now()),
+                },
+                "strategy_tags_seed": ["auction_anomaly"],
+            }
+        return seeds
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"竞价异动入池失败(跳过): {e}")
+        return {}
+    finally:
+        db.close()
+
+
+def _load_manual_query_seeds(kind: str, snapshot_date: str, limit_per_kind: int = 30) -> dict[str, dict]:
+    """用户主动查询结果入池(问小达 tdx / 问财 wencai)。
+
+    数据落在 EntryCandidateFeedback? 不 —— 查询结果由调用方写入
+    manual_query_candidates 表(见 discovery.py/wencai.py 的 record hook);
+    本函数只读表。若表不存在/为空则静默返回空。
+    """
+    from src.web.models import ManualQueryCandidate
+
+    source_label = {"tdx": "通达信问小达", "wencai": "问财选股"}.get(kind, kind)
+    seeds: dict[str, dict] = {}
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(ManualQueryCandidate)
+            .filter(
+                ManualQueryCandidate.kind == kind,
+                ManualQueryCandidate.snapshot_date == snapshot_date,
+            )
+            .order_by(ManualQueryCandidate.created_at.desc())
+            .limit(max(5, int(limit_per_kind)))
+            .all()
+        )
+        for row in rows:
+            symbol = (row.stock_symbol or "").strip()
+            if not symbol:
+                continue
+            key = f"{(row.stock_market or 'CN').upper()}:{symbol}"
+            if key in seeds:
+                continue
+            query_text = (row.query_text or "").strip()
+            seeds[key] = {
+                "symbol": symbol,
+                "market": (row.stock_market or "CN").upper(),
+                "stock_name": (row.stock_name or symbol).strip(),
+                "candidate_source": kind,
+                "source_agent": f"{kind}_query",
+                "source_suggestion_id": None,
+                "source_trace_id": "",
+                "quote_seed": None,
+                "action": "watch",
+                "action_label": "关注",
+                "signal": source_label,
+                "reason": f"{source_label}: {query_text[:60]}" if query_text else source_label,
+                "meta": {
+                    "source": kind,
+                    "query_text": query_text[:120],
+                    "collected_at": to_iso_with_tz(utc_now()),
+                },
+                "strategy_tags_seed": [f"{kind}_query"],
+            }
+        return seeds
+    except Exception as e:  # noqa: BLE001 — 表不存在等情况静默
+        logger.debug(f"{kind} 查询入池跳过: {e}")
+        return {}
+    finally:
+        db.close()
+
+
+def _merge_extra_source_seeds(input_map: dict[str, dict], extra_map: dict[str, dict]) -> int:
+    """把额外来源种子合并进 input_map。
+
+    - 新票 → 直接放入(candidate_source=该源)
+    - 已存在的票(source_hits 记录追加), 不覆盖主 seed —— 共振在评分阶段处理
+    返回合并的种子数。
+    """
+    added = 0
+    for key, seed in extra_map.items():
+        existing = input_map.get(key)
+        if existing is None:
+            input_map[key] = seed
+            added += 1
+            continue
+        # 已有票: 追加 source_hit 标记(共振证据)
+        meta = existing.get("meta") if isinstance(existing.get("meta"), dict) else {}
+        hits = list(meta.get("source_hits") or [])
+        hit_src = seed.get("candidate_source") or ""
+        main_src = existing.get("candidate_source") or ""
+        if hit_src and hit_src != main_src and hit_src not in hits:
+            hits.append(hit_src)
+            meta["source_hits"] = hits
+            # 采纳更丰富的 reason/signal(若主源缺)
+            if not existing.get("reason") and seed.get("reason"):
+                existing["reason"] = seed["reason"]
+            if not existing.get("stock_name"):
+                existing["stock_name"] = seed.get("stock_name") or existing.get("stock_name")
+            existing["meta"] = meta
+    return added
+
+
+def _apply_resonance_bonus(input_map: dict[str, dict], bonus_per_source: float = 8.0) -> None:
+    """多源共振加分(P1 整合核心): 一只票被 N 个独立来源命中时, 在评分前给
+    meta.resonance_count=N / resonance_bonus=(N-1)*bonus 写入, 由 _score_* 读取。
+
+    N 的口径 = 主 candidate_source + meta.source_hits 里不同来源数。
+    """
+    for key, seed in input_map.items():
+        meta = seed.get("meta") if isinstance(seed.get("meta"), dict) else {}
+        hits = set(meta.get("source_hits") or [])
+        hits.discard(seed.get("candidate_source"))
+        n = 1 + len(hits)
+        if n > 1:
+            meta["resonance_count"] = n
+            meta["resonance_bonus"] = round((n - 1) * bonus_per_source, 2)
+            meta["resonance_sources"] = sorted({seed.get("candidate_source", ""), *hits})
+            seed["meta"] = meta
+
+
+def _load_multi_source_seeds(snapshot_date: str, *, enabled: bool = True) -> dict[str, dict]:
+    """聚合全部额外来源种子(策略/竞价/tdx/wencai), 全部失败返回空。"""
+    if not enabled:
+        return {}
+    merged: dict[str, dict] = {}
+    total = 0
+    total += _merge_extra_source_seeds(merged, _load_strategy_signal_seeds(snapshot_date))
+    total += _merge_extra_source_seeds(merged, _load_auction_anomaly_seeds())
+    total += _merge_extra_source_seeds(merged, _load_manual_query_seeds("tdx", snapshot_date))
+    total += _merge_extra_source_seeds(merged, _load_manual_query_seeds("wencai", snapshot_date))
+    if total:
+        logger.info(f"多源入池: 额外种子 {total} 条(策略/竞价/tdx/wencai)")
+    return merged
+
+
 def _persist_market_scan_snapshot(snapshot: str, market_scan_map: dict[str, dict]) -> None:
     if not snapshot:
         return
@@ -1276,7 +1555,12 @@ def refresh_entry_candidates(
     _persist_market_scan_snapshot(snapshot, market_scan_map)
     holding_keys = _load_holding_keys()
 
+    # 多源入池(2026-08-21 P1): 策略/竞价/问小达/问财 种子与主源同池,
+    # 已有票追加 source_hits → 共振计分在评分阶段生效
+    extra_seeds = _load_multi_source_seeds(snapshot)
     input_map: dict[str, dict] = dict(market_scan_map)
+    if extra_seeds:
+        _merge_extra_source_seeds(input_map, extra_seeds)
     for s in suggestions:
         market = _to_market(s.stock_market).value
         symbol = (s.stock_symbol or "").strip()
@@ -1320,6 +1604,9 @@ def refresh_entry_candidates(
                 }
             )
         input_map[key] = seed
+
+    # suggestions 合并后统一计共振(watchlist seed 与 extra seeds 命中同票时也算共振)
+    _apply_resonance_bonus(input_map)
 
     # 只保留目标市场(CN)的输入: 港美股不再生成候选(discovery 手动查询不受影响)。
     # 用户自选 100% CN, watchlist 建议里即使出现 HK/US 也不进候选池。
@@ -1687,6 +1974,60 @@ def list_entry_candidates(
     rows = rows[: max(1, int(limit))]
     items = [_format_candidate_row(r) for r in rows]
     return {"snapshot_date": snapshot, "count": len(items), "items": items}
+
+
+def record_manual_query_candidates(
+    *,
+    kind: str,
+    query_text: str,
+    snapshot_date: str | None = None,
+    items: list[dict] | None = None,
+) -> int:
+    """用户主动查询结果入池记录(P1 整合): 问小达/问财返回的标的落库。
+
+    Args:
+        kind: "tdx" | "wencai"
+        query_text: 用户原始查询语句
+        items: [{"symbol": "002361", "market": "CN", "name": "神剑股份"}, ...]
+
+    供 discovery.py(tdx)/wencai.py 在返回结果时调用; 失败静默(不影响查询本身)。
+    返回落库条数。
+    """
+    if kind not in ("tdx", "wencai") or not items:
+        return 0
+    from src.web.models import ManualQueryCandidate
+
+    day = (snapshot_date or date.today().strftime("%Y-%m-%d")).strip()
+    db = SessionLocal()
+    saved = 0
+    try:
+        for i, it in enumerate(items[:50]):
+            symbol = str(it.get("symbol") or "").strip()
+            if not symbol:
+                continue
+            market = (str(it.get("market") or "CN").strip().upper() or "CN")[:8]
+            db.add(
+                ManualQueryCandidate(
+                    snapshot_date=day,
+                    kind=kind,
+                    query_text=(query_text or "")[:200],
+                    stock_symbol=symbol,
+                    stock_market=market,
+                    stock_name=(str(it.get("name") or "").strip())[:64],
+                    rank_in_result=i + 1,
+                )
+            )
+            saved += 1
+        if saved:
+            db.commit()
+            logger.info(f"[{kind}] 查询结果入池 {saved} 条(query={query_text[:40]})")
+        return saved
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        logger.warning(f"{kind} 查询结果入池失败(静默): {e}")
+        return 0
+    finally:
+        db.close()
 
 
 def save_entry_candidate_feedback(

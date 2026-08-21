@@ -159,6 +159,26 @@ def run_wencai(query: str) -> dict:
     note = f"问财命中 {total} 只"
     if truncated:
         note += f", 仅返回前 {MAX_ROWS} 只"
+
+    # 查询结果入池(P1 整合): 供当日候选池共振计分, 静默失败不影响查询
+    try:
+        from src.core.entry_candidates import record_manual_query_candidates
+
+        items = []
+        for r in rows:
+            sym = str(r.get("代码") or r.get("股票代码") or r.get("symbol") or "").strip()
+            if not sym:
+                continue
+            sym = sym.split(".")[0].replace("USZA", "").replace("USHA", "")
+            items.append({
+                "symbol": sym,
+                "market": "CN",
+                "name": str(r.get("名称") or r.get("股票简称") or r.get("name") or ""),
+            })
+        record_manual_query_candidates(kind="wencai", query_text=q, items=items)
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"问财结果入池跳过: {e}")
+
     return {"available": True, "rows": rows, "note": note}
 
 

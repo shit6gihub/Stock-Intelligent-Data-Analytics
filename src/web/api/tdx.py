@@ -15,6 +15,8 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query
 
+from src.core.entry_candidates import record_manual_query_candidates
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -51,6 +53,32 @@ async def tdx_ask(
 
     if max_rows and max_rows > 0 and len(data) > max_rows:
         data = data[:max_rows]
+
+    # 查询结果入池(P1 整合): 供当日候选池共振计分, 静默失败不影响查询
+    try:
+        from src.core.entry_candidates import record_manual_query_candidates
+
+        items = []
+        for row in data:
+            if not isinstance(row, dict):
+                continue
+            sym = ""
+            for key in ("代码", "股票代码", "symbol", "code"):
+                raw = str(row.get(key) or "").strip()
+                if raw:
+                    sym = raw.split(".")[0].replace("USZA", "").replace("USHA", "")
+                    break
+            if not sym or not sym.isdigit() or len(sym) != 6:
+                continue
+            name = ""
+            for key in ("名称", "股票简称", "name"):
+                if row.get(key):
+                    name = str(row[key])
+                    break
+            items.append({"symbol": sym, "market": "CN", "name": name})
+        record_manual_query_candidates(kind="tdx", query_text=q, items=items)
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"tdx 查询结果入池跳过: {e}")
 
     return {
         "query": q,

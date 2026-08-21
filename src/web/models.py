@@ -672,6 +672,31 @@ class EntryCandidateFeedback(Base):
     created_at = Column(DateTime, server_default=func.now(), index=True)
 
 
+class ManualQueryCandidate(Base):
+    """用户主动查询结果入池记录(2026-08-21 机会页整合 P1)。
+
+    - 问小达(tdx)/问财(wencai) 每次自然语言查询返回的标的落一行,
+      供 refresh_entry_candidates 当日入池(多源共振计分)。
+    - 只记当日, 历史由 entry_candidates 主表承接。
+    """
+
+    __tablename__ = "manual_query_candidates"
+    __table_args__ = (
+        Index("ix_manual_query_day_kind", "snapshot_date", "kind"),
+        Index("ix_manual_query_symbol", "stock_market", "stock_symbol"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    snapshot_date = Column(String, nullable=False, default="")  # YYYY-MM-DD
+    kind = Column(String(16), nullable=False, default="tdx")  # tdx | wencai
+    query_text = Column(String, default="")  # 用户原始查询语句
+    stock_symbol = Column(String(16), nullable=False)
+    stock_market = Column(String(8), nullable=False, default="CN")
+    stock_name = Column(String(64), default="")
+    rank_in_result = Column(Integer, nullable=True)  # 在查询结果中的名次
+    created_at = Column(DateTime, server_default=func.now())
+
+
 class EntryCandidateOutcome(Base):
     """入场候选后验结果（自动评估）。"""
 
