@@ -15,6 +15,25 @@
 
 **修复后**: 换浏览器/清缓存后不再被强制挡页;老用户(localStorage 已标记)行为不变;新用户第一次进入也不再被强制引导,需主动点"新手引导"按钮。
 
+### fix — 登录卡死 "一直在加载中" (v0.3.3 后端热修)
+
+**fix(audit): 审计写入用独立 session,失败不再污染主请求** — `src/web/api/audit.py:log_audit`
+改为 `SessionLocal()` 独立 session 写 audit_logs,失败 rollback 该 session + log error,**绝不影响调用方 session**。
+
+**根因**(用户报"现在登录一直在加载中"):
+
+1. 原实现 `db.add(entry) + db.commit()` 直接复用主请求的 SQLAlchemy session
+2. audit_logs 表高频写入 → SQLite WAL 偶发 lock → `database is locked`
+3. SQLAlchemy 把主 session 标记为 `PendingRollbackError`
+4. 后续 `user_to_dict(user)` 触发 lazy load → 同一 session 二次报错 → 整个 login 端点永远不返回
+5. 前端 AbortController 等 30s → 用户看到"加载中"
+
+**修复后**:
+- 审计写入失败只 log error,不抛错,主 session 永不被污染
+- 删 auth.py 里的 `except Exception: pass` 兜底(原意是"审计失败不影响登录",现在 audit 自己 best-effort,不需要外层吞错)
+
+**应急重启**: 修复前手动 `docker restart panwatch` 清掉污染 session,登录 200 (71ms) 恢复。
+
 ## 2026-08-20
 
 ### fix — 生产热修补丁合入源码 (v0.2.69.0)

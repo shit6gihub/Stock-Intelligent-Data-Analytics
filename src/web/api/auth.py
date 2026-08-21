@@ -311,12 +311,10 @@ async def login(data: LoginRequest, request: Request, db: Session = Depends(get_
     success(ip, data.username.strip())
     token, expires_at = create_token(user)
 
-    # 操作审计: 登录成功(延迟 import 避免与 audit.py 循环依赖)
-    try:
-        from src.web.api.audit import log_audit
-        log_audit(db, user, "login", detail="登录成功", ip=ip)
-    except Exception:
-        pass  # 审计失败不影响登录主流程
+    # 操作审计: 登录成功
+    # 修复 2026-08-21: audit.py 已用独立 session + best-effort,不再需要这里吞错
+    from src.web.api.audit import log_audit
+    log_audit(db, user, "login", detail="登录成功", ip=ip)
 
     return TokenResponse(
         token=token,
