@@ -282,8 +282,10 @@ export default function DiscoveryPanel({ monitorStocks, onOpenStock }: Props) {
             ) : (
               <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                 {hotBoards.slice(0, 6).map((b) => {
-                  const pct = b.change_pct ?? 0
-                  const color = pct > 0 ? 'text-rose-500' : pct < 0 ? 'text-emerald-500' : 'text-muted-foreground'
+                  const rawPct = b.change_pct
+                  const pct = typeof rawPct === 'number' ? rawPct : (rawPct == null ? 0 : Number(rawPct))
+                  const safePct = isFinite(pct) ? pct : 0
+                  const color = safePct > 0 ? 'text-rose-500' : safePct < 0 ? 'text-emerald-500' : 'text-muted-foreground'
                   return (
                     <button
                       key={b.code}
@@ -308,8 +310,10 @@ export default function DiscoveryPanel({ monitorStocks, onOpenStock }: Props) {
               {stocksMode === 'for_you' && <div className="px-1 text-[11px] text-muted-foreground">根据持仓/自选/监控信号/风格偏好排序</div>}
               <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                 {visibleHotStocks.slice(0, 6).map((s) => {
-                  const pct = s.change_pct ?? 0
-                  const color = pct > 0 ? 'text-rose-500' : pct < 0 ? 'text-emerald-500' : 'text-muted-foreground'
+                  const rawPct = s.change_pct
+                  const pct = typeof rawPct === 'number' ? rawPct : (rawPct == null ? 0 : Number(rawPct))
+                  const safePct = isFinite(pct) ? pct : 0
+                  const color = safePct > 0 ? 'text-rose-500' : safePct < 0 ? 'text-emerald-500' : 'text-muted-foreground'
                   const reasons = (s as HotStockItem & { _reasons?: string[] })._reasons
                   return (
                     <div
@@ -326,8 +330,8 @@ export default function DiscoveryPanel({ monitorStocks, onOpenStock }: Props) {
                         )}
                       </div>
                       <div className="text-right">
-                        <div className="font-mono text-[12px] text-foreground">{s.price != null ? s.price.toFixed(2) : '--'}</div>
-                        <div className={`font-mono text-[11px] ${color}`}>{pct >= 0 ? '+' : ''}{pct.toFixed(2)}%</div>
+                        <div className="font-mono text-[12px] text-foreground">{typeof s.price === 'number' && isFinite(s.price) ? s.price.toFixed(2) : (s.price != null && isFinite(Number(s.price)) ? Number(s.price).toFixed(2) : '--')}</div>
+                        <div className={`font-mono text-[11px] ${color}`}>{safePct >= 0 ? '+' : ''}{safePct.toFixed(2)}%</div>
                       </div>
                     </div>
                   )
@@ -349,8 +353,10 @@ export default function DiscoveryPanel({ monitorStocks, onOpenStock }: Props) {
           ) : (
             <div className="scrollbar grid max-h-[60vh] grid-cols-1 gap-2 overflow-y-auto md:grid-cols-2">
               {boardStocks.map((s) => {
-                const pct = s.change_pct ?? 0
-                const color = pct > 0 ? 'text-rose-500' : pct < 0 ? 'text-emerald-500' : 'text-muted-foreground'
+                const rawPct = s.change_pct
+                const pct = typeof rawPct === 'number' ? rawPct : (rawPct == null ? 0 : Number(rawPct))
+                const safePct = isFinite(pct) ? pct : 0
+                const color = safePct > 0 ? 'text-rose-500' : safePct < 0 ? 'text-emerald-500' : 'text-muted-foreground'
                 return (
                   <div
                     key={s.symbol}
@@ -365,8 +371,8 @@ export default function DiscoveryPanel({ monitorStocks, onOpenStock }: Props) {
                       <div className="font-mono text-[11px] text-muted-foreground">{s.symbol}</div>
                     </div>
                     <div className="text-right">
-                      <div className="font-mono text-[12px] text-foreground">{s.price != null ? s.price.toFixed(2) : '--'}</div>
-                      <div className={`font-mono text-[11px] ${color}`}>{pct >= 0 ? '+' : ''}{pct.toFixed(2)}%</div>
+                      <div className="font-mono text-[12px] text-foreground">{typeof s.price === 'number' && isFinite(s.price) ? s.price.toFixed(2) : (s.price != null && isFinite(Number(s.price)) ? Number(s.price).toFixed(2) : '--')}</div>
+                      <div className={`font-mono text-[11px] ${color}`}>{safePct >= 0 ? '+' : ''}{safePct.toFixed(2)}%</div>
                     </div>
                   </div>
                 )

@@ -45,6 +45,26 @@ import DigestShareCard from '@/components/DigestShareCard'
 import StockContextMenu, { type StockContextMenuState, type StockContextTarget } from '@/components/StockContextMenu'
 import { parseServerTime } from '@/lib/utils'
 
+/** 安全 toFixed: 处理 string / null / undefined / 非有限数, 一律返回 fallback。
+ *  修复 2026-08-21: Dashboard 报 TypeError: c.price.toFixed is not a function
+ *  真因 = 后端 PG 数值类型(DECIMAL) 经 psycopg2 → JSON 后变成字符串,
+ *  前端直接 .toFixed() 报 TypeError, AppErrorBoundary 兜底 → "页面遇到了问题"。
+ */
+function safeNum(v: unknown): number | null {
+  if (v == null) return null
+  const n = typeof v === 'number' ? v : Number(v)
+  return isFinite(n) ? n : null
+}
+function safeFixed(v: unknown, digits = 2, fallback = '--'): string {
+  const n = safeNum(v)
+  if (n == null) return fallback
+  return n.toFixed(digits)
+}
+function safeFlow(v: unknown, digits = 1): string {
+  const n = safeNum(v)
+  if (n == null) return '--'
+  return `${n >= 0 ? '+' : ''}${n.toFixed(digits)}亿`
+}
 function pct(v?: number | null, digits = 2): string {
   if (v == null || !isFinite(v)) return '--'
   return `${v > 0 ? '+' : ''}${v.toFixed(digits)}%`
@@ -589,7 +609,7 @@ export default function DashboardPage() {
               <div className="min-w-0">
                 <div className="truncate text-[11px] text-muted-foreground">{ix.name}</div>
                 <div className="font-num text-[17px] font-semibold text-foreground tabular-nums">
-                  {ix.current_price != null ? ix.current_price.toFixed(2) : '--'}
+                  {safeFixed(ix.current_price, 2)}
                 </div>
               </div>
               <span className={`shrink-0 rounded px-1 py-0.5 font-num tabular-nums text-[10px] ${pctChipCls(ix.change_pct)}`}>
@@ -616,14 +636,14 @@ export default function DashboardPage() {
           <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px]">
               <span className="text-muted-foreground">主力净流入
                 <b className={`font-mono text-[15px] font-semibold ${(marketFlow.total_main_flow ?? 0) >= 0 ? 'text-red-600' : 'text-green-700'}`}>
-                  {(marketFlow.total_main_flow ?? 0) >= 0 ? '+' : ''}{(marketFlow.total_main_flow ?? 0).toFixed(1)}亿
+                  <span className="text-muted-foreground">{safeFlow(marketFlow.total_main_flow)}</span>
                 </b>
               </span>
-              <span className="text-muted-foreground">成交额 <b className="font-mono">{(marketFlow.total_amount ?? 0).toFixed(0)}亿</b></span>
+              <span className="text-muted-foreground">成交额 <b className="font-mono">{safeFixed(marketFlow.total_amount, 0, '0')}亿</b></span>
               <span className="text-muted-foreground">涨 <b className="text-red-600 font-mono">{marketFlow.up_count ?? '--'}</b>
                 <span className="mx-1">/</span>跌 <b className="text-green-700 font-mono">{marketFlow.down_count ?? '--'}</b></span>
-              <span className="text-muted-foreground">沪 <b className="font-mono">{(marketFlow.sh_flow ?? 0).toFixed(1)}亿</b>
-                <span className="mx-1">/</span>深 <b className="font-mono">{(marketFlow.sz_flow ?? 0).toFixed(1)}亿</b></span>
+              <span className="text-muted-foreground">沪 <b className="font-mono">{safeFixed(marketFlow.sh_flow, 1)}亿</b>
+                <span className="mx-1">/</span>深 <b className="font-mono">{safeFixed(marketFlow.sz_flow, 1)}亿</b></span>
             </div>
 
           {/* 板块资金明细: 流入榜 / 流出榜 */}
@@ -636,7 +656,7 @@ export default function DashboardPage() {
                     {marketFlow.inflow_boards.map(b => (
                       <div key={b.name} className="flex justify-between text-[11px]">
                         <span className="text-muted-foreground truncate">{b.name}</span>
-                        <span className="font-mono text-red-600">+{b.net_inflow.toFixed(1)}亿</span>
+                        <span className="font-mono text-red-600">+{safeFixed(b.net_inflow, 1)}亿</span>
                       </div>
                     ))}
                   </div>
@@ -649,7 +669,7 @@ export default function DashboardPage() {
                     {marketFlow.outflow_boards.map(b => (
                       <div key={b.name} className="flex justify-between text-[11px]">
                         <span className="text-muted-foreground truncate">{b.name}</span>
-                        <span className="font-mono text-green-700">{b.net_inflow.toFixed(1)}亿</span>
+                        <span className="font-mono text-green-700">{safeFixed(b.net_inflow, 1)}亿</span>
                       </div>
                     ))}
                   </div>

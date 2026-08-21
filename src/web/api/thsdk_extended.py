@@ -29,7 +29,7 @@ try:
     from data_source.thsdk_l2 import (
         get_news,
         get_corporate_action,
-        get_dde,
+        get_main_flow_official,  # 2026-08-20: thsdk 1.7.18 无 get_dde(), 改调主净额官方口径
         get_hs300_constituents,
         get_market_data_cn_extended,
         get_market_data_index,
@@ -42,7 +42,7 @@ try:
 except Exception:  # noqa: BLE001 - thsdk 不可用时降级,不阻塞 import
     get_news = None  # type: ignore[assignment]
     get_corporate_action = None  # type: ignore[assignment]
-    get_dde = None  # type: ignore[assignment]
+    get_main_flow_official = None  # type: ignore[assignment]
     get_hs300_constituents = None  # type: ignore[assignment]
     get_market_data_cn_extended = None  # type: ignore[assignment]
     get_market_data_index = None  # type: ignore[assignment]
@@ -154,13 +154,43 @@ def api_corporate_action(symbol: str, user=Depends(get_current_user)) -> dict:
 
 @router.get("/dde/{symbol}")
 def api_dde(symbol: str, user=Depends(get_current_user)) -> dict:
-    """DDE 大单动向(Level-2 DDE 指标)。"""
+    """DDE 大单动向(同花顺官方主力资金)。
+
+    2026-08-20 修复: thsdk 1.7.18 没有 `dde()` 方法(`'THS' object has no attribute 'dde'`),
+    改调 `get_main_flow_official(symbol)`,内部走 `get_dde_flow()` (官方 DDE API),
+    返回 主力净流入(万元)/主力净量(占比)/总金额(万元) + 8 档明细。
+
+    注意:thsdk DDE 仅支持最近交易日(不是当日实时,游客账户可用)。
+    """
     try:
-        out = _summarize("get_dde", symbol)
+        result = _invoke("get_main_flow_official", symbol)
+    except RuntimeError as e:
+        raise HTTPException(503, f"thsdk DDE 数据源不可用: {e}") from e
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(500, f"dde 失败: {e}") from e
-    out["symbol"] = symbol
-    return out
+        logger.warning(f"[thsdk-extended] get_main_flow_official 失败: {e}", exc_info=True)
+        raise HTTPException(500, f"dde 失败: {str(e)[:120]}") from e
+    if not isinstance(result, dict):
+        return {"symbol": symbol, "rows": [], "count": 0, "fetched_at": _now()}
+    # 把 dict 拍平到 rows(端点兼容原 rows[0] 结构)
+    summary = result.get("summary") or {}
+    detail = result.get("detail") or {}
+    rows: list = []
+    rows.append(_to_jsonable({k: v for k, v in result.items() if k not in ("summary", "detail")}))
+    if isinstance(summary, dict) and summary:
+        rows.append(_to_jsonable({**summary, "_row_type": "summary"}))
+    if isinstance(detail, dict) and detail:
+        rows.append(_to_jsonable({**detail, "_row_type": "detail"}))
+    return {
+        "symbol": symbol,
+        "ths_code": result.get("ths_code"),
+        "price": result.get("price"),
+        "main_net_amount_wan": result.get("main_net_amount_wan"),  # 主力净流入(万元) - 同花顺官方口径
+        "main_net_ratio": result.get("main_net_ratio"),          # 主力净量占比
+        "total_amount_wan": result.get("total_amount_wan"),
+        "rows": rows,
+        "count": 1 if rows else 0,
+        "fetched_at": _now(),
+    }
 
 
 @router.get("/hs300-constituents")

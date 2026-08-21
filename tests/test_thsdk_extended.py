@@ -142,12 +142,36 @@ def test_corporate_action_endpoint(client, auth_token, monkeypatch):
 
 
 def test_dde_endpoint(client, auth_token, monkeypatch):
-    _patch_module_fn(monkeypatch, "get_dde", pd.DataFrame([{"DDX": 0.1}]))
+    """2026-08-20 修复: thsdk 1.7.18 无 get_dde(), 改调 get_main_flow_official(官方 DDE API)。
+
+    get_main_flow_official 返回 dict 含 summary/detail/主力净流入等。
+    """
+    fake_dde_result = {
+        "symbol": "002361",
+        "ths_code": "USZA002361",
+        "price": 11.27,
+        "total_amount_wan": 12345.0,
+        "main_net_amount_wan": -2365.0,
+        "main_net_ratio": -0.078,
+        "summary": {"价格": 11.27, "主力净流入": -23650000.0, "总金额": 123450000.0},
+        "detail": {
+            "主动买入特大单金额": 0.0,
+            "主动卖出特大单金额": -14800000.0,
+            "主动买入大单金额": 0.0,
+            "主动卖出大单金额": -8800000.0,
+        },
+    }
+    _patch_module_fn(monkeypatch, "get_main_flow_official", fake_dde_result)
     resp = client.get(
         "/api/thsdk/dde/USZA002361", headers={"Authorization": f"Bearer {auth_token}"}
     )
     assert resp.status_code == 200
-    assert resp.json()["data"]["rows"][0]["DDX"] == 0.1
+    body = resp.json()["data"]
+    assert body["symbol"] == "USZA002361"
+    assert body["main_net_amount_wan"] == -2365.0
+    assert body["main_net_ratio"] == -0.078
+    # rows 至少 1 行(顶层 row) + summary + detail
+    assert body["count"] >= 1
 
 
 def test_hs300_endpoint(client, auth_token, monkeypatch):
