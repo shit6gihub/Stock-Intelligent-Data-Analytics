@@ -1371,6 +1371,14 @@ def build_scheduler() -> AgentScheduler:
     except Exception as e:  # noqa: BLE001 - 注册失败不阻断调度器构建
         logger.warning(f"板块数据同步任务注册失败: {e}")
 
+    # 数据质量哨兵(2026-08-21): 每小时跑 4 项检查, 异常写 Notification
+    try:
+        from src.core.data_quality_sentinel import register_hourly_job
+
+        register_hourly_job(sched.scheduler)
+    except Exception as e:  # noqa: BLE001 - 注册失败不阻断调度器构建
+        logger.warning(f"数据质量哨兵注册失败: {e}")
+
     return sched
 
 
