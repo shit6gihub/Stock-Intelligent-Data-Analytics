@@ -10,6 +10,9 @@
   test_announcement_eval 挂 → 门禁拦 GHCR build。现 session 开始时 create_all。
 - `_clear_module_caches`(每测试): kline_collector/_FLOW_CACHE 模块级 TTL 缓存
   跨测试残留 → 单跑过合跑挂(flaky)。每测试前清空。
+- **workflow 排除联网测试文件**(18 个): CI 海外机房访问不了国内行情源
+  (腾讯逐笔/thsdk/恒生等), 这些测试只能本地跑。本地模拟 CI 跑法:
+  tests/ 578 passed + marketdata 包 190 passed, 全绿。
 - 本地全量回归: **757 passed, 0 failed**(修前 4 failed)。
 
 ### fix — K线摘要端点 30s 超时 (v0.3.3 后端热修, commit 8a25606)
