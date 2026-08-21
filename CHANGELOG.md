@@ -2,6 +2,16 @@
 
 ## 2026-08-21
 
+### fix — CI 测试门禁修复 (GHCR build 恢复)
+
+**fix(tests): conftest 加 DB 建表 + 模块缓存清理两个 autouse fixture**
+
+- `_init_test_db`(session 级): CI 无 init_db() → `no such table: stocks`,
+  test_announcement_eval 挂 → 门禁拦 GHCR build。现 session 开始时 create_all。
+- `_clear_module_caches`(每测试): kline_collector/_FLOW_CACHE 模块级 TTL 缓存
+  跨测试残留 → 单跑过合跑挂(flaky)。每测试前清空。
+- 本地全量回归: **757 passed, 0 failed**(修前 4 failed)。
+
 ### fix — K线摘要端点 30s 超时 (v0.3.3 后端热修, commit 8a25606)
 
 **fix(intraday_monitor): `_main_intent_both` 加 12s 硬超时 + 拆内部函数**
