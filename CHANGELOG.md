@@ -34,6 +34,27 @@
 
 **应急重启**: 修复前手动 `docker restart panwatch` 清掉污染 session,登录 200 (71ms) 恢复。
 
+### update — 生产数据库 SQLite → PostgreSQL 切换
+
+**feat(infra): 生产 panwatch 容器切到 PostgreSQL** — 通过 `SIDA_DB_URL` env(`postgresql+psycopg2://sida:***@172.17.0.1:5432/sida`)连接宿主机 PG 16。
+
+**根因**(memory #53 镜像漂移):
+- 源码早支持 PG(`database.py:IS_PG` 切换),但 v0.3.2 容器 env 没设 `SIDA_DB_URL`,**仍跑 SQLite**
+- SQLite WAL 偶发 lock = 登录卡死的根因之一(见上一条)
+- PG 已装好(`apt install postgresql-16`)且 `sida` 库就绪(50 表 schema),只是没被容器用
+
+**步骤**:
+1. **核实数据一致性**:50 表逐行对比,SQLite 是 8/17 旧快照,PG 是持续运行新库
+2. **增量同步**:把 SQLite 多出来的 120,819 行 UPSERT 到 PG(主要是 8/17 之后的 audit_logs + log_entries + agent_runs 等),布尔列 0/1 显式转 bool
+3. **重建容器**:停 → 删 → 加 env `SIDA_DB_URL` → `docker run` 同 image v0.3.2(数据卷保留)
+4. **热修 audit.py**:v0.3.2 镜像不含 commit 9e7162c 修复,再触发同样 bug → `docker cp` 把已修 audit.py 进容器 + restart
+5. **同步前端 bundle**:v0.3.2 容器 index.html 引用 `DWBuKCQT.js / -xojz8-N.css`(老 v0.3.0 镜像引用),本地 dist 是 `BLpaJ7XA.js / xdV8ueV7.css` → 用本地 dist 同步覆盖
+
+**修复后**:
+- 31 个核心 API 全部 200,0 失败
+- 登录 53-81ms(原 SQLite 慢时 800ms+)
+- Onboarding 修复 / 审计死锁修复 / 限流未触发三层修复全部在生产生效
+
 ## 2026-08-20
 
 ### fix — 生产热修补丁合入源码 (v0.2.69.0)
