@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import asyncio
 from datetime import datetime, timedelta, date, timezone
 from pathlib import Path
 
@@ -31,9 +32,25 @@ def _main_intent_both(symbol: str) -> tuple[str, dict | None]:
     summary 接口原本 `_main_intent_summary` + `_main_intent_structured` 各调一次
     compute_dark_flow(逐笔翻页/分价表/5日资金流各跑一遍 → 接口 1s+)。合并后
     compute_dark_flow 只跑一次, 两个产出共享同一份 dark 结果。
+
+    修复 2026-08-21: 整体加 12s 硬超时保护(在线程池跑), 防止数据源慢/逐笔翻页死循环
+    导致 summary 接口拖到 30s 超时。
     """
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        future = ex.submit(_main_intent_both_inner, symbol)
+        try:
+            return future.result(timeout=12.0)
+        except concurrent.futures.TimeoutError:
+            logger.warning(f"_main_intent_both({symbol}) 超时 12s, 返回空")
+            return "", None
+        except Exception as e:
+            logger.warning(f"_main_intent_both({symbol}) 失败: {e}")
+            return "", None
+
+
+def _main_intent_both_inner(symbol: str) -> tuple[str, dict | None]:
     try:
-        from marketdata import Symbol as MDSymbol
         from src.core.dark_flow import compute_dark_flow
         mdsym = MDSymbol.parse(symbol, "CN")
         dark = compute_dark_flow(mdsym)
@@ -85,7 +102,6 @@ def _main_intent_both(symbol: str) -> tuple[str, dict | None]:
                 "tail_net": tail,
                 "data_status": "insufficient",
                 "tick_count": dark.get("tick_count", 0),
-                # AI 反证层(算法5): 数据不足 → 方向强制 neutral, 跳过 LLM(ai_verdict=None)
                 "ai_verdict": None,
                 "board": _board_snapshot(symbol),
             }
@@ -117,7 +133,6 @@ def _main_intent_both(symbol: str) -> tuple[str, dict | None]:
                 if band:
                     structured["chip_band"] = {"low": band["low"], "high": band["high"]}
                 structured["profit_ratio"] = chips.get("profit_ratio")
-            # AI 反证层(算法5): 与 _main_intent_structured 同字段(LLM 失败静默降级 None)
             structured["ai_verdict"] = _ai_counter_check(symbol, dark)
             structured["board"] = _board_snapshot(symbol)
         return summary_str, structured
@@ -798,9 +813,13 @@ class IntradayMonitorAgent(BaseAgent):
             )
 
             senti_c = MarketSentimentCollector()
-            summary = senti_c.get_sentiment_summary()
-            sector_rotation = senti_c.get_sector_rotation(top_n=12)
-            indices = senti_c.get_index_snapshot()
+            # 修复 2026-08-21: 同步 collector 调用改用 to_thread, 避免阻塞 asyncio 事件循环
+            # 根因: 之前 sync get_* 调 requests.get → 整事件循环卡死, 26 并发 API 全部超时
+            summary, sector_rotation, indices = await asyncio.gather(
+                asyncio.to_thread(senti_c.get_sentiment_summary),
+                asyncio.to_thread(senti_c.get_sector_rotation, top_n=12),
+                asyncio.to_thread(senti_c.get_index_snapshot),
+            )
             # 实时指数(腾讯接口,盘中实时): 大盘涨跌直接决定情绪强弱
             index_summary = []
             for idx in indices:
