@@ -2,6 +2,16 @@
 
 ## 2026-08-21
 
+### fix — AI 助手 get_thsdk_dde 工具线上故障(国内生产)
+
+**fix(chat): get_thsdk_dde 改走 get_main_flow_official(THS 无 dde 方法)**
+
+- 现象: 国内生产 v0.3.3 AI 助手调 DDE 大单动向 →
+  "'THS' object has no attribute 'dde'"(thsdk 当前版本无该接口)
+- 修复: 改走 `get_main_flow_official`(底层 query_data id=200 同花顺官方 DDE 口径:
+  主力净流入 + 特大单/大单主动/被动明细), 国内生产实测可用(神剑 -5647万)
+- 单测 FakeL2 补 get_main_flow_official mock; 757 passed
+
 ### fix — AI 助手 get_main_intent 工具线上故障(国内生产)
 
 **fix(chat): _execute_tool 入口统一 import asyncio, 修复 UnboundLocalError**

@@ -56,6 +56,20 @@ class FakeL2:
         self._maybe_fail("get_dde")
         return _mk_df([{"代码": "002361", "DDX": 0.5, "主力净量": 1000}])
 
+    def get_main_flow_official(self, symbol="002361"):
+        # 2026-08-21: get_thsdk_dde 改走 get_main_flow_official(THS 无 dde 方法)
+        self._maybe_fail("get_dde")
+        return {
+            "symbol": symbol,
+            "ths_code": "USZA" + str(symbol)[-6:],
+            "price": 10.46,
+            "total_amount_wan": 116836.13,
+            "main_net_amount_wan": -5647.64,
+            "main_net_ratio": -0.6774,
+            "summary": {"代码": symbol, "主力净流入": -56476402},
+            "detail": {"主动买入特大单金额": 100},
+        }
+
     def get_hs300_constituents(self):
         self._maybe_fail("get_hs300_constituents")
         return _mk_df([{"代码": "600519", "名称": "贵州茅台"}])

@@ -143,16 +143,29 @@ def get_thsdk_corporate_action(symbol: str) -> Dict[str, Any]:
 
 
 def get_thsdk_dde(symbol: str) -> Dict[str, Any]:
-    """DDE 大单动向(同花顺独有,比逐笔更精确的主力意图)。
+    """DDE 大单动向(同花顺官方主力资金, 比逐笔更精确的主力意图)。
+
+    修复 2026-08-21(国内生产): thsdk 当前版本 THS 对象没有 `dde` 方法
+    (线上报 'THS' object has no attribute 'dde'), 改走 `get_main_flow_official`
+    (底层 query_data id=200 DDE 口径: 主力净流入 + 特大单/大单主动/被动明细),
+    该接口在国内生产实测可用(2026-08-21 神剑 -5647万)。
 
     args:
-        symbol: 6 位股票代码,如 "002361"。内部转为 thsdk 前缀代码。
+        symbol: 6 位股票代码,如 "002361"。
     返回:
-        {"available": bool, "data": [大单动向记录...], "note": str}
+        {"available": bool, "data": [{symbol, price, main_net_amount_wan,
+         main_net_ratio, summary, detail...}], "note": str}
     """
     if not symbol:
         return _degraded("请提供股票代码(symbol)。")
-    return _safe_call(_l2().get_dde, _to_ths_code(symbol))
+    result = _safe_call(_l2().get_main_flow_official, str(symbol).strip())
+    # get_main_flow_official 失败时返回 {"symbol":..., "error": "no_code"} 而非抛异常,
+    # _safe_call 会把它当成功 → 统一转降级结构
+    if result.get("available") and isinstance(result.get("data"), list):
+        for row in result["data"]:
+            if isinstance(row, dict) and row.get("error"):
+                return _degraded(f"thsdk DDE 查询失败: {row.get('error')}")
+    return result
 
 
 def get_thsdk_hs300_constituents() -> Dict[str, Any]:
