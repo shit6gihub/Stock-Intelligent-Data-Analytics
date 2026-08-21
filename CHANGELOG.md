@@ -2,6 +2,24 @@
 
 ## 2026-08-21
 
+### feature — 产品化加固六件套(哨兵/自检/错误追踪/备份/冒烟/UI统一)
+
+**feature(ops): 数据质量哨兵 + 启动自检 + 错误追踪 + 备份容灾 + 冒烟门禁 + UI统一**
+
+- `src/core/data_quality_sentinel.py`: 每小时 4 项检查(逐笔总额对账/created_at
+  NULL/建议数突降/失败通知计数), 异常写 Notification, 全 ok 静默
+- `src/core/startup_check.py`: 启动时 7 项配置自检(DB方言/SIDA_DB_URL缺失/
+  恒生mock/thsdk游客/JWT/数据目录/通知渠道), warning 打横幅, 接入 server.py lifespan
+- `src/core/error_tracker.py`: 未处理异常 JSONL 落盘 + 同指纹去重 +
+  高频异常(10min内3次)聚合发通知, install_error_tracker(app) 已接入 app.py
+- 国内生产: PG 每日 23:30 自动备份(保留7天) + 异地同步海外机(保留14天),
+  SSH key 免密已配, 手动全流程验证通过(16MB gz, 海外落地)
+- `scripts/smoke_test.py` + `post_deploy_smoke.sh`: 发版后自动等 healthy →
+  10 个核心 API 冒烟(9/9 passed 2.1s 实测), 结果落 smoke.log, FAIL 退出码 1
+- 前端: ErrorState(技术错误翻译人话+重试)/LoadingState/usePolling 统一组件,
+  MainFlowCompareCard 迁移示范; pnpm build 通过
+- 测试: 775 passed(+18)
+
 ### update — Dockerfile 分层缓存优化(按变更频率排序 COPY)
 
 **update(docker): 低频层在前/高频层在后, 改 src 不再失效低频层缓存**

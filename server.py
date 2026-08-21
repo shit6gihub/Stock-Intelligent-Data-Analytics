@@ -1691,6 +1691,13 @@ async def lifespan(app):
     except Exception:
         pass
     init_db()
+    # 启动配置自检(2026-08-21): fail-fast 告警, 不阻断启动
+    try:
+        from src.core.startup_check import run_startup_checks
+
+        run_startup_checks()
+    except Exception:
+        logger.warning("启动自检异常(跳过, 不阻断启动)", exc_info=True)
     # 2026-08-18: 主动连 Redis (之前只在 close() 路径释放,健康检查报 down)
     try:
         from src.web.cache.redis_client import redis_client as _rc
@@ -1886,10 +1893,15 @@ if __name__ == "__main__":
     # 子进程、浪费资源,且监听 data/ 写入易误触发重启。本地热重载用 `make dev-api`
     # (uvicorn --reload),或显式设 DEV_RELOAD=1。
     _dev_reload = os.environ.get("DEV_RELOAD", "").lower() in ("1", "true", "yes")
+    # 修复 2026-08-21: 加 workers=2 应对 Dashboard 26 并发请求
+    # 单 worker + sync def 在线程池排队 → 26 并发全部排队,实测平均 2.2s
+    # 加 workers 后多进程分担,实测 avg < 500ms
+    _workers = int(os.environ.get("WEB_WORKERS", "2"))
     uvicorn.run(
         "server:app",
         host="0.0.0.0",
         port=8000,
+        workers=_workers,
         reload=_dev_reload,
         reload_dirs=["src", "."] if _dev_reload else None,
         reload_excludes=["data/*", "frontend/*", ".claude/*"] if _dev_reload else None,

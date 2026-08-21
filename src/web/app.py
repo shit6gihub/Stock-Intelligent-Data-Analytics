@@ -107,6 +107,12 @@ app.add_middleware(RateLimitMiddleware)
 app.add_middleware(JWTDecodeMiddleware)
 app.add_middleware(AuditMiddleware)
 
+# 轻量错误追踪(2026-08-21): 捕获未处理异常 → JSONL 落盘 + 高频聚合告警
+# 尽量内层(最后 add)以贴近路由, 捕获路由/处理器抛出的未处理异常, 原样 re-raise 不吞。
+from src.core.error_tracker import install_error_tracker
+
+install_error_tracker(app)
+
 
 # ════════════════════════════════════════════════════════════════════
 # 账号权限控制(2026-08-15 RBAC): 角色权限驱动, 替代 username==demo 硬编码
