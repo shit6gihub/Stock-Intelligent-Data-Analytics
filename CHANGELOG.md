@@ -2,6 +2,15 @@
 
 ## 2026-08-21
 
+### update — Dockerfile 分层缓存优化(按变更频率排序 COPY)
+
+**update(docker): 低频层在前/高频层在后, 改 src 不再失效低频层缓存**
+
+- 后端阶段 COPY 顺序调整: server.py/prompts/strategies(低频) → src/+data_source/(高频)
+  → thsdk vendor → VERSION(每次发版必变, 放最后只失效末两层)
+- 效果: 只改 src/*.py 重新构建时, apt/pip install 及低频文件层全部命中缓存
+- 前端阶段原本已符合最佳实践(package.json → install → 源码), 未动
+
 ### fix — 主力意图卡片净额翻倍(盘后增量续拉重复拉取)
 
 **fix(dark_flow): 增量合并改三元组指纹去重 + 总量守恒校验**

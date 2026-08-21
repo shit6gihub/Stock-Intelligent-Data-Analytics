@@ -131,16 +131,22 @@ RUN pip install --no-cache-dir --timeout 300 --retries 8 -i https://mirrors.aliy
 # 这样可以减小镜像体积，并支持跨版本持久化
 
 # 复制后端代码
-COPY src/ ./src/
-COPY data_source/ ./data_source/
-# thsdk L2 SDK(从 vendor 阶段复制; arm64 上 .so 加载失败时各端点懒加载降级)
-COPY --from=thsdk-vendor /thsdk/ /usr/local/lib/python3.11/site-packages/thsdk/
+# 分层优化(2026-08-21): 按变更频率升序 COPY —— 低频变的(server.py/prompts/strategies)
+# 在前, 高频变的(src/ data_source/)在后。只改 src/ 时, 前面低频层的缓存仍然命中。
 COPY server.py ./
 COPY prompts/ ./prompts/
 COPY strategies/ ./strategies/
+COPY src/ ./src/
+COPY data_source/ ./data_source/
+
+# thsdk L2 SDK(从 vendor 阶段复制; arm64 上 .so 加载失败时各端点懒加载降级)
+# 独立成层且放在业务代码后: vendor 镜像 tag 变化只失效这一层及之后的层
+COPY --from=thsdk-vendor /thsdk/ /usr/local/lib/python3.11/site-packages/thsdk/
 
 # 写入版本号，并确保构建异常时不会产出空版本文件
 # ACR 无 build-arg 时读仓库 VERSION 文件兜底(与前端阶段一致, 2026-08-14)
+# 注意: VERSION 每次发版必变, 放在最后 —— 只失效版本号/静态文件这两个末层,
+# 不影响上面的依赖层和代码层缓存
 COPY VERSION ./
 RUN VERSION_VAL="${VERSION}"; \
     if [ "${VERSION}" = "dev" ] && [ -f VERSION ] && [ -s VERSION ]; then \
