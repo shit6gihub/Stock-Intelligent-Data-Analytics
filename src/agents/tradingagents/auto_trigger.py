@@ -30,7 +30,7 @@ DEFAULT_COOLDOWN_HOURS = 24
 
 
 def _read_auto_trigger_config(db: Session) -> dict | None:
-    """从 AgentConfig.raw_config 读 auto_trigger 配置。
+    """从 AgentConfig.config 读 auto_trigger 配置。
 
     Returns:
         {
@@ -42,7 +42,7 @@ def _read_auto_trigger_config(db: Session) -> dict | None:
     agent = db.query(AgentConfig).filter(AgentConfig.name == "tradingagents").first()
     if not agent:
         return None
-    raw = agent.raw_config or {}
+    raw = agent.config or {}
     auto = raw.get("auto_trigger") or {}
     if not auto.get("enabled"):
         return None
@@ -78,7 +78,7 @@ def _budget_allows(db: Session) -> bool:
     agent = db.query(AgentConfig).filter(AgentConfig.name == "tradingagents").first()
     if not agent:
         return True
-    raw = agent.raw_config or {}
+    raw = agent.config or {}
     budget = float(raw.get("monthly_budget_usd") or 0.0)
     if budget <= 0:
         return True  # 没设上限 = 不限制
