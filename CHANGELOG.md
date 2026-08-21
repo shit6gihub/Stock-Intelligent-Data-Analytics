@@ -2,6 +2,19 @@
 
 ## 2026-08-21
 
+### fix — 国内生产 PG created_at 大面积 NULL(数据"像昨天的"根因)
+
+**fix(db): 国内生产全库回填 NULL created_at + 补 default now()**
+
+- 现象: 用户反馈"主力资金数据不对, 可能是昨天的"
+- 根因: 国内生产 PG 多张表(stock_suggestions 1447行/notifications 16行/
+  stock_context_snapshots 192行/strategy_* 等)的 ORM 写入行 created_at=NULL
+  (列无 default, SQLAlchemy 模型 default 不写 DB 层) → 按 created_at 排序/
+  过滤时今天的数据沉底, 界面显示旧数据
+- 修复: 全库扫描 30+ 表, id 邻近锚点回填 NULL, 全部补 default now();
+  另修正 18 行被 expires_at-6h 错误回填到未来的行(expires_at-16h)
+- 验证: suggestions 今日=734 / 最新=今天16:39; 未来行=0; 无 default 表=0
+
 ### fix — 主力意图模块全面体检(2026-08-21 收盘后)
 
 **验证结论: 4 个入口全部正常**
