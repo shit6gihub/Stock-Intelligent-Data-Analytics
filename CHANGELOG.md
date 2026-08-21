@@ -2,6 +2,27 @@
 
 ## 2026-08-21
 
+### fix — 首页 ErrorBoundary 崩溃 "页面遇到了问题" (v0.3.3)
+
+**fix(dashboard): 防御后端数值类型变化导致 TypeError: c.price.toFixed is not a function**
+
+**根因**(用户报"首页报错" + console 显示 `c.price.toFixed is not a function`):
+- 切到 PG 后,部分后端 `numeric/DECIMAL` 字段经 psycopg2 → JSON 序列化变成字符串
+- 前端 `Dashboard.tsx` / `DiscoveryPanel.tsx` 直接 `.toFixed()` 抛 TypeError
+- `AppErrorBoundary` 兜底 → 整页显示"页面遇到了问题 / 重试 / 回到首页"
+- 用户刷新偶发可恢复,但非交易时段数据稀疏时也可能触发
+
+**修复**:
+- `Dashboard.tsx` 加 `safeNum / safeFixed / safeFlow` helper(string / null / undefined / 非有限数 → fallback)
+- 替换所有 `.toFixed()` 调用:`ix.current_price / b.net_inflow / marketFlow.{total_main_flow, total_amount, sh_flow, sz_flow}`
+- `DiscoveryPanel.tsx` 三个 map(`hotBoards / visibleHotStocks / boardStocks`)的 `pct` 显式做类型转换 `typeof rawPct === 'number' ? rawPct : Number(rawPct)` + `isFinite()` 防御
+- `s.price` 防御:`typeof === 'number' && isFinite` 直接 toFixed;否则 `Number(s.price)` 试一次;都不行才 `--`
+
+**验证**:
+- Playwright 公网: 错误页? False
+- console errors: 0, pageerrors: 0
+- 31 个 API 全部 200, 异动池/热榜/板块资金流全部正常渲染
+
 ### fix — 首页 Onboarding 遮罩拦截点击 (v0.3.3)
 
 **fix(dashboard): Onboarding 不再自动弹出** — `Dashboard.tsx` 移除 `useEffect` 里的
