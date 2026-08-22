@@ -32,12 +32,14 @@ def db():
     )
     Base.metadata.create_all(engine)
     s = sessionmaker(bind=engine)()
-    accounts_api._PORTFOLIO_RESULT_CACHE.clear()
+    # 2026-08-22: 组合结果缓存已迁 biz_cache(L1+Redis), 测试隔离改清 biz_cache
+    from src.web.cache.biz_cache import biz_cache
+    biz_cache.clear()
     try:
         yield s
     finally:
         s.close()
-        accounts_api._PORTFOLIO_RESULT_CACHE.clear()
+        biz_cache.clear()
 
 
 def _add_position(db, symbol: str, qty: float):

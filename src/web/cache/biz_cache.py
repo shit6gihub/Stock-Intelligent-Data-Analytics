@@ -39,6 +39,9 @@ REDIS_DISABLED = os.getenv("REDIS_DISABLED", "").strip().lower() in (
 _REDIS_CONNECT_COOLDOWN = 30.0
 # 单次 Redis 操作超时(秒)
 _REDIS_OP_TIMEOUT = 1.5
+# 业务缓存统一 key 前缀: 与限流(middleware 的 u:/i: key)和 stream(stream:*)
+# 天然隔离, 也让 clear() 能安全地只清业务缓存而 flushdb 不误伤其他用途。
+_KEY_PREFIX = "biz:"
 
 
 class BizCache:
@@ -114,13 +117,13 @@ class BizCache:
         if r is None:
             return None
         try:
-            raw = r.get(key)
+            raw = r.get(_KEY_PREFIX + key)
             if raw is None:
                 return None
             value = json.loads(raw)
             with self._lock:
                 # 回填 L1(继承剩余 TTL)
-                ttl = r.ttl(key)
+                ttl = r.ttl(_KEY_PREFIX + key)
                 expires_at = now + (ttl if ttl and ttl > 0 else 30.0)
                 self._l1[key] = (expires_at, value)
             return value
@@ -142,9 +145,9 @@ class BizCache:
         try:
             payload = json.dumps(value, default=str, ensure_ascii=False)
             if ttl and ttl > 0:
-                r.setex(key, ttl, payload)
+                r.set(_KEY_PREFIX + key, payload, ex=ttl)
             else:
-                r.set(key, payload)
+                r.set(_KEY_PREFIX + key, payload)
             return True
         except Exception as e:
             logger.debug(f"[biz-cache] set({key}) failed: {e}")
@@ -179,14 +182,28 @@ class BizCache:
         if r is None or not keys:
             return 0
         try:
-            return int(r.delete(*keys))
+            return int(r.delete(*[_KEY_PREFIX + k for k in keys]))
         except Exception:
             self._redis_down()
             return 0
 
     def clear(self) -> None:
+        """清空业务缓存: L1 直接清; L2 用 SCAN 只删 biz:* 前缀(不 flushdb 误伤限流/stream)。"""
         with self._lock:
             self._l1.clear()
+        r = self._ensure_redis()
+        if r is None:
+            return
+        try:
+            cursor = 0
+            while True:
+                cursor, keys = r.scan(cursor, match=_KEY_PREFIX + "*", count=500)
+                if keys:
+                    r.delete(*keys)
+                if cursor == 0:
+                    break
+        except Exception:
+            self._redis_down()
 
     def stats(self) -> dict:
         """给 /health 端点: 显示 L1 条目数 + Redis 连通状态。"""
