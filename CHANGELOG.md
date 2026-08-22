@@ -1,5 +1,11 @@
 # Changelog
 
+### fix — 哨兵推送正文中文化(人话可读, 不用猜英文标识)
+
+- 标题: 数据质量哨兵[FAIL] → 数据质量哨兵: 发现异常
+- 正文: `tick_reconciliation:ok; null_created_at:fail` 逐项翻译成
+  ✅ 逐笔对账: 正常 / ❌ 时间戳缺失: 异常 — 细节 / ⚠️ 建议数突降: 警告 — 细节
+
 ### fix — 哨兵推送目标修复(生产渠道全是用户级, user_id=None 推不出去)
 
 - 生产 notify_channels 全部带 user_id(用户级), 哨兵 user_id=None 只匹配全局

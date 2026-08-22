@@ -251,6 +251,38 @@ def _aggregate(checks: list[dict]) -> str:
     return "ok"
 
 
+# 检查项中文名(推送正文用, 让人不用猜英文标识)
+_CHECK_LABELS = {
+    "tick_reconciliation": "逐笔对账",
+    "null_created_at": "时间戳缺失",
+    "suggestion_drop": "建议数突降",
+    "failure_notifications": "失败通知",
+}
+_STATUS_LABELS = {"ok": "正常", "warn": "警告", "fail": "异常"}
+_OVERALL_LABELS = {
+    "ok": "全部正常",
+    "warn": "有警告",
+    "fail": "发现异常",
+}
+
+
+def _human_body(checks: list[dict]) -> str:
+    """把 checks 翻译成人话(推送正文): 每项一行「中文项名: 状态 — 细节」。
+
+    detail 本身已是中文; ok 项只给状态不带细节, 减少噪音。
+    """
+    lines = []
+    for c in checks:
+        name = _CHECK_LABELS.get(c.get("check"), c.get("check"))
+        status = _STATUS_LABELS.get(c.get("status"), c.get("status"))
+        icon = {"ok": "✅", "warn": "⚠️", "fail": "❌"}.get(c.get("status"), "·")
+        line = f"{icon} {name}: {status}"
+        if c.get("status") != "ok" and c.get("detail"):
+            line += f" — {c['detail']}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _write_notification(overall: str, checks: list[dict], now: datetime) -> None:
     """写一条数据质量哨兵通知, 并触发外发推送(走 notify_center 统一入口)。
 
@@ -268,8 +300,9 @@ def _write_notification(overall: str, checks: list[dict], now: datetime) -> None
     from src.web.models import User
 
     level = "error" if overall == "fail" else "warning"
-    title = f"数据质量哨兵[{overall.upper()}] {now.strftime('%Y-%m-%d %H:%M')}"
-    body = "; ".join(f"{c['check']}:{c['status']}" for c in checks)
+    overall_cn = _OVERALL_LABELS.get(overall, overall)
+    title = f"数据质量哨兵: {overall_cn} {now.strftime('%Y-%m-%d %H:%M')}"
+    body = _human_body(checks)
 
     target_user_ids: list[str] = []
     try:
