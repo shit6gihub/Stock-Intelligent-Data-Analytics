@@ -99,6 +99,9 @@ _TOOL_STAGE_LABELS = {
     "get_main_flow_compare": "正在比对主力三源(腾讯逐笔/同花顺L2/恒生DDE)...",
     "get_delta_series": "正在计算秒级Delta序列(逐笔穿透)...",
     "get_orderbook": "正在采集盘口演变快照(THS L2 20档)...",
+    "get_event_catalyst": "正在推理事件催化与预期差(公告→受益链)...",
+    "get_intent_explain": "正在解读主力意图(规则结论+AI解释)...",
+    "get_factor_ic_report": "正在生成因子IC归因报告...",
 }
 
 # 画像注入节流: profile_text 截断 + rules 只取前 N 条, 避免每次对话占过多 token
@@ -495,6 +498,50 @@ CHAT_TOOLS = [
                     "market": {"type": "string", "description": "市场代码, 仅支持 CN", "default": "CN"},
                 },
                 "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_event_catalyst",
+            "description": "事件驱动预期差分析: 把当日公告/新闻推理成催化信号 + 受益链 + 预期差。仅限A股(CN)。入参 symbol=6位A股代码如002361。基于当日公告做因果链推理(如停产→供给收缩→涨价→受益股), 输出催化题材/方向/置信度/受益股池/预期差(利好未反应=高预期差=潜伏价值, 利好已涨=兑现追高)。用于回答「这公告利好什么」「有哪些受益股」「预期差大不大」等问题。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "6位A股代码, 如 002361"},
+                    "market": {"type": "string", "description": "市场代码, 仅支持 CN", "default": "CN"},
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_intent_explain",
+            "description": "主力意图 AI 解释: 对规则算法算出的主力意图结论, 用 AI 结合内外盘/拆单/筹码/位置给出「为什么」+ 置信度 + 方向(吸筹/派发/洗盘/中性)。仅限A股(CN)。入参 symbol=6位A股代码如002361。规则给结论, AI 只做解释不改变结论。用于回答「为什么说主力在吸筹」「这个主力意图怎么看」等需要解释的问题。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "6位A股代码, 如 002361"},
+                    "market": {"type": "string", "description": "市场代码, 仅支持 CN", "default": "CN"},
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_factor_ic_report",
+            "description": "因子 IC 归因报告: 读取因子有效性评估(IC/IR)结果, 用 AI 解读哪些因子有真实 alpha、哪些失效、哪些市态依赖, 并给出调权建议。仅限A股(CN)。入参 market 默认 CN。用于回答「哪些因子最近有效」「因子权重该怎么调」等问题。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "market": {"type": "string", "description": "市场代码, 仅支持 CN", "default": "CN"},
+                },
+                "required": [],
             },
         },
     },
@@ -1508,6 +1555,84 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
             except Exception as e:
                 logger.warning(f"get_orderbook 工具失败 [{symbol}]: {e}")
                 return f"盘口演变分析失败: {str(e)[:100]}"
+        elif name == "get_event_catalyst":
+            symbol = args.get("symbol", "")
+            market = args.get("market", "CN")
+            if market != "CN":
+                return "事件催化分析仅支持 A 股(CN)。"
+            try:
+                import asyncio
+                from src.core.event_catalyst_engine import analyze_event_catalyst
+
+                result = await asyncio.to_thread(analyze_event_catalyst, symbol, None)
+                if not result:
+                    return f"{symbol} 当日无公告事件, 或 AI 推理失败(静默降级), 无法生成催化信号。"
+                gap = result.get("expectation_gap") or {}
+                lines = [
+                    f"[数据源: 当日公告→AI推理] {symbol} 事件催化与预期差:",
+                    f"  催化题材: {result.get('catalyst')}",
+                    f"  方向: {result.get('direction')} | 置信度: {result.get('confidence')}",
+                ]
+                pool = result.get("beneficiary_pool") or []
+                if pool:
+                    lines.append(f"  受益链: {' / '.join(pool)}")
+                if gap:
+                    lines.append(f"  预期差: {gap.get('level')} — {gap.get('note')}")
+                if result.get("reason"):
+                    lines.append(f"  理由: {result['reason']}")
+                return "\n".join(lines)
+            except Exception as e:
+                logger.warning(f"get_event_catalyst 工具失败 [{symbol}]: {e}")
+                return f"事件催化分析失败: {str(e)[:100]}"
+        elif name == "get_intent_explain":
+            symbol = args.get("symbol", "")
+            market = args.get("market", "CN")
+            if market != "CN":
+                return "主力意图解释仅支持 A 股(CN)。"
+            try:
+                import asyncio
+                from src.core.dark_flow import compute_dark_flow
+                from src.core.intent_explain import explain_main_intent
+
+                dark = await asyncio.to_thread(compute_dark_flow, symbol)
+                if not dark:
+                    return f"未能获取 {symbol} 的主力意图数据(可能盘前无数据)。"
+                result = await asyncio.to_thread(explain_main_intent, dark, None)
+                if not result:
+                    return f"[数据源: 主力意图规则算法] {symbol} 数据不足或 AI 解释失败(静默降级)。规则结论: {dark.get('signal', '未知')}"
+                return (
+                    f"[数据源: 主力意图规则算法 + AI解释] {symbol}\n"
+                    f"  方向: {result.get('direction')} | 置信度: {result.get('confidence')}\n"
+                    f"  为什么: {result.get('why')}\n"
+                    f"  (规则结论: {dark.get('signal', '未知')})"
+                )
+            except Exception as e:
+                logger.warning(f"get_intent_explain 工具失败 [{symbol}]: {e}")
+                return f"主力意图解释失败: {str(e)[:100]}"
+        elif name == "get_factor_ic_report":
+            market = args.get("market", "CN")
+            if market != "CN":
+                return "因子 IC 归因报告仅支持 A 股(CN)。"
+            try:
+                import asyncio
+                from src.core.factor_ic_report import generate_factor_ic_report
+
+                result = await asyncio.to_thread(generate_factor_ic_report, market, None)
+                if not result:
+                    return f"[数据源: 因子IC/IR评估] {market} 因子样本不足或 AI 归因失败(静默降级), 无法生成报告。"
+                lines = [
+                    f"[数据源: 因子IC/IR评估 + AI归因] {market} 因子有效性归因:",
+                    f"  总评: {result.get('summary')}",
+                ]
+                for fa in result.get("factor_assessment") or []:
+                    lines.append(f"  - {fa.get('factor_code')}: {fa.get('assessment')} — {fa.get('note')}")
+                if result.get("adjustment_suggestion"):
+                    lines.append(f"  调权建议: {result['adjustment_suggestion']}")
+                lines.append(f"  置信度: {result.get('confidence')}")
+                return "\n".join(lines)
+            except Exception as e:
+                logger.warning(f"get_factor_ic_report 工具失败 [{market}]: {e}")
+                return f"因子 IC 归因报告失败: {str(e)[:100]}"
         else:
             return f"未知工具: {name}"
     except Exception as e:

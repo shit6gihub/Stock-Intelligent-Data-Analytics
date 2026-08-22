@@ -2,6 +2,38 @@
 
 ## 2026-08-22
 
+### feature — 三个 AI 推理层模块 + 注册为对话工具(DeepSeek 量化推理)
+
+**feature(core): 新增事件驱动预期差 / 主力意图 AI 解释 / 因子 IC 归因 三模块**
+
+- `src/core/event_catalyst_engine.py`: 事件驱动预期差引擎。当日公告 → 因果链推理
+  (停产→供给收缩→涨价→受益链) → `{catalyst, direction, confidence, beneficiary_pool,
+  expectation_gap{level,note}, reason}`。空事件不调 LLM, 失败静默降级。
+- `src/core/intent_explain.py`: 主力意图 AI 解释层。规则给结论(dark.signal) + DeepSeek
+  给「为什么 + 置信度 + 方向(吸筹/派发/洗盘/中性)」。data_status=insufficient 不解释,
+  规则仍是主, AI 只做解释不改结论。
+- `src/core/factor_ic_report.py`: 因子 IC 归因报告。读 factor_eval 的 IC/IR, DeepSeek
+  输出「哪些因子有真实 alpha / 失效 / 市态依赖」+ 调权建议。全 ic=None 不调 LLM。
+- 三者均纯函数 + LLM 层分离, 复用 intraday_monitor 的 db 场景绑定 + 8s 超时 +
+  静默降级模式。
+- 注册为 3 个对话工具: `get_event_catalyst` / `get_intent_explain` /
+  `get_factor_ic_report`(chat.py CHAT_TOOLS + _execute_tool + stage labels)。
+
+**验证**: test_event_catalyst_engine 10 + test_intent_explain 18 +
+test_factor_ic_report 15 + test_chat_ai_layer_tools 9 = 52 passed
+
+### feature — 新增 A 股短线情绪周期判别器
+
+**feature(core): 新增 sentiment_cycle 纯函数情绪周期判别模块**
+
+- 新增 `src/core/sentiment_cycle.py`:
+  - `classify_sentiment_cycle(metrics)`: 判断冰点/修复/发酵/高潮/退潮 + 置信度 + 证据 + 操作提示
+  - `format_cycle(result)`: 文本格式化
+  - 阈值集中文件顶部常量(经验值, 后续可 IC 标定)
+- 修复置信度计算: 用命中周期满分做分母(非全局最大), 修复/发酵满分周期也能到高置信度
+
+**验证**: tests/test_sentiment_cycle.py 15 passed
+
 ### feature — 主力意图/暗盘/内外盘接入交易智能体(多智能体委员会资金面裁判)
 
 **feature(tradingagents): 把 dark_flow 暗盘体系喂给 TradingAgents 多智能体委员会**
