@@ -251,20 +251,24 @@ def _aggregate(checks: list[dict]) -> str:
     return "ok"
 
 
-def _write_notification(db, overall: str, checks: list[dict], now: datetime) -> None:
-    from src.web.models import Notification
+def _write_notification(overall: str, checks: list[dict], now: datetime) -> None:
+    """写一条数据质量哨兵通知, 并触发外发推送(走 notify_center 统一入口)。
+
+    之前直接 db.add 绕过了 push_notification, 导致: ①push_status 为空(前端显示
+    "未送达") ②根本不外发。改为走 push_notification, 站内落库 + 外发 + 回写状态
+    一步到位。
+    """
+    from src.core.notify_center import push_notification
 
     level = "error" if overall == "fail" else "warning"
     title = f"数据质量哨兵[{overall.upper()}] {now.strftime('%Y-%m-%d %H:%M')}"
     body = "; ".join(f"{c['check']}:{c['status']}" for c in checks)
-    db.add(
-        Notification(
-            category="system",
-            level=level,
-            title=title,
-            body=body,
-            source=_SOURCE,
-        )
+    push_notification(
+        title=title,
+        body=body,
+        category="system",
+        level=level,
+        source=_SOURCE,
     )
 
 
@@ -300,8 +304,7 @@ def run_dq_checks(db) -> dict:
 
     if overall != "ok":
         try:
-            _write_notification(db, overall, checks, now)
-            db.commit()
+            _write_notification(overall, checks, now)
         except Exception as e:
             logger.warning(f"[dq] 写 Notification 失败: {e}", exc_info=True)
     return result

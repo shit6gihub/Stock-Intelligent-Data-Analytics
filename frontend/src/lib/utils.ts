@@ -34,17 +34,18 @@ export function useLocalStorage<T>(key: string, defaultValue: T): [T, (value: T 
 
 /**
  * 解析后端时间字符串为 Date。
- * 后端时间全部为 SQLite UTC(func.now(), 序列化时无时区标记),
- * 裸字符串直接 new Date() 会被当作浏览器本地时间 → 显示偏移 8 小时。
- * 无时区标记的统一按 UTC 解析, 再交给 toLocale* 转本地显示。
+ * 后端时间(PostgreSQL `timestamp without time zone` + func.now(), PG 时区
+ * Asia/Shanghai)序列化后是【北京时间的裸字符串】, 无时区标记。
+ * 裸字符串直接 new Date() 会被浏览器按本地时间解析 → 正确显示北京时间。
+ * 若字符串自带时区标记(Z / ±HH:MM)则按标记解析。
  */
 export function parseServerTime(iso?: string | null): Date {
   if (!iso) return new Date(NaN)
   const s = iso.trim()
   const hasTz = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(s)
   if (hasTz) return new Date(s)
-  // 含时间部分(HH:MM)的裸字符串按 UTC 解析; 纯日期(YYYY-MM-DD) JS 规范本身按 UTC 解析, 不加 Z
-  return new Date(/\d{2}:\d{2}/.test(s) ? `${s}Z` : s)
+  // 无时区标记的裸字符串 = 后端存的是北京时间(naive), 按本地时间解析即可
+  return new Date(s)
 }
 
 /**

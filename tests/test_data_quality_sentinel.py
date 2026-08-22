@@ -70,8 +70,8 @@ def _fake_dark_flow(total):
 
 
 class TestNullCreatedAt:
-    def test_null_triggers_warn_and_notify(self, db, afternoon):
-        """三表皆置 created_at=NULL, 应 warn 并写 notification。
+    def test_null_triggers_warn_and_notify(self, db, afternoon, monkeypatch):
+        """三表皆置 created_at=NULL, 应 warn 并调用 push_notification。
 
         注意: ORM 传 None 会被 server_default=func.now() 覆盖成当前时间,
         必须用原始 SQL 显式写 NULL 才能模拟真实问题数据。
@@ -91,6 +91,12 @@ class TestNullCreatedAt:
         ))
         db.commit()
 
+        pushed = []
+        monkeypatch.setattr(
+            "src.core.notify_center.push_notification",
+            lambda **kw: pushed.append(kw) or 1,
+        )
+
         res = run_dq_checks(db)
 
         null_check = next(c for c in res["checks"] if c["check"] == "null_created_at")
@@ -98,13 +104,12 @@ class TestNullCreatedAt:
         assert null_check["value"]["stock_suggestions"] == 1
         assert null_check["value"]["notifications"] == 1
         assert null_check["value"]["agent_runs"] == 1
-        # 三表 NULL>0 触发 warn → 聚合 warn → 写 error? 不, warning
+        # 三表 NULL>0 触发 warn → 聚合 warn → 写 warning
         assert res["overall"] == "warn"
-        notif = db.query(Notification).filter(
-            Notification.source == "data_quality_sentinel"
-        ).all()
-        assert len(notif) == 1
-        assert notif[0].level == "warning"
+        assert len(pushed) == 1
+        assert pushed[0]["level"] == "warning"
+        assert pushed[0]["category"] == "system"
+        assert pushed[0]["source"] == "data_quality_sentinel"
 
 
 class TestTickReconciliation:
@@ -114,16 +119,19 @@ class TestTickReconciliation:
         monkeypatch.setattr(dq, "compute_dark_flow", _fake_dark_flow(16_000_000))
         monkeypatch.setattr(dq, "TencentQuoteVendor", _FakeVendor)
 
+        pushed = []
+        monkeypatch.setattr(
+            "src.core.notify_center.push_notification",
+            lambda **kw: pushed.append(kw) or 1,
+        )
+
         res = run_dq_checks(db)
 
         tick = next(c for c in res["checks"] if c["check"] == "tick_reconciliation")
         assert tick["status"] == "fail"
         assert res["overall"] == "fail"
-        notif = db.query(Notification).filter(
-            Notification.source == "data_quality_sentinel"
-        ).all()
-        assert len(notif) == 1
-        assert notif[0].level == "error"
+        assert len(pushed) == 1
+        assert pushed[0]["level"] == "error"
 
     def test_skipped_before_eod(self, db, monkeypatch):
         """盘中(14:00)不做逐笔对账, 该项为 ok。"""
@@ -150,22 +158,25 @@ class TestNoNotificationWhenAllOk:
 
 class TestWarnWritesNotification:
     def test_warn_writes_warning_notify(self, db, afternoon, monkeypatch):
-        """逐笔总额 120% → warn → 写 warning notification。"""
+        """逐笔总额 120% → warn → 调用 push_notification(level=warning)。"""
         _add_stock(db, "002361")
         monkeypatch.setattr(dq, "compute_dark_flow", _fake_dark_flow(12_000_000))
         monkeypatch.setattr(dq, "TencentQuoteVendor", _FakeVendor)
+
+        pushed = []
+        monkeypatch.setattr(
+            "src.core.notify_center.push_notification",
+            lambda **kw: pushed.append(kw) or 1,
+        )
 
         res = run_dq_checks(db)
 
         tick = next(c for c in res["checks"] if c["check"] == "tick_reconciliation")
         assert tick["status"] == "warn"
         assert res["overall"] == "warn"
-        notif = db.query(Notification).filter(
-            Notification.source == "data_quality_sentinel"
-        ).all()
-        assert len(notif) == 1
-        assert notif[0].level == "warning"
-        assert notif[0].category == "system"
+        assert len(pushed) == 1
+        assert pushed[0]["level"] == "warning"
+        assert pushed[0]["category"] == "system"
 
 
 class TestFailureNotifications:
