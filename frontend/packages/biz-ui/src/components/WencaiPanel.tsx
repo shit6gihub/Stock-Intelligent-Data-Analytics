@@ -53,7 +53,8 @@ function fmtCell(col: string, v: unknown): string {
   return String(v)
 }
 
-export default function WencaiPanel() {
+// embedded: 嵌入选股工具卡等宿主容器时为 true — 去掉自带 card 壳与标题(宿主已提供)
+export default function WencaiPanel({ embedded = false }: { embedded?: boolean }) {
   const [query, setQuery] = useState('')
   const [rows, setRows] = useState<WencaiRow[]>([])
   const [available, setAvailable] = useState<boolean | null>(null)
@@ -108,12 +109,14 @@ export default function WencaiPanel() {
   const dataSourceDown = available === false && !error && note.includes('未接入')
 
   return (
-    <div className="card p-4 mb-4">
-      <div className="flex items-center gap-2 mb-3">
-        <Sparkles className="w-4 h-4 text-primary" />
-        <h2 className="text-[14px] font-semibold text-foreground">问财选股</h2>
-        <span className="text-[11px] text-muted-foreground">同花顺 AI 自然语言选股(需 L2 问财数据源)</span>
-      </div>
+    <div className={embedded ? '' : 'card p-4 mb-4'}>
+      {!embedded && (
+        <div className="flex items-center gap-2 mb-3">
+          <Sparkles className="w-4 h-4 text-primary" />
+          <h2 className="text-[14px] font-semibold text-foreground">问财选股</h2>
+          <span className="text-[11px] text-muted-foreground">同花顺 AI 自然语言选股(需 L2 问财数据源)</span>
+        </div>
+      )}
 
       {/* 预设条件 chips */}
       <div className="flex items-center gap-2 flex-wrap mb-3">

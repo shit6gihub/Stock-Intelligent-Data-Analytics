@@ -52,6 +52,8 @@ export interface ScanRequest {
   universe?: 'all' | 'watchlist'
   min_score?: number
   symbol_limit?: number
+  /** 自定义股票池(共振查询精筛): 传入则只扫这几只, 优先于 universe, ≤100 只 */
+  symbols?: string[]
 }
 
 export interface ScanItem {

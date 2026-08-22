@@ -1214,6 +1214,7 @@ def refresh_strategy_signals(
     market_scan_limit: int = 80,
     max_kline_symbols: int = 72,
     limit_candidates: int = 2000,
+    skip_market_scan: bool = False,
 ) -> dict:
     ensure_strategy_catalog()
     if rebuild_candidates:
@@ -1222,6 +1223,7 @@ def refresh_strategy_signals(
             snapshot_date=snapshot_date or None,
             market_scan_limit=market_scan_limit,
             max_kline_symbols=max_kline_symbols,
+            skip_market_scan=skip_market_scan,
         )
 
     db = SessionLocal()

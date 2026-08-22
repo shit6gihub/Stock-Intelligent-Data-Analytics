@@ -12,7 +12,7 @@ from typing import Optional
 
 import yaml
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -94,6 +94,9 @@ class ScanRequest(BaseModel):
     universe: str = "all"    # all=全市场, watchlist=自选+种子池
     min_score: float = 0.0   # 最低分过滤
     symbol_limit: int = 0    # 0=不限, 否则限制扫描股票数(调试用)
+    # 自定义股票池(2026-08-22 共振查询): 传入则优先于 universe,
+    # 只扫这几只(如 问小达+问财 合并后的候选), 上限 100 防滥用
+    symbols: list[str] = Field(default_factory=list)
 
 
 def _quote_to_dict(q) -> dict:
@@ -270,6 +273,7 @@ async def scan_strategy(req: ScanRequest):
 
     - universe=all: 全市场 A 股(优先缓存列表, 东财/akshare 兜底)
     - universe=watchlist: 自选 + 内置种子池(快, ~200 只)
+    - symbols 非空: 只扫传入的自定义股票池(共振查询精筛用, ≤100 只)
     - 行情走腾讯批量接口(免费, 100 只/批, 盘中含 PE/PB/市值全字段)
     """
     from src.web.stock_list import get_stock_list
@@ -283,7 +287,11 @@ async def scan_strategy(req: ScanRequest):
 
     # 1. 确定扫描股票池
     mkt = (req.market or "CN").strip().upper()
-    if req.universe == "watchlist":
+    if req.symbols:
+        # 自定义股票池(共振查询): 只保留 6 位数字码, 去重, 截断 100
+        symbols = list(dict.fromkeys(s.strip() for s in req.symbols if str(s).strip().isdigit()))
+        symbols = [s for s in symbols if s.startswith(("60", "00", "30", "68"))][:100]
+    elif req.universe == "watchlist":
         from src.web.database import SessionLocal
         from src.web.models import Stock
         db = SessionLocal()

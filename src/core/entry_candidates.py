@@ -1548,11 +1548,23 @@ def refresh_entry_candidates(
     snapshot_date: str | None = None,
     market_scan_limit: int = 60,
     max_kline_symbols: int = 72,
+    skip_market_scan: bool = False,
 ) -> dict:
     snapshot = (snapshot_date or date.today().strftime("%Y-%m-%d")).strip()
     suggestions = _load_latest_suggestions(limit=max_inputs)
-    market_scan_map = _load_market_scan_inputs(limit_per_market=max(20, int(market_scan_limit)))
-    _persist_market_scan_snapshot(snapshot, market_scan_map)
+    # skip_market_scan(2026-08-22 共振查询联动): 交互查询落库后秒级重算共振,
+    # 跳过东财榜单抓取(全量重算的重头); 市场池沿用 7 日内已持久化的快照, 不清空
+    if skip_market_scan:
+        market_scan_map = {}
+        for market in MARKET_SCAN_TARGET_MARKETS:
+            market_scan_map.update(
+                _load_market_scan_snapshot_inputs(
+                    market=market, limit=max(20, int(market_scan_limit))
+                )
+            )
+    else:
+        market_scan_map = _load_market_scan_inputs(limit_per_market=max(20, int(market_scan_limit)))
+        _persist_market_scan_snapshot(snapshot, market_scan_map)
     holding_keys = _load_holding_keys()
 
     # 多源入池(2026-08-21 P1): 策略/竞价/问小达/问财 种子与主源同池,
