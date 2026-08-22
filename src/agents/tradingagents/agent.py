@@ -293,6 +293,19 @@ class TradingAgentsAgent(BaseAgent):
                 logger.warning(f"[TA] A股题材情绪采集失败: {e}")
                 a_share_sentiment = None
 
+        # 主力意图/暗盘/内外盘(2026-08-22): 把 dark_flow 体系作为资金面裁判喂给
+        # 多智能体委员会。腾讯逐笔口径(主力/超大单/大单/参与度/买占比/5日阶段/
+        # 竞价/筹码峰/成本带/拆单/内外盘口诀/背离/时段节奏)。仅 A 股;失败静默降级。
+        main_intent = None
+        if stock.market.value == "CN":
+            try:
+                from src.agents.intraday_monitor import _main_intent_summary
+
+                main_intent = await asyncio.to_thread(_main_intent_summary, stock.symbol)
+            except Exception as e:
+                logger.debug(f"[TA] 主力意图采集失败(降级): {e}")
+                main_intent = None
+
         return {
             "stock": stock,
             "quote": quote_dict,
@@ -302,6 +315,7 @@ class TradingAgentsAgent(BaseAgent):
             "financial": financial,
             "technical": technical,
             "a_share_sentiment": a_share_sentiment,
+            "main_intent": main_intent,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -403,6 +417,14 @@ class TradingAgentsAgent(BaseAgent):
         portfolio_context_text = (
             f"{meta_context}\n\n{portfolio_part}" if portfolio_part else meta_context
         )
+
+        # 主力意图/暗盘/内外盘接入(2026-08-22): 把 dark_flow 体系作为资金面裁判
+        # 注入 past_context, 让多智能体委员会(尤其技术面/投委会)真正用上暗盘体系。
+        from src.agents.tradingagents.portfolio_context import build_main_intent_context
+
+        main_intent_block = build_main_intent_context(data.get("main_intent"))
+        if main_intent_block:
+            portfolio_context_text = f"{portfolio_context_text}\n\n{main_intent_block}"
 
         # 统一 LLM 配置中心: trading_agents 场景模型绑定 + 画像注入(无 db/绑定失败则原样)。
         # 效果: ① deep/quick 模型未显式指定时, build_ta_llm_config 会回落到

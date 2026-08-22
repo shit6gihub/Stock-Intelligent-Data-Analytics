@@ -2,6 +2,21 @@
 
 ## 2026-08-22
 
+### feature — 主力意图/暗盘/内外盘接入交易智能体(多智能体委员会资金面裁判)
+
+**feature(tradingagents): 把 dark_flow 暗盘体系喂给 TradingAgents 多智能体委员会**
+
+- `collect()` 新增第 5 类数据采集: A 股(CN)标的并发拉 `_main_intent_summary`
+  (腾讯逐笔口径: 主力/超大单/大单净额、参与度、买占比、5日阶段、竞价、筹码峰/
+  成本带、拆单、内外盘口诀、背离、时段节奏), HK/US 跳过; 失败静默降级不阻塞主流程
+- `analyze()` 把主力意图摘要经纯函数 `build_main_intent_context` 注入
+  past_context(复用 patch_propagator 扩展通道 → PM 节点可见), 并显式标注口径
+  (腾讯逐笔 vs 资金面东财四档不同源, 判断吸筹/派发以本段为准)
+- 新增 `portfolio_context.build_main_intent_context` 纯函数(无 IO, 可单测)
+
+**验证**: tests/test_tradingagents_main_intent.py 4 passed(纯函数渲染 /
+None 空串 / collect A 股采集 / 失败降级)
+
 ### feature — Redis 业务缓存落地(L1 内存 + L2 Redis)
 
 **feature(cache): 新增统一业务缓存层 biz_cache, 业务数据缓存跨进程 + 重启不丢**

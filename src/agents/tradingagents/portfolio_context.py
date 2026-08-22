@@ -25,6 +25,25 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def build_main_intent_context(main_intent_text: str | None) -> str:
+    """把主力意图/暗盘/内外盘摘要渲染成注入 past_context 的资金面裁判段落。
+
+    腾讯逐笔口径(主力/超大单/大单/参与度/买占比/5日阶段/竞价/筹码峰/成本带/
+    拆单/内外盘口诀/背离/时段节奏),与 get_capital_flow(东财四档)不同源。
+
+    返回空串表示无数据(调用方跳过注入)。纯函数,无 IO。
+    """
+    text = (main_intent_text or "").strip()
+    if not text:
+        return ""
+    return (
+        "[Main Force Intent (主力意图, 腾讯逐笔口径)]\n"
+        f"{text}\n"
+        "(以上为主力意图规则算法结论(暗盘/拆单/内外盘口诀/背离/筹码), "
+        "判断主力吸筹还是派发以本段为准; 勿与资金面东财四档口径混淆。)"
+    )
+
+
 def build_stock_metadata_context(
     stock_symbol: str,
     stock_name: str = "",
