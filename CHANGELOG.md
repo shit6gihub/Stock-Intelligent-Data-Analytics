@@ -17,6 +17,18 @@
 **验证**: tests/test_tradingagents_main_intent.py 4 passed(纯函数渲染 /
 None 空串 / collect A 股采集 / 失败降级)
 
+### feature — 三个 L2 引擎注册为 AI 助手对话工具
+
+**feature(chat): 注册 get_main_flow_compare / get_delta_series / get_orderbook 三个 L2 对话工具**
+
+- 新增 `get_main_flow_compare`: 比对三路主力资金(腾讯逐笔/同花顺L2/恒生DDE)的一致性, 返回每路主力净额(元)及一致性评分(0-100)。仅限A股(CN), 入参 symbol=6位A股代码
+- 新增 `get_delta_series`: 基于THS L2逐笔穿透计算秒级Delta序列(主动买-主动卖金额)及顶底背离信号。先拉取全天逐笔, 再计算每秒净额、30秒平滑Delta、累计Delta、顶背离/底背离。仅限A股(CN)
+- 新增 `get_orderbook`: 采集THS L2盘口(20档)多快照演变分析: 托单/压单/撤单/幽灵单检测 + 订单簿失衡(OB) + 幽灵单比率。入参6位A股代码, 自动转THS代码。采集8个快照(间隔1.5s, 约12秒)。仅限A股(CN)
+- 三个工具均遵循项目热修规范: 同步网络调用用 asyncio.to_thread 包裹, 防阻塞事件循环; 返回文本开头带数据源口径标注; market != 'CN' 返回明确拒绝; 失败返回友好文案不抛异常
+- 新增 `_TOOL_STAGE_LABELS` 三行(流式阶段提示文案)
+
+**验证**: tests/test_chat_l2_tools.py 13 passed(成功分支含口径标注验证 / market!=CN拒绝 / 全部失败降级 / 异常降级 / 带信号渲染 / 无效symbol降级)
+
 ### feature — Redis 业务缓存落地(L1 内存 + L2 Redis)
 
 **feature(cache): 新增统一业务缓存层 biz_cache, 业务数据缓存跨进程 + 重启不丢**

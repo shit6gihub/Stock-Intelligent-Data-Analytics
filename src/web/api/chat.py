@@ -1421,6 +1421,93 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
             # thsdk 11 个高价值工具(2026-08-20, 选项 C): 通过 tools_thsdk 间接调用 thsdk_l2
             result = await _exec_thsdk_tool(name, args)
             return result
+        elif name == "get_main_flow_compare":
+            symbol = args.get("symbol", "")
+            market = args.get("market", "CN")
+            if market != "CN":
+                return "主力三源对比仅支持 A 股(CN)。"
+            try:
+                from src.core.main_flow_compare import compare_main_flow
+                result = await asyncio.to_thread(compare_main_flow, symbol)
+                if not result or result.get("consistency") is None:
+                    return f"[数据源: 腾讯逐笔/同花顺L2/恒生DDE] {symbol} 主力三源数据均不可用, 无法比对。"
+                lines = [f"[数据源: 腾讯逐笔/同花顺L2/恒生DDE] {symbol} 主力三源对比:"]
+                lines.append(f"  一致性: {result['consistency']}/100  |  发散幅度: {result['delta_pct']}%")
+                if result.get("dde_ratio") is not None:
+                    lines.append(f"  恒生DDE资金比: {result['dde_ratio']}%  |  连红天数: {result.get('rising_up_days', '-')}")
+                for src_name, src_key in [("腾讯逐笔", "tencent"), ("同花顺L2", "thsdk"), ("恒生DDE", "hengsheng")]:
+                    src = result.get(src_key)
+                    if src and src.get("available"):
+                        mn = src.get("main_net")
+                        mn_str = f"{mn:+,.0f}元" if isinstance(mn, (int, float)) else "N/A"
+                        lines.append(f"  {src_name}: 主力净额 {mn_str}")
+                    else:
+                        lines.append(f"  {src_name}: 数据暂不可用")
+                lines.append(f"  说明: {result.get('note', '')}")
+                return "\n".join(lines)
+            except Exception as e:
+                logger.warning(f"get_main_flow_compare 工具失败 [{symbol}]: {e}")
+                return f"主力三源对比失败: {str(e)[:100]}"
+        elif name == "get_delta_series":
+            symbol = args.get("symbol", "")
+            market = args.get("market", "CN")
+            if market != "CN":
+                return "秒级Delta序列分析仅支持 A 股(CN)。"
+            try:
+                import asyncio
+                from src.core.dark_l2 import fetch_l2_ticks
+                from src.core.delta_engine import compute_delta_series
+                ticks = await asyncio.to_thread(fetch_l2_ticks, symbol, "thsdk")
+                if not ticks:
+                    return f"[数据源: THS L2 逐笔] {symbol} 无逐笔数据(可能盘前或数据源异常)。"
+                result = compute_delta_series(ticks, smooth_sec=30, divergence_min_sec=120)
+                st = result["stats"]
+                signals = result.get("signals", [])
+                lines = [f"[数据源: THS L2 逐笔] {symbol} 秒级Delta序列:"]
+                lines.append(f"  逐笔条数={result['ticks']}  |  时间区间={result['first_t']}~{result['last_t']}")
+                lines.append(f"  主动买={st['total_buy_yuan']:,.0f}元  |  主动卖={st['total_sell_yuan']:,.0f}元  |  净额={st['net_yuan']:,.0f}元")
+                lines.append(f"  Delta30峰值={st['peak_delta30']:,.0f}元  |  谷值={st['trough_delta30']:,.0f}元")
+                lines.append(f"  累计Delta(末)={st['cum_net_last']:,.0f}元  |  价格区间={st['lo_price']}~{st['hi_price']}")
+                if signals:
+                    for s in signals[:5]:
+                        lines.append(f"  ⚠ {s['type']} @ {s['t']}  price={s['price']}  delta30={s['delta30']:,.0f}  since={s['since']} 持续{s['streak']}s")
+                else:
+                    lines.append("  无顶底背离信号")
+                return "\n".join(lines)
+            except Exception as e:
+                logger.warning(f"get_delta_series 工具失败 [{symbol}]: {e}")
+                return f"秒级Delta序列分析失败: {str(e)[:100]}"
+        elif name == "get_orderbook":
+            symbol = args.get("symbol", "")
+            market = args.get("market", "CN")
+            if market != "CN":
+                return "盘口演变分析仅支持 A 股(CN)。"
+            try:
+                import asyncio
+                from src.core.main_flow_compare import _to_thsdk_symbol
+                from src.core.orderbook_engine import run
+                ths_code = _to_thsdk_symbol(symbol)
+                if not ths_code:
+                    return f"无法将 {symbol} 转换为 THS 代码(仅支持6位A股代码)。"
+                result = await asyncio.to_thread(run, ths_code, 8, 1.5)
+                lines = [f"[数据源: THS L2 盘口] {symbol}({ths_code}) 盘口演变分析:"]
+                lines.append(f"  {result['summary']}")
+                events = result.get("events", [])
+                if events:
+                    lines.append(f"  盘口事件({len(events)}条):")
+                    for ev in events[:10]:
+                        note = f"  - {ev['note']}" if ev.get("note") else ""
+                        lines.append(f"    [{ev['type']}] {ev['side']} 档{ev.get('price_level', '?')} @ {ev['price']} 手数变化{ev.get('delta_hands', 0):+,} {note}")
+                else:
+                    lines.append("  无盘口事件(盘口静止或非交易时段)。")
+                ob_series = result.get("ob_series", [])
+                if ob_series:
+                    labels = [s["label"] for s in ob_series]
+                    lines.append(f"  订单簿失衡: {', '.join(labels)}")
+                return "\n".join(lines)
+            except Exception as e:
+                logger.warning(f"get_orderbook 工具失败 [{symbol}]: {e}")
+                return f"盘口演变分析失败: {str(e)[:100]}"
         else:
             return f"未知工具: {name}"
     except Exception as e:
