@@ -29,6 +29,16 @@ def beijing_now() -> datetime:
     return datetime.now(_get_app_tz())
 
 
+def beijing_now_naive() -> datetime:
+    """获取当前默认时区(北京)时间, 去除时区信息(naive)。
+
+    统一存储口径: PG 的 timestamp without time zone 列 + func.now() 在
+    Asia/Shanghai 时区下存的是【北京 naive 时间】。所有写库/比较的"当前时间"
+    都应走本函数, 避免 datetime.utcnow() 混入 UTC naive 造成 8 小时口径割裂。
+    """
+    return datetime.now(_get_app_tz()).replace(tzinfo=None)
+
+
 def to_utc(dt: datetime) -> datetime:
     """将时间转换为 UTC"""
     if dt.tzinfo is None:

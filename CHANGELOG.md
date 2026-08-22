@@ -2,6 +2,34 @@
 
 ## 2026-08-22
 
+### fix — 预测引擎/报告中心/时区口径三处线上问题修复
+
+**fix(forecast): baostock socket 无超时挂死 → 预测任务卡住、/history 不返回**
+
+- 根因: baostock 的 socket connect/recv 均无超时, 服务端半死时 send_msg 永久阻塞
+  (py-spy 抓到预测卡在 get_stock_name(bs.login)、history 卡在
+  _fetch_kline_pairs(bs.logout) 两个挂死栈)
+- 修法: forecast_history.py 加 `patch_baostock_timeout()` 给 SocketUtil.connect
+  设 15s 超时, 一处覆盖 login/logout/query 全部网络操作; 超时抛异常被各调用点
+  try/except 吞掉返回空, 不再永久阻塞
+- 效果: /forecast/history 从永久挂死 → 4.5s 返回; 预测端到端恢复
+
+**fix(reports): 报告中心读错目录(容器缺 HERMES_HOME env)**
+
+- 根因: reports.py 的 HERMES_HOME 默认 /hermes(容器内临时目录, 重启丢),
+  但 v0.3.5 容器重建时漏了 `-e HERMES_HOME=/app/data/hermes_reports`,
+  导致报告生成器写到临时目录、报告中心读临时目录看不到历史报告
+- 修法: 重建容器补 `HERMES_HOME=/app/data/hermes_reports` env(纯部署修复, 无代码改动)
+
+**fix(timezone): 统一时区口径 — 后端 4 处 datetime.utcnow() 混入 UTC naive**
+
+- 根因: PG timestamp without time zone + func.now() 在 Asia/Shanghai 时区下存
+  【北京 naive 时间】, 但 notifications/thsdk_board/auto_trigger 用
+  datetime.utcnow()(UTC naive) 写库/比较, 造成 8 小时口径割裂
+- 修法: timezone.py 新增 `beijing_now_naive()`, 统一替换 4 处 utcnow()
+- 前端 parseServerTime 同步修正: 无时区标记的裸字符串按本地(北京)时间解析,
+  不再加 Z 当 UTC(当年 SQLite UTC 时代的过时假设)
+
 ### feature — 事件驱动预期差接入盘前分析 Agent
 
 **feature(premarket): 盘前分析新增「个股事件催化与预期差」采集 + prompt 渲染**

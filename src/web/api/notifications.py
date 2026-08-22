@@ -1,12 +1,11 @@
 """站内消息中心 API。"""
 
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from src.core.notify_center import push_notification
+from src.core.timezone import beijing_now_naive
 from src.web.database import get_db
 from src.web.models import AgentRun, Notification, NotifyChannel
 
@@ -184,14 +183,14 @@ def mark_read(nid: int, db: Session = Depends(get_db)):
     if not n:
         return {"ok": False, "error": "not found"}
     if n.read_at is None:
-        n.read_at = datetime.utcnow()
+        n.read_at = beijing_now_naive()
         db.commit()
     return {"ok": True}
 
 
 @router.post("/read-all")
 def mark_all_read(db: Session = Depends(get_db)):
-    now = datetime.utcnow()
+    now = beijing_now_naive()
     cnt = (
         db.query(Notification)
         .filter(Notification.read_at.is_(None))

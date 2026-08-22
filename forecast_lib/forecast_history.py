@@ -10,6 +10,50 @@ except ImportError:  # forecast_server.py 将 forecast_lib 直接加入 sys.path
 _HISTORY_DB = FORECAST_DB_PATH
 
 
+# ── baostock socket 超时补丁(2026-08-22) ──────────────────────────────────
+# 根因: baostock 的 socket connect/recv 均无超时, 服务端半死时 send_msg 永久
+# 阻塞 → 预测任务卡在 get_stock_name(bs.login)、/history 卡在
+# _fetch_kline_pairs(bs.logout), 线程永不返回(生产实测 py-spy 抓到两个挂死栈)。
+# 修法: monkey-patch SocketUtil.connect / get_default_socket, 给 socket 设
+# 15s 超时。超时后 baostock 内部抛异常被各调用点的 try/except 吞掉, 返回空,
+# 不再永久阻塞。必须在 import baostock 之后、首次调用前打上。
+_BAOSTOCK_TIMEOUT_SEC = 15
+
+
+def patch_baostock_timeout() -> None:
+    """给 baostock 所有网络操作加 socket 超时(幂等, 可重复调用)。
+
+    forecast_models.load_kline / forecast_server 搜索接口也直接用 baostock,
+    它们 import 本模块时即完成打补丁(forecast_server 顶层 import 了
+    forecast_history, 覆盖全部入口)。
+    """
+    try:
+        import baostock.util.socketutil as _su
+        import baostock.common.context as _ctx
+        import socket as _socket
+    except Exception:
+        return
+
+    if getattr(_su, "_timeout_patched", False):
+        return
+
+    def _connect_with_timeout(self):
+        try:
+            sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+            sock.settimeout(_BAOSTOCK_TIMEOUT_SEC)
+            import baostock.common.contants as _cons
+            sock.connect((_cons.BAOSTOCK_SERVER_IP, _cons.BAOSTOCK_SERVER_PORT))
+            setattr(_ctx, "default_socket", sock)
+        except Exception:
+            print("服务器连接失败，请稍后再试。")
+
+    _su.SocketUtil.connect = _connect_with_timeout
+    _su._timeout_patched = True
+
+
+patch_baostock_timeout()
+
+
 
 def _init_history_db():
     conn = _sqlite3.connect(_HISTORY_DB)

@@ -21,7 +21,7 @@ import math
 import threading
 import time
 from datetime import date as date_cls
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any, Optional
 
 import pandas as pd
@@ -34,6 +34,7 @@ except ImportError:  # pragma: no cover - 部署机才有真实 thsdk
     THSDKL2 = None  # type: ignore[assignment,misc]
     THS_PREFIX_BLOCK = "URFI"
 
+from src.core.timezone import beijing_now_naive
 from src.web.database import SessionLocal, acquire_write
 
 logger = logging.getLogger(__name__)
@@ -352,7 +353,7 @@ def sync_boards_to_db(db=None) -> dict:
                 if name:
                     board.name = name
                 board.board_type = btype
-                board.last_synced_at = datetime.utcnow()
+                board.last_synced_at = beijing_now_naive()
 
             # 每板块拉详情写日线(容量控制: 逐个拉, thsdk 内部自带限频/重试)
             for code, _name, _btype in deduped:

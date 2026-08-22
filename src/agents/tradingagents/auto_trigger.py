@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from src.core.timezone import beijing_now_naive
 from src.web.database import SessionLocal
 from src.web.models import AgentConfig, AnalysisHistory
 
@@ -55,7 +56,7 @@ def _read_auto_trigger_config(db: Session) -> dict | None:
 
 def _within_cooldown(db: Session, stock_symbol: str, cooldown_hours: int) -> bool:
     """检查最近 N 小时内是否已为该股触发过 TA 分析(任何来源)。"""
-    cutoff = datetime.utcnow() - timedelta(hours=cooldown_hours)
+    cutoff = beijing_now_naive() - timedelta(hours=cooldown_hours)
     recent = (
         db.query(AnalysisHistory)
         .filter(
