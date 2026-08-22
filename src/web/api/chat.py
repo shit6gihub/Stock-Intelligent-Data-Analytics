@@ -96,6 +96,9 @@ _TOOL_STAGE_LABELS = {
     "get_thsdk_market_data_bond": "正在查询可转债行情...",
     "get_thsdk_market_data_fund": "正在查询基金/ETF行情...",
     "get_wencai_enhanced": "正在执行增强版问财检索...",
+    "get_main_flow_compare": "正在比对主力三源(腾讯逐笔/同花顺L2/恒生DDE)...",
+    "get_delta_series": "正在计算秒级Delta序列(逐笔穿透)...",
+    "get_orderbook": "正在采集盘口演变快照(THS L2 20档)...",
 }
 
 # 画像注入节流: profile_text 截断 + rules 只取前 N 条, 避免每次对话占过多 token
@@ -447,6 +450,51 @@ CHAT_TOOLS = [
                     "url": {"type": "string", "description": "要抓取的网页完整链接, 如 https://mp.weixin.qq.com/s/xxx 或 https://example.com/article"},
                 },
                 "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_main_flow_compare",
+            "description": "比对三路主力资金数据源(腾讯逐笔/同花顺L2/恒生DDE)的一致性, 判断主力真实意图。仅限A股(CN)。入参 symbol=6位A股代码如002361。返回每路主力净额(元)及一致性评分(0-100)。用于回答「三路主力数据是否一致」「主力在吸筹还是派发」「各数据源口径对比」等问题。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "6位A股代码, 如 002361"},
+                    "market": {"type": "string", "description": "市场代码, 仅支持 CN", "default": "CN"},
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_delta_series",
+            "description": "基于L2逐笔穿透计算秒级Delta序列(主动买-主动卖金额)及顶底背离信号。仅限A股(CN)。入参 symbol=6位A股代码如002361。先拉取THS L2全天逐笔, 再计算每秒净额、30秒平滑Delta、累计Delta、顶背离/底背离信号。用于回答「逐笔Delta分析」「有没有顶背离/底背离」「资金持续力度」等问题。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "6位A股代码, 如 002361"},
+                    "market": {"type": "string", "description": "市场代码, 仅支持 CN", "default": "CN"},
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_orderbook",
+            "description": "采集THS L2盘口(20档)多快照演变分析: 托单/压单/撤单/幽灵单检测 + 订单簿失衡(OB) + 幽灵单比率。仅限A股(CN)。入参 symbol=6位A股代码如002361。采集约8个快照(间隔1.5s, 约12秒)。用于回答「盘口有没有托单压单」「有没有幽灵挂单」「订单簿是否失衡」「主力在护盘还是压制」等问题。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "6位A股代码, 如 002361"},
+                    "market": {"type": "string", "description": "市场代码, 仅支持 CN", "default": "CN"},
+                },
+                "required": ["symbol"],
             },
         },
     },

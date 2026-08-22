@@ -37,6 +37,22 @@ None 空串 / collect A 股采集 / 失败降级)
 **验证**: py_compile 通过; Redis 不可达降级读写 ✅; Redis 可达跨进程共享(进程A写/进程B读)✅;
 get_or_fetch 防穿透 / TTL 过期 / delete ✅
 
+### feature — 新增 A 股短线情绪周期判别器
+
+**feature(core): 新增 sentiment_cycle 纯函数情绪周期判别模块**
+
+- 新增 `src/core/sentiment_cycle.py`:
+  - `classify_sentiment_cycle(metrics) -> dict`: 输入涨停家数/连板/炸板率/昨日涨停表现/亏钱效应,
+    输出 冰点/修复/发酵/高潮/退潮/数据不足 之一, 含置信度、证据、操作提示
+  - `format_cycle(result) -> str`: 格式化输出供 AI 助手/报告使用
+  - 全部字段可空降级, 核心字段全缺失不抛异常, 返回 `{cycle:'数据不足', ...}`
+  - 阈值集中文件顶部常量, 注释标记'经验值,后续可 IC 标定'
+- 新增 `tests/test_sentiment_cycle.py`:
+  - 覆盖 5 个周期边界 + 空数据降级 + 单/多指标缺失 + 格式化输出
+  - 15 个测试用例全部通过
+
+**验证**: pytest tests/test_sentiment_cycle.py -v → 15 passed ✅
+
 ## 2026-08-21
 
 ### feature — 机会页整合 P2 前端: 今日机会榜+共振标记+统一筛选
