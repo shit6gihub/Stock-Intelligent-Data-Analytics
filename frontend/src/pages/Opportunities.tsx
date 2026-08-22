@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, BookOpen, RefreshCw, Share2, Sparkles, ScanSearch, ThumbsDown, ThumbsUp, Download } from 'lucide-react'
+import { AlertTriangle, BookOpen, Filter, RefreshCw, Share2, Sparkles, ScanSearch, ThumbsDown, ThumbsUp, Download } from 'lucide-react'
 import {
   getToken,
   recommendationsApi,
   stocksApi,
   strategiesApi,
   tdxApi,
+  wencaiApi,
   type EntryCandidateItem,
   type ScanItem,
   type StrategyCatalogItem,
@@ -13,10 +14,13 @@ import {
   type StrategySignalItem,
   type StrategyStatsResponse,
   type TdxAskResponse,
+  type WencaiRow,
 } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Input } from '@panwatch/base-ui/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@panwatch/base-ui/components/ui/select'
+import { Popover, PopoverContent, PopoverTrigger } from '@panwatch/base-ui/components/ui/popover'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@panwatch/base-ui/components/ui/tabs'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
 import { useLocalStorage } from '@/lib/utils'
 import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
@@ -29,6 +33,52 @@ import StrategyLibraryDialog from '@/components/StrategyLibraryDialog'
 type SourceFilter = 'all' | 'market_scan' | 'watchlist' | 'mixed' | 'strategy' | 'auction' | 'tdx' | 'wencai'
 type HoldingFilter = 'all' | 'held' | 'unheld'
 type RiskFilter = 'all' | 'low' | 'medium' | 'high'
+type ToolTab = 'resonance' | 'strategy' | 'tdx' | 'wencai'
+
+// ── 共振查询(2026-08-22): 一句输入 → 问小达+问财并发 → (可选)策略库精筛 → 共振排序 ──
+type ResonanceRow = {
+  symbol: string
+  name: string
+  fromTdx: boolean
+  fromWencai: boolean
+  tdxRank: number | null
+  wencaiRank: number | null
+  strategyPassed: boolean | null // null=未启用精筛
+  strategyScore: number | null
+}
+
+const resonanceCountOf = (r: ResonanceRow): number =>
+  [r.fromTdx, r.fromWencai, r.strategyPassed === true].filter(Boolean).length
+
+/** tdx 行字段名动态(中文键兜底,与后端入池口径一致 tdx.py): 识别不了返回 '' */
+const normSymbolTdx = (r: Record<string, unknown>): string => {
+  const raw = r['代码'] ?? r['股票代码'] ?? r['sec_code'] ?? r['symbol'] ?? r['code']
+  const s = String(raw ?? '')
+    .replace(/^(USZA|USHA)/i, '')
+    .replace(/\.(SH|SZ|BJ)$/i, '')
+    .trim()
+  return /^\d{6}$/.test(s) ? s : ''
+}
+
+/** 问财 symbol 是 thsdk 前缀码(USZA300033),剥前缀归一成 6 位 */
+const normSymbolWencai = (r: { symbol?: string | number | null }): string => {
+  const s = String(r.symbol ?? '')
+    .replace(/^(USZA|USHA)/i, '')
+    .replace(/\.(SH|SZ)$/i, '')
+    .trim()
+  return /^\d{6}$/.test(s) ? s : ''
+}
+
+// 统一筛选入口(2026-08-22): 7 项筛选条件的草稿形态(Popover 内编辑, 「应用」才落地)
+type OpportunityFilters = {
+  market: 'ALL' | 'CN' | 'HK' | 'US'
+  source: SourceFilter
+  holding: HoldingFilter
+  strategy: string
+  risk: RiskFilter
+  minScore: string
+  sector: string
+}
 
 // P1 多源整合(2026-08-21): 来源徽章中文映射
 const CANDIDATE_SOURCE_CN: Record<string, string> = {
@@ -284,6 +334,12 @@ export default function OpportunitiesPage() {
   // 机会页 Tab: 候选池 / 竞价异动(2026-08-20, v0.3.0)
   const [viewMode, setViewMode] = useLocalStorage<'candidates' | 'auction'>('panwatch_opportunities_viewmode_v1', 'candidates')
 
+  // 统一筛选入口(2026-08-22): draft 模式 — Popover 内改草稿, 「应用」才写回持久化 state 并加载
+  const [filterOpen, setFilterOpen] = useState(false)
+  const [draft, setDraft] = useState<OpportunityFilters>({ market, source, holding, strategy, risk, minScore, sector })
+  // 选股工具 tab: 共振查询(默认)/ 策略选股 / 问小达 / 问财
+  const [toolTab, setToolTab] = useLocalStorage<ToolTab>('panwatch_opportunities_tool_tab_v1', 'resonance')
+
   const [insightOpen, setInsightOpen] = useState(false)
   const [insightSymbol, setInsightSymbol] = useState('')
   const [insightMarket, setInsightMarket] = useState('CN')
@@ -472,19 +528,22 @@ export default function OpportunitiesPage() {
     return () => window.clearTimeout(timer)
   }, [sectorQuery, searchSector])
 
-  const load = useCallback(async () => {
+  // 统一筛选入口(2026-08-22): override 供「应用筛选」用 — setState 是异步的, 同一拍内
+  // 触发的 load() 若只读 state 会拿到旧值, 所以允许调用方直接传入新筛选值
+  const load = useCallback(async (override?: Partial<OpportunityFilters>) => {
+    const f: OpportunityFilters = { market, source, holding, strategy, risk, minScore, sector, ...override }
     setLoading(true)
     setError('')
     try {
       const req = {
         status: 'active' as const,
-        source_pool: source,
-        holding,
-        market: market === 'ALL' ? '' : market,
-        strategy_code: strategy === 'all' ? '' : strategy,
-        risk_level: risk,
-        min_score: Number(minScore) || 0,
-        sector: sector || '',
+        source_pool: f.source,
+        holding: f.holding,
+        market: f.market === 'ALL' ? '' : f.market,
+        strategy_code: f.strategy === 'all' ? '' : f.strategy,
+        risk_level: f.risk,
+        min_score: Number(f.minScore) || 0,
+        sector: f.sector || '',
         limit: 120,
         include_payload: false,
       }
@@ -512,7 +571,7 @@ export default function OpportunitiesPage() {
             min_score: req.min_score,
             limit: req.limit,
             snapshot_date: '',
-            source: source === 'all' ? 'all' : source,
+            source: f.source === 'all' ? 'all' : f.source,
             holding: req.holding,
             timeoutMs: 90000,
           })
@@ -524,14 +583,14 @@ export default function OpportunitiesPage() {
           setError('策略层请求超时，已降级展示候选快照')
         }
       }
-      if ((!data.items || data.items.length === 0) && market !== 'ALL') {
+      if ((!data.items || data.items.length === 0) && f.market !== 'ALL') {
         const fallback = await recommendationsApi.listStrategySignals({
           ...req,
           market: '',
           timeoutMs: 45000,
         })
         if (fallback.items && fallback.items.length > 0) {
-          setError(`当前${marketLabel(market)}暂无满足条件机会，已展示全市场结果`)
+          setError(`当前${marketLabel(f.market)}暂无满足条件机会，已展示全市场结果`)
           data = fallback
         }
       }
@@ -589,6 +648,139 @@ export default function OpportunitiesPage() {
       setRefreshing(false)
     }
   }, [load, loadStats, toast])
+
+  // ── 共振查询(2026-08-22) ──
+  const [resQuery, setResQuery] = useState('')
+  const [resStrategyId, setResStrategyId] = useState('') // '' = 不精筛
+  const [resLoading, setResLoading] = useState(false)
+  const [resRows, setResRows] = useState<ResonanceRow[]>([])
+  const [resLastQuery, setResLastQuery] = useState('')
+  const [resMeta, setResMeta] = useState<{ tdx: number; wencai: number; strategy: number; dropped: number; enginesDown: string } | null>(null)
+  const [resError, setResError] = useState('')
+  const [resOnly, setResOnly] = useLocalStorage('panwatch_opportunities_res_only_v1', false)
+
+  const runResonance = useCallback(async () => {
+    const q = resQuery.trim()
+    if (!q) {
+      setResError('请输入题材或选股条件')
+      return
+    }
+    setResLoading(true)
+    setResError('')
+    setResRows([])
+    setResMeta(null)
+    setResLastQuery(q)
+    try {
+      // ① 问小达 + 问财并发(各自失败降级, 不互相拖垮)
+      const [tdxRes, wcRes] = await Promise.allSettled([tdxApi.ask(q, 10), wencaiApi.query(q)])
+      const map = new Map<string, ResonanceRow>()
+      const enginesDown: string[] = []
+      let tdxCount = 0
+      let wencaiCount = 0
+      let dropped = 0
+
+      if (tdxRes.status === 'fulfilled') {
+        (tdxRes.value.rows || []).forEach((raw, i) => {
+          const r = raw as Record<string, unknown>
+          const sym = normSymbolTdx(r)
+          if (!sym) {
+            dropped += 1
+            return
+          }
+          tdxCount += 1
+          const name = String(r['名称'] ?? r['股票简称'] ?? r['sec_name'] ?? r['name'] ?? sym)
+          const prev = map.get(sym)
+          if (prev) {
+            prev.fromTdx = true
+            prev.tdxRank = i + 1
+          } else {
+            map.set(sym, { symbol: sym, name, fromTdx: true, fromWencai: false, tdxRank: i + 1, wencaiRank: null, strategyPassed: null, strategyScore: null })
+          }
+        })
+      } else {
+        enginesDown.push('问小达')
+      }
+
+      if (wcRes.status === 'fulfilled' && wcRes.value.available) {
+        (wcRes.value.rows || []).forEach((r: WencaiRow, i: number) => {
+          const sym = normSymbolWencai(r)
+          if (!sym) {
+            dropped += 1
+            return
+          }
+          wencaiCount += 1
+          const prev = map.get(sym)
+          if (prev) {
+            prev.fromWencai = true
+            prev.wencaiRank = i + 1
+          } else {
+            map.set(sym, { symbol: sym, name: r.name || sym, fromTdx: false, fromWencai: true, tdxRank: null, wencaiRank: i + 1, strategyPassed: null, strategyScore: null })
+          }
+        })
+      } else {
+        enginesDown.push('问财')
+      }
+
+      if (map.size === 0) {
+        setResMeta({ tdx: tdxCount, wencai: wencaiCount, strategy: 0, dropped, enginesDown: enginesDown.join('、') })
+        setResError(enginesDown.length >= 2 ? '问小达与问财均不可用或无结果,无法共振' : '本次查询无有效结果')
+        return
+      }
+
+      // ② 策略精筛(可选): 只扫合并后的票(≤100), 不做全市场扫描
+      let strategyCount = 0
+      if (resStrategyId) {
+        try {
+          const symbols = Array.from(map.keys()).slice(0, 100)
+          const scan = await strategiesApi.scan({ strategy_id: resStrategyId, market: 'CN', limit: 100, symbols, min_score: 0 })
+          const passed = new Map(scan.items.map((it) => [it.symbol, it.score]))
+          for (const row of map.values()) {
+            if (passed.has(row.symbol)) {
+              row.strategyPassed = true
+              row.strategyScore = passed.get(row.symbol) ?? null
+              strategyCount += 1
+            } else {
+              row.strategyPassed = false
+            }
+          }
+        } catch {
+          enginesDown.push('策略精筛')
+        }
+      }
+
+      // ③ 排序: 共振数 > 策略分 > 引擎内排名
+      const rows = Array.from(map.values()).sort((a, b) => {
+        const diff = resonanceCountOf(b) - resonanceCountOf(a)
+        if (diff !== 0) return diff
+        const sa = a.strategyScore ?? -1
+        const sb = b.strategyScore ?? -1
+        if (sa !== sb) return sb - sa
+        const pa = a.tdxRank ?? a.wencaiRank ?? 999
+        const pb = b.tdxRank ?? b.wencaiRank ?? 999
+        return pa - pb
+      })
+      setResRows(rows)
+      setResMeta({ tdx: tdxCount, wencai: wencaiCount, strategy: strategyCount, dropped, enginesDown: enginesDown.join('、') })
+
+      // ④ 联动: tdx/wencai 查询已在后端入池, 触发轻量重算(跳过东财)让机会页 🔥 立即更新
+      if (tdxCount + wencaiCount > 0 && !refreshingRef.current) {
+        refreshingRef.current = true
+        setRefreshing(true)
+        try {
+          await recommendationsApi.refreshStrategySignals({ rebuild_candidates: true, max_kline_symbols: 0, skip_market_scan: true, wait: false })
+          toast('已并入候选池,机会页共振重算中…', 'success')
+          void pollRefreshCompletion()
+        } catch {
+          refreshingRef.current = false
+          setRefreshing(false)
+        }
+      }
+    } catch (e) {
+      setResError(e instanceof Error ? e.message : '共振查询失败')
+    } finally {
+      setResLoading(false)
+    }
+  }, [pollRefreshCompletion, resQuery, resStrategyId, toast])
 
   const handleRefresh = async () => {
     if (refreshingRef.current) return
@@ -655,16 +847,33 @@ export default function OpportunitiesPage() {
     }
   }
 
-  const resetFilters = useCallback(() => {
-    setMarket(DEFAULT_FILTERS.market)
-    setSource(DEFAULT_FILTERS.source)
-    setHolding(DEFAULT_FILTERS.holding)
-    setStrategy(DEFAULT_FILTERS.strategy)
-    setRisk(DEFAULT_FILTERS.risk)
-    setMinScore(DEFAULT_FILTERS.minScore)
-    setSector('')
-    setSectorQuery('')
-  }, [setHolding, setMarket, setMinScore, setRisk, setSector, setSource, setStrategy])
+  // ── 统一筛选入口(2026-08-22) ──
+  // 徽章数 = 已落地(持久化 state)的非默认筛选项数, 与列表当前展示一致
+  const activeFilterCount = useMemo(() => {
+    let n = 0
+    if (market !== DEFAULT_FILTERS.market) n += 1
+    if (source !== DEFAULT_FILTERS.source) n += 1
+    if (holding !== DEFAULT_FILTERS.holding) n += 1
+    if (strategy !== DEFAULT_FILTERS.strategy) n += 1
+    if (risk !== DEFAULT_FILTERS.risk) n += 1
+    if (minScore !== DEFAULT_FILTERS.minScore) n += 1
+    if (sector) n += 1
+    return n
+  }, [holding, market, minScore, risk, sector, source, strategy])
+
+  const applyDraft = () => {
+    setMarket(draft.market)
+    setSource(draft.source)
+    setHolding(draft.holding)
+    setStrategy(draft.strategy)
+    setRisk(draft.risk)
+    setMinScore(draft.minScore)
+    setSector(draft.sector)
+    setSectorQuery(draft.sector)
+    setFilterOpen(false)
+    setSectorOpen(false)
+    void load(draft)
+  }
 
   const strategyOptions = useMemo(() => {
     return strategyCatalog.map((row) => ({ value: row.code, label: row.name || row.code }))
@@ -900,151 +1109,564 @@ export default function OpportunitiesPage() {
         <AuctionAnomalyTab market="CN" onOpenDetail={openAuctionDetail} />
       ) : (
       <>
-      {/* 通达信问小达投研精选(用户主动按板块查询,避免每次进页面自动消耗 tdx ask 配额) */}
-            <div className="mb-4">
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-[14px] font-semibold text-foreground flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-primary" />
-                  通达信问小达 · 投研精选
-                </h2>
+      {/* 统一筛选入口(2026-08-22): 7 项筛选收进 Popover 草稿; 只看共振保留外露快捷开关 */}
+      <div className="flex items-center gap-2 mb-4">
+        <Popover
+          open={filterOpen}
+          onOpenChange={(open) => {
+            setFilterOpen(open)
+            if (open) {
+              setDraft({ market, source, holding, strategy, risk, minScore, sector })
+              setSectorOpen(false)
+            }
+          }}
+        >
+          <PopoverTrigger asChild>
+            <Button variant="outline" size="sm" className="h-8 text-[12px] gap-1.5">
+              <Filter className="w-3.5 h-3.5" />
+              筛选
+              {activeFilterCount > 0 && (
+                <span className="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-semibold leading-none">
+                  {activeFilterCount}
+                </span>
+              )}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-[340px] p-0">
+            <div className="px-3 pt-3 pb-1 text-[12px] font-semibold text-foreground">筛选条件</div>
+            <div className="px-3 pb-2 space-y-2">
+              <div className="text-[10px] font-medium text-muted-foreground pt-1">基础</div>
+              <div className="grid grid-cols-2 gap-2">
+                <Select value={draft.market} onValueChange={(v) => setDraft((d) => ({ ...d, market: v as OpportunityFilters['market'] }))}>
+                  <SelectTrigger className="h-8 text-[12px]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">全部市场</SelectItem>
+                    <SelectItem value="CN">A股</SelectItem>
+                    <SelectItem value="HK">港股</SelectItem>
+                    <SelectItem value="US">美股</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={draft.holding} onValueChange={(v) => setDraft((d) => ({ ...d, holding: v as HoldingFilter }))}>
+                  <SelectTrigger className="h-8 text-[12px]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">全部持仓状态</SelectItem>
+                    <SelectItem value="unheld">仅未持仓</SelectItem>
+                    <SelectItem value="held">仅持仓中</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-              <div className="card p-3">
-                <form
-                  className="flex items-center gap-2"
-                  onSubmit={(e) => {
-                    e.preventDefault()
-                    void loadTdx(tdxQuery)
-                  }}
-                >
-                  <Input
-                    value={tdxQuery}
-                    onChange={(e) => setTdxQuery(e.target.value)}
-                    placeholder="输入板块/概念/选股条件,如:半导体、商业航天、今日涨幅前10的医药"
-                    className="flex-1"
-                    disabled={tdxLoading}
-                  />
-                  <Button
-                    type="submit"
-                    size="sm"
-                    disabled={tdxLoading || !tdxQuery.trim()}
-                  >
-                    {tdxLoading ? (
-                      <>
-                        <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
-                        查询中…
-                      </>
-                    ) : (
-                      '查询'
+              <Select value={draft.source} onValueChange={(v) => setDraft((d) => ({ ...d, source: v as SourceFilter }))}>
+                <SelectTrigger className="h-8 text-[12px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部来源</SelectItem>
+                  <SelectItem value="market_scan">市场池</SelectItem>
+                  <SelectItem value="mixed">融合池</SelectItem>
+                  <SelectItem value="watchlist">关注池</SelectItem>
+                  {/* P1 多源入池(2026-08-21) */}
+                  <SelectItem value="strategy">策略信号</SelectItem>
+                  <SelectItem value="auction">竞价异动</SelectItem>
+                  <SelectItem value="tdx">问小达</SelectItem>
+                  <SelectItem value="wencai">问财选股</SelectItem>
+                </SelectContent>
+              </Select>
+              <div className="text-[10px] font-medium text-muted-foreground pt-1">信号质量</div>
+              <div className="grid grid-cols-2 gap-2">
+                <Select value={draft.minScore} onValueChange={(v) => setDraft((d) => ({ ...d, minScore: v }))}>
+                  <SelectTrigger className="h-8 text-[12px]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="90">评分90+</SelectItem>
+                    <SelectItem value="80">评分80+</SelectItem>
+                    <SelectItem value="70">评分70+</SelectItem>
+                    <SelectItem value="60">评分60+</SelectItem>
+                    <SelectItem value="50">评分50+</SelectItem>
+                    <SelectItem value="0">评分不过滤</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={draft.risk} onValueChange={(v) => setDraft((d) => ({ ...d, risk: v as RiskFilter }))}>
+                  <SelectTrigger className="h-8 text-[12px]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">全部风险等级</SelectItem>
+                    <SelectItem value="low">低风险</SelectItem>
+                    <SelectItem value="medium">中风险</SelectItem>
+                    <SelectItem value="high">高风险</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {/* 信号策略 = 池内信号来源标签(策略目录), 与选股工具的"筛选策略"(策略库可执行规则)是两套口径 */}
+              <div className="text-[10px] font-medium text-muted-foreground pt-1">信号策略</div>
+              <Select value={draft.strategy} onValueChange={(v) => setDraft((d) => ({ ...d, strategy: v }))}>
+                <SelectTrigger className="h-8 text-[12px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部信号策略</SelectItem>
+                  {strategyOptions.map((op) => (
+                    <SelectItem key={op.value} value={op.value}>{op.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="text-[10px] font-medium text-muted-foreground pt-1">题材</div>
+              <div className="relative">
+                <Input
+                  value={draft.sector}
+                  placeholder="题材:输入搜索(如 商业航天/低空经济)"
+                  className="h-8 text-[12px]"
+                  onFocus={() => { setSectorOpen(true); if (sectorResults.length === 0) void searchSector('') }}
+                  onBlur={() => window.setTimeout(() => setSectorOpen(false), 200)}
+                  onChange={(e) => { setDraft((d) => ({ ...d, sector: e.target.value })); setSectorQuery(e.target.value) }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); setSectorOpen(false); applyDraft() } }}
+                />
+                {sectorOpen && (
+                  <div className="absolute z-50 mt-1 w-full max-h-52 overflow-y-auto rounded-md border border-border/60 bg-popover p-1 shadow-lg">
+                    {sectorResults.length === 0 && (
+                      <div className="px-2 py-1.5 text-[11px] text-muted-foreground">无匹配题材</div>
                     )}
-                  </Button>
-                </form>
-                <div className="mt-3">
-                  {!tdxActiveQuery ? (
-                    <div className="text-[11px] text-muted-foreground py-6 text-center">
-                      输入板块或选股条件,点击查询(每次查询消耗 1 次 tdx ask 配额)
-                    </div>
-                  ) : tdxData == null ? (
-                    <div className="text-[11px] text-red-600 py-3">查询失败,请稍后重试</div>
-                  ) : (
-                    <>
-                      <div className="text-[11px] text-muted-foreground mb-2">
-                        查询: <span className="text-foreground font-medium">{tdxActiveQuery}</span>
-                        {' · '}
-                        {tdxData.rows?.length || 0} 条结果
-                      </div>
-                      <div className="flex flex-col gap-1.5 max-h-[400px] overflow-y-auto pr-1">
-                        {(tdxData.rows || []).slice(0, 10).map((r: Record<string, unknown>, i: number) => {
-                          const code = String(r.sec_code ?? r.code ?? '')
-                          const name = String(r.sec_name ?? r.name ?? '')
-                          const chg = String(r.chg ?? r.change_pct ?? '')
-                          const mainNet = Object.entries(r).find(([k]) => k.includes('主力净额') || k.includes('主力净'))?.[1]
-                          const clickable = !!code
-                          return (
-                            <button
-                              key={`${code}-${i}`}
-                              type="button"
-                              disabled={!clickable}
-                              onClick={() => clickable && openInsight({
-                                stock_symbol: code,
-                                stock_market: 'CN',
-                                stock_name: name,
-                                action: 'watch',
-                                action_label: '观望',
-                                is_holding_snapshot: false,
-                                rank_score: 0,
-                                score: 0,
-                                status: 'inactive',
-                                source_pool: 'watchlist',
-                                source_pool_label: '关注池',
-                                risk_level: 'low',
-                                risk_level_label: '低风险',
-                                source_agent: 'market_scan',
-                                strategy_code: 'tdx_wenda',
-                                strategy_name: '通达信问小达',
-                                strategy_version: 'v1',
-                                confidence: null,
-                                signal: '',
-                                reason: `通达信问小达: ${tdxActiveQuery}`,
-                                evidence: [],
-                                holding_days: 3,
-                                entry_low: null,
-                                entry_high: null,
-                                stop_loss: null,
-                                target_price: null,
-                                invalidation: '',
-                                plan_quality: 0,
-                                source_suggestion_id: null,
-                                source_candidate_id: null,
-                                trace_id: '',
-                                context_quality_score: null,
-                                score_breakdown: { weighted_score: 0, has_entry_plan: false },
-                                market_regime: {},
-                                cross_feature: {},
-                                news_metric: {},
-                                constrained: false,
-                                constraint_reasons: [],
-                                payload: { source_meta: { plan: {} } },
-                                created_at: '',
-                                updated_at: '',
-                              } as unknown as StrategySignalItem)}
-                              className={`text-left text-[11px] rounded px-2 py-1.5 flex items-center justify-between gap-2 ${
-                                clickable ? 'hover:bg-accent cursor-pointer' : 'cursor-default'
-                              }`}
-                            >
-                              <span className="truncate">
-                                <span className="text-muted-foreground mr-1">{code}</span>
-                                <span className="font-medium text-foreground">{name}</span>
-                              </span>
-                              <span className="flex items-center gap-1.5 shrink-0">
-                                {chg && (
-                                  <span
-                                    className={
-                                      String(chg).startsWith('-')
-                                        ? 'text-emerald-700 dark:text-emerald-700'
-                                        : 'text-rose-700 dark:text-rose-400'
-                                    }
-                                  >
-                                    {chg}%
-                                  </span>
-                                )}
-                                {mainNet != null && (
-                                  <span className="text-[10px] text-primary">主力{String(mainNet)}</span>
-                                )}
-                              </span>
-                            </button>
-                          )
-                        })}
-                        {(tdxData.rows || []).length === 0 && (
-                          <div className="text-[11px] text-muted-foreground py-3 text-center">
-                            暂无数据(试试简化查询词,如「半导体」)
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </div>
+                    {sectorResults.map((b) => (
+                      <button
+                        key={b.code}
+                        type="button"
+                        className="w-full text-left px-2 py-1.5 rounded text-[12px] hover:bg-accent"
+                        onMouseDown={(e) => { e.preventDefault(); setDraft((d) => ({ ...d, sector: b.name })); setSectorQuery(b.name); setSectorOpen(false) }}
+                      >
+                        {b.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
+            <div className="flex items-center justify-between border-t border-border/60 px-3 py-2.5">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-[12px] text-muted-foreground"
+                onClick={() => { setDraft({ ...DEFAULT_FILTERS, sector: '' }); setSectorQuery('') }}
+              >
+                清空
+              </Button>
+              <Button size="sm" className="h-8 text-[12px]" onClick={applyDraft} disabled={loading}>
+                {loading ? '加载中...' : '应用筛选'}
+              </Button>
+            </div>
+          </PopoverContent>
+        </Popover>
+        {/* P1: 只看多源共振开关(高频快捷项, 保留外露) */}
+        <button
+          type="button"
+          onClick={() => setResonanceOnly(!resonanceOnly)}
+          className={`h-8 rounded-lg px-3 text-[12px] font-medium transition-colors border ${
+            resonanceOnly
+              ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/40'
+              : 'bg-accent/50 text-muted-foreground hover:bg-accent border-transparent'
+          }`}
+          title="只显示被 2 个及以上独立来源同时命中的候选(共振=更高置信)"
+        >
+          🔥 只看共振
+        </button>
+      </div>
+      {/* ── 选股工具: 共振查询 / 策略选股 / 问小达 / 问财, 主动查询, 结果并入下方候选池 ── */}
+      <div className="card p-4 mb-4">
+        <Tabs value={toolTab} onValueChange={(v) => setToolTab(v as ToolTab)}>
+          <TabsList>
+            <TabsTrigger value="resonance">共振查询</TabsTrigger>
+            <TabsTrigger value="strategy">策略选股</TabsTrigger>
+            <TabsTrigger value="tdx">问小达</TabsTrigger>
+            <TabsTrigger value="wencai">问财</TabsTrigger>
+          </TabsList>
+          {/* 共振查询(2026-08-22): 一句输入 → 问小达+问财并发 → 策略库精筛 → 共振排序 */}
+          <TabsContent value="resonance">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Input
+                value={resQuery}
+                onChange={(e) => setResQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void runResonance() }}
+                placeholder="输入题材或选股条件,如: 商业航天 / 均线多头排列,MACD金叉,非ST"
+                className="flex-1 min-w-[260px]"
+                disabled={resLoading}
+              />
+              <Select value={resStrategyId || 'none'} onValueChange={(v) => setResStrategyId(v === 'none' ? '' : v)}>
+                <SelectTrigger className="h-8 text-[12px] w-[180px]">
+                  <SelectValue placeholder="策略精筛(可选)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">不精筛</SelectItem>
+                  {scanStrategies.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>{s.display_name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button size="sm" onClick={() => void runResonance()} disabled={resLoading || !resQuery.trim()}>
+                {resLoading
+                  ? <span className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin" />
+                  : '▶'}
+                {resLoading ? '三引擎查询中…' : '并发查询'}
+              </Button>
+            </div>
+            <div className="mt-1.5 text-[11px] text-muted-foreground">
+              问小达+问财同时查询合并去重,可选策略库规则只对结果精筛;每次查询消耗 1 次 tdx 配额
+            </div>
+
+            {resError && (
+              <div className="mt-2 text-[12px] text-amber-700 dark:text-amber-500 flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {resError}
+              </div>
+            )}
+
+            {resMeta && (
+              <div className="mt-2 flex items-center gap-2 flex-wrap text-[11px] text-muted-foreground">
+                <span>
+                  「{resLastQuery}」合并 <span className="text-foreground font-medium">{resRows.length}</span> 只
+                  (问小达 {resMeta.tdx} · 问财 {resMeta.wencai}
+                  {resStrategyId ? ` · 策略通过 ${resMeta.strategy}` : ''})
+                </span>
+                {resMeta.dropped > 0 && <span>无法识别 {resMeta.dropped} 行已忽略</span>}
+                {resMeta.enginesDown && (
+                  <span className="text-amber-600 dark:text-amber-500">⚠ {resMeta.enginesDown} 不可用,基于剩余引擎共振</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setResOnly(!resOnly)}
+                  className={`rounded-lg px-2.5 py-1 text-[11px] font-medium transition-colors border ${
+                    resOnly
+                      ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/40'
+                      : 'bg-accent/50 text-muted-foreground hover:bg-accent border-transparent'
+                  }`}
+                  title="只显示被 2 个及以上引擎同时命中的候选"
+                >
+                  🔥 只看共振≥2
+                </button>
+              </div>
+            )}
+
+            {!resLoading && resRows.length > 0 && (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full text-[12px]">
+                  <thead>
+                    <tr className="text-[11px] text-muted-foreground border-b border-border/50">
+                      <th className="text-left py-1.5 pr-2">代码</th>
+                      <th className="text-left py-1.5 pr-2">名称</th>
+                      <th className="text-center py-1.5 pr-2">问小达</th>
+                      <th className="text-center py-1.5 pr-2">问财</th>
+                      <th className="text-center py-1.5 pr-2">策略</th>
+                      <th className="text-center py-1.5" title="本次查询的引擎命中数(与机会页全池共振口径不同)">🔥 共振</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {resRows.filter((r) => !resOnly || resonanceCountOf(r) >= 2).map((r) => {
+                      const cnt = resonanceCountOf(r)
+                      return (
+                        <tr
+                          key={r.symbol}
+                          className="border-b border-border/30 hover:bg-accent/40 cursor-pointer"
+                          onClick={() => openInsight({
+                            stock_symbol: r.symbol,
+                            stock_market: 'CN',
+                            stock_name: r.name,
+                            action: 'watch',
+                            action_label: '观望',
+                            is_holding_snapshot: false,
+                            rank_score: 0,
+                            score: 0,
+                            status: 'inactive',
+                            source_pool: 'tdx',
+                            source_pool_label: '共振查询',
+                            risk_level: 'low',
+                            risk_level_label: '低风险',
+                            source_agent: 'market_scan',
+                            strategy_code: 'resonance_query',
+                            strategy_name: '共振查询',
+                            strategy_version: 'v1',
+                            confidence: null,
+                            signal: '',
+                            reason: `共振查询: ${resLastQuery}(命中 ${cnt} 个引擎)`,
+                            evidence: [],
+                            holding_days: 3,
+                            entry_low: null,
+                            entry_high: null,
+                            stop_loss: null,
+                            target_price: null,
+                            invalidation: '',
+                            plan_quality: 0,
+                            source_suggestion_id: null,
+                            source_candidate_id: null,
+                            trace_id: '',
+                            context_quality_score: null,
+                            score_breakdown: { weighted_score: 0, has_entry_plan: false },
+                            market_regime: {},
+                            cross_feature: {},
+                            news_metric: {},
+                            constrained: false,
+                            constraint_reasons: [],
+                            payload: { source_meta: { plan: {} } },
+                            created_at: '',
+                            updated_at: '',
+                          } as unknown as StrategySignalItem)}
+                        >
+                          <td className="py-1.5 pr-2 font-mono text-muted-foreground">{r.symbol}</td>
+                          <td className="py-1.5 pr-2 font-medium text-foreground">{r.name}</td>
+                          <td className="py-1.5 pr-2 text-center">
+                            {r.fromTdx ? <span className="text-emerald-600 dark:text-emerald-400">✓{r.tdxRank ? `#${r.tdxRank}` : ''}</span> : <span className="text-muted-foreground/40">—</span>}
+                          </td>
+                          <td className="py-1.5 pr-2 text-center">
+                            {r.fromWencai ? <span className="text-emerald-600 dark:text-emerald-400">✓{r.wencaiRank ? `#${r.wencaiRank}` : ''}</span> : <span className="text-muted-foreground/40">—</span>}
+                          </td>
+                          <td className="py-1.5 pr-2 text-center">
+                            {r.strategyPassed == null
+                              ? <span className="text-muted-foreground/40">—</span>
+                              : r.strategyPassed
+                                ? <span className="text-primary font-semibold">✓ {r.strategyScore?.toFixed(0)}</span>
+                                : <span className="text-muted-foreground/50">✗</span>}
+                          </td>
+                          <td className="py-1.5 text-center">
+                            {cnt >= 2
+                              ? <span className="font-semibold text-orange-600 dark:text-orange-400">🔥×{cnt}</span>
+                              : <span className="text-muted-foreground/50">×{cnt}</span>}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {!resLoading && resMeta && resRows.length === 0 && !resError && (
+              <div className="mt-3 text-[12px] text-muted-foreground">本次查询无有效结果</div>
+            )}
+            {!resLoading && resOnly && resRows.length > 0 && resRows.every((r) => resonanceCountOf(r) < 2) && (
+              <div className="mt-2 text-[11px] text-muted-foreground">无 ≥2 引擎共振的标的,可关闭「只看共振」查看全部</div>
+            )}
+          </TabsContent>
+          <TabsContent value="strategy">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Select value={scanStrategyId} onValueChange={setScanStrategyId}>
+                <SelectTrigger className="h-8 text-[12px] w-[220px]">
+                  <SelectValue placeholder="选择策略" />
+                </SelectTrigger>
+                <SelectContent>
+                  {scanStrategies.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>{s.display_name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={scanUniverse} onValueChange={(v) => setScanUniverse(v as 'all' | 'watchlist')}>
+                <SelectTrigger className="h-8 text-[12px] w-[130px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全市场</SelectItem>
+                  <SelectItem value="watchlist">自选+种子池</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                size="sm"
+                className="h-8 text-[12px]"
+                onClick={doScan}
+                disabled={scanning || !scanStrategyId}
+              >
+                {scanning ? <span className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin" /> : <ScanSearch className="w-3.5 h-3.5 mr-1" />}
+                {scanning ? '扫描中...' : '批量选股'}
+              </Button>
+              {scanResult && (
+                <span className="text-[11px] text-muted-foreground">
+                  扫描 {scanResult.scanned} 只 → 命中 {scanResult.total} 只
+                </span>
+              )}
+            </div>
+            {scanError && (
+              <div className="mt-2 text-[12px] text-amber-700 dark:text-amber-500 flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5" /> {scanError}
+              </div>
+            )}
+            {scanResult && scanResult.items.length > 0 && (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full text-[12px]">
+                  <thead>
+                    <tr className="text-[11px] text-muted-foreground border-b border-border/50">
+                      <th className="text-left py-1.5 pr-2">代码</th>
+                      <th className="text-left py-1.5 pr-2">名称</th>
+                      <th className="text-right py-1.5 pr-2">评分</th>
+                      <th className="text-right py-1.5 pr-2">现价</th>
+                      <th className="text-right py-1.5 pr-2">PE</th>
+                      <th className="text-right py-1.5 pr-2">PB</th>
+                      <th className="text-right py-1.5">市值(亿)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scanResult.items.map((it) => {
+                      const d = it.current_data || {}
+                      const num = (v: unknown) => (v == null || Number.isNaN(Number(v)) ? '--' : Number(v).toFixed(2))
+                      return (
+                        <tr key={it.symbol} className="border-b border-border/30 hover:bg-accent/40 cursor-pointer" onClick={() => openInsight({
+                          stock_symbol: it.symbol,
+                          stock_market: (it.market || 'CN') as 'CN',
+                          stock_name: it.name,
+                          rank_score: it.score,
+                          is_holding_snapshot: false,
+                        } as unknown as StrategySignalItem)}>
+                          <td className="py-1.5 pr-2 font-mono text-muted-foreground">{it.symbol}</td>
+                          <td className="py-1.5 pr-2 font-medium text-foreground">{it.name}</td>
+                          <td className="py-1.5 pr-2 text-right font-semibold text-primary">{it.score.toFixed(1)}</td>
+                          <td className="py-1.5 pr-2 text-right font-mono">{num(d.current_price)}</td>
+                          <td className="py-1.5 pr-2 text-right font-mono">{num(d.pe_ttm)}</td>
+                          <td className="py-1.5 pr-2 text-right font-mono">{num(d.pb_ratio)}</td>
+                          <td className="py-1.5 text-right font-mono text-muted-foreground">{num(d.market_cap)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {scanResult && scanResult.items.length === 0 && (
+              <div className="mt-3 text-[12px] text-muted-foreground">
+                没有股票通过该策略的硬过滤条件
+                <span className="block mt-1 text-[11px] text-muted-foreground/70">
+                  {new Date().getHours() < 9 || new Date().getHours() >= 15
+                    ? '💡 当前为非交易时段, 腾讯行情中涨跌幅/量比/换手为 0, 依赖量能条件的策略(资金热度/放量突破)会筛不出票。建议交易时段使用, 或改选估值类策略(双低/低波质量)。'
+                    : '可尝试放宽条件或切换为「自选+种子池」范围'}
+                </span>
+              </div>
+            )}
+          </TabsContent>
+          <TabsContent value="tdx">
+            {/* 用户主动按板块查询,避免每次进页面自动消耗 tdx ask 配额 */}
+            <form
+              className="flex items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault()
+                void loadTdx(tdxQuery)
+              }}
+            >
+              <Input
+                value={tdxQuery}
+                onChange={(e) => setTdxQuery(e.target.value)}
+                placeholder="输入板块/概念/选股条件,如:半导体、商业航天、今日涨幅前10的医药"
+                className="flex-1"
+                disabled={tdxLoading}
+              />
+              <Button
+                type="submit"
+                size="sm"
+                disabled={tdxLoading || !tdxQuery.trim()}
+              >
+                {tdxLoading ? (
+                  <>
+                    <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+                    查询中…
+                  </>
+                ) : (
+                  '查询'
+                )}
+              </Button>
+            </form>
+            <div className="mt-3">
+              {!tdxActiveQuery ? (
+                <div className="text-[11px] text-muted-foreground py-6 text-center">
+                  输入板块或选股条件,点击查询(每次查询消耗 1 次 tdx ask 配额)
+                </div>
+              ) : tdxData == null ? (
+                <div className="text-[11px] text-red-600 py-3">查询失败,请稍后重试</div>
+              ) : (
+                <>
+                  <div className="text-[11px] text-muted-foreground mb-2">
+                    查询: <span className="text-foreground font-medium">{tdxActiveQuery}</span>
+                    {' · '}
+                    {tdxData.rows?.length || 0} 条结果
+                  </div>
+                  <div className="flex flex-col gap-1.5 max-h-[400px] overflow-y-auto pr-1">
+                    {(tdxData.rows || []).slice(0, 10).map((r: Record<string, unknown>, i: number) => {
+                      const code = String(r.sec_code ?? r.code ?? '')
+                      const name = String(r.sec_name ?? r.name ?? '')
+                      const chg = String(r.chg ?? r.change_pct ?? '')
+                      const mainNet = Object.entries(r).find(([k]) => k.includes('主力净额') || k.includes('主力净'))?.[1]
+                      const clickable = !!code
+                      return (
+                        <button
+                          key={`${code}-${i}`}
+                          type="button"
+                          disabled={!clickable}
+                          onClick={() => clickable && openInsight({
+                            stock_symbol: code,
+                            stock_market: 'CN',
+                            stock_name: name,
+                            action: 'watch',
+                            action_label: '观望',
+                            is_holding_snapshot: false,
+                            rank_score: 0,
+                            score: 0,
+                            status: 'inactive',
+                            source_pool: 'watchlist',
+                            source_pool_label: '关注池',
+                            risk_level: 'low',
+                            risk_level_label: '低风险',
+                            source_agent: 'market_scan',
+                            strategy_code: 'tdx_wenda',
+                            strategy_name: '通达信问小达',
+                            strategy_version: 'v1',
+                            confidence: null,
+                            signal: '',
+                            reason: `通达信问小达: ${tdxActiveQuery}`,
+                            evidence: [],
+                            holding_days: 3,
+                            entry_low: null,
+                            entry_high: null,
+                            stop_loss: null,
+                            target_price: null,
+                            invalidation: '',
+                            plan_quality: 0,
+                            source_suggestion_id: null,
+                            source_candidate_id: null,
+                            trace_id: '',
+                            context_quality_score: null,
+                            score_breakdown: { weighted_score: 0, has_entry_plan: false },
+                            market_regime: {},
+                            cross_feature: {},
+                            news_metric: {},
+                            constrained: false,
+                            constraint_reasons: [],
+                            payload: { source_meta: { plan: {} } },
+                            created_at: '',
+                            updated_at: '',
+                          } as unknown as StrategySignalItem)}
+                          className={`text-left text-[11px] rounded px-2 py-1.5 flex items-center justify-between gap-2 ${
+                            clickable ? 'hover:bg-accent cursor-pointer' : 'cursor-default'
+                          }`}
+                        >
+                          <span className="truncate">
+                            <span className="text-muted-foreground mr-1">{code}</span>
+                            <span className="font-medium text-foreground">{name}</span>
+                          </span>
+                          <span className="flex items-center gap-1.5 shrink-0">
+                            {chg && (
+                              <span
+                                className={
+                                  String(chg).startsWith('-')
+                                    ? 'text-emerald-700 dark:text-emerald-700'
+                                    : 'text-rose-700 dark:text-rose-400'
+                                }
+                              >
+                                {chg}%
+                              </span>
+                            )}
+                            {mainNet != null && (
+                              <span className="text-[10px] text-primary">主力{String(mainNet)}</span>
+                            )}
+                          </span>
+                        </button>
+                      )
+                    })}
+                    {(tdxData.rows || []).length === 0 && (
+                      <div className="text-[11px] text-muted-foreground py-3 text-center">
+                        暂无数据(试试简化查询词,如「半导体」)
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </TabsContent>
+          <TabsContent value="wencai">
+            <WencaiPanel embedded />
+          </TabsContent>
+        </Tabs>
+      </div>
 
       {(factorStats || constraintStats) && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
@@ -1093,119 +1715,6 @@ export default function OpportunitiesPage() {
         </div>
       )}
 
-      <div className="card p-3 md:p-4 mb-4">
-        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-2">
-          <Select value={market} onValueChange={(v) => setMarket(v as 'ALL' | 'CN' | 'HK' | 'US')}>
-            <SelectTrigger className="h-8 text-[12px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="ALL">全部市场</SelectItem>
-              <SelectItem value="CN">A股</SelectItem>
-              <SelectItem value="HK">港股</SelectItem>
-              <SelectItem value="US">美股</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={source} onValueChange={(v) => setSource(v as SourceFilter)}>
-            <SelectTrigger className="h-8 text-[12px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全部来源</SelectItem>
-              <SelectItem value="market_scan">市场池</SelectItem>
-              <SelectItem value="mixed">融合池</SelectItem>
-              <SelectItem value="watchlist">关注池</SelectItem>
-              {/* P1 多源入池(2026-08-21) */}
-              <SelectItem value="strategy">策略信号</SelectItem>
-              <SelectItem value="auction">竞价异动</SelectItem>
-              <SelectItem value="tdx">问小达</SelectItem>
-              <SelectItem value="wencai">问财选股</SelectItem>
-            </SelectContent>
-          </Select>
-          {/* P1: 只看多源共振开关 */}
-          <button
-            type="button"
-            onClick={() => setResonanceOnly(!resonanceOnly)}
-            className={`h-8 rounded-lg px-3 text-[12px] font-medium transition-colors border ${
-              resonanceOnly
-                ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/40'
-                : 'bg-accent/50 text-muted-foreground hover:bg-accent border-transparent'
-            }`}
-            title="只显示被 2 个及以上独立来源同时命中的候选(共振=更高置信)"
-          >
-            🔥 只看共振
-          </button>
-          <Select value={holding} onValueChange={(v) => setHolding(v as HoldingFilter)}>
-            <SelectTrigger className="h-8 text-[12px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全部持仓状态</SelectItem>
-              <SelectItem value="unheld">仅未持仓</SelectItem>
-              <SelectItem value="held">仅持仓中</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={strategy} onValueChange={setStrategy}>
-            <SelectTrigger className="h-8 text-[12px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全部策略</SelectItem>
-              {strategyOptions.map((op) => (
-                <SelectItem key={op.value} value={op.value}>{op.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={risk} onValueChange={(v) => setRisk(v as RiskFilter)}>
-            <SelectTrigger className="h-8 text-[12px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全部风险等级</SelectItem>
-              <SelectItem value="low">低风险</SelectItem>
-              <SelectItem value="medium">中风险</SelectItem>
-              <SelectItem value="high">高风险</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={minScore} onValueChange={setMinScore}>
-            <SelectTrigger className="h-8 text-[12px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="90">评分90+</SelectItem>
-              <SelectItem value="80">评分80+</SelectItem>
-              <SelectItem value="70">评分70+</SelectItem>
-              <SelectItem value="60">评分60+</SelectItem>
-              <SelectItem value="50">评分50+</SelectItem>
-              <SelectItem value="0">评分不过滤</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button size="sm" className="h-8 text-[12px]" onClick={load} disabled={loading}>
-            {loading ? '加载中...' : '应用筛选'}
-          </Button>
-          <Button variant="ghost" size="sm" className="h-8 text-[12px]" onClick={resetFilters}>
-            清空筛选
-          </Button>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mt-2">
-          <div className="relative">
-            <Input
-              value={sector}
-              placeholder="题材:输入搜索(如 商业航天/低空经济)"
-              className="h-8 text-[12px]"
-              onFocus={() => { setSectorOpen(true); if (sectorResults.length === 0) void searchSector('') }}
-              onBlur={() => window.setTimeout(() => setSectorOpen(false), 200)}
-              onChange={(e) => { setSector(e.target.value); setSectorQuery(e.target.value) }}
-              onKeyDown={(e) => { if (e.key === 'Enter') { setSectorOpen(false); void load() } }}
-            />
-            {sectorOpen && (
-              <div className="absolute z-50 mt-1 w-full max-h-52 overflow-y-auto rounded-md border border-border/60 bg-popover p-1 shadow-lg">
-                {sectorResults.length === 0 && (
-                  <div className="px-2 py-1.5 text-[11px] text-muted-foreground">无匹配题材</div>
-                )}
-                {sectorResults.map((b) => (
-                  <button
-                    key={b.code}
-                    type="button"
-                    className="w-full text-left px-2 py-1.5 rounded text-[12px] hover:bg-accent"
-                    onMouseDown={(e) => { e.preventDefault(); setSector(b.name); setSectorQuery(b.name); setSectorOpen(false) }}
-                  >
-                    {b.name}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
 
       {error && (
         <div className="card p-3 mb-4 text-[12px] text-amber-700 dark:text-amber-500 flex items-center gap-2">
@@ -1213,108 +1722,6 @@ export default function OpportunitiesPage() {
           {error}
         </div>
       )}
-
-      {/* ── 策略选股(策略库批量扫描) ── */}
-      <div className="card p-4 mb-4">
-        <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-          <div className="flex items-center gap-2">
-            <ScanSearch className="w-4 h-4 text-primary" />
-            <h2 className="text-[14px] font-semibold text-foreground">策略选股</h2>
-            <span className="text-[11px] text-muted-foreground">用策略库规则批量扫描全市场, 按分数排序</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <Select value={scanStrategyId} onValueChange={setScanStrategyId}>
-            <SelectTrigger className="h-8 text-[12px] w-[220px]">
-              <SelectValue placeholder="选择策略" />
-            </SelectTrigger>
-            <SelectContent>
-              {scanStrategies.map((s) => (
-                <SelectItem key={s.id} value={s.id}>{s.display_name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={scanUniverse} onValueChange={(v) => setScanUniverse(v as 'all' | 'watchlist')}>
-            <SelectTrigger className="h-8 text-[12px] w-[130px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全市场</SelectItem>
-              <SelectItem value="watchlist">自选+种子池</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button
-            size="sm"
-            className="h-8 text-[12px]"
-            onClick={doScan}
-            disabled={scanning || !scanStrategyId}
-          >
-            {scanning ? <span className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin" /> : <ScanSearch className="w-3.5 h-3.5 mr-1" />}
-            {scanning ? '扫描中...' : '批量选股'}
-          </Button>
-          {scanResult && (
-            <span className="text-[11px] text-muted-foreground">
-              扫描 {scanResult.scanned} 只 → 命中 {scanResult.total} 只
-            </span>
-          )}
-        </div>
-        {scanError && (
-          <div className="mt-2 text-[12px] text-amber-700 dark:text-amber-500 flex items-center gap-1.5">
-            <AlertTriangle className="w-3.5 h-3.5" /> {scanError}
-          </div>
-        )}
-        {scanResult && scanResult.items.length > 0 && (
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full text-[12px]">
-              <thead>
-                <tr className="text-[11px] text-muted-foreground border-b border-border/50">
-                  <th className="text-left py-1.5 pr-2">代码</th>
-                  <th className="text-left py-1.5 pr-2">名称</th>
-                  <th className="text-right py-1.5 pr-2">评分</th>
-                  <th className="text-right py-1.5 pr-2">现价</th>
-                  <th className="text-right py-1.5 pr-2">PE</th>
-                  <th className="text-right py-1.5 pr-2">PB</th>
-                  <th className="text-right py-1.5">市值(亿)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {scanResult.items.map((it) => {
-                  const d = it.current_data || {}
-                  const num = (v: unknown) => (v == null || Number.isNaN(Number(v)) ? '--' : Number(v).toFixed(2))
-                  return (
-                    <tr key={it.symbol} className="border-b border-border/30 hover:bg-accent/40 cursor-pointer" onClick={() => openInsight({
-                      stock_symbol: it.symbol,
-                      stock_market: (it.market || 'CN') as 'CN',
-                      stock_name: it.name,
-                      rank_score: it.score,
-                      is_holding_snapshot: false,
-                    } as unknown as StrategySignalItem)}>
-                      <td className="py-1.5 pr-2 font-mono text-muted-foreground">{it.symbol}</td>
-                      <td className="py-1.5 pr-2 font-medium text-foreground">{it.name}</td>
-                      <td className="py-1.5 pr-2 text-right font-semibold text-primary">{it.score.toFixed(1)}</td>
-                      <td className="py-1.5 pr-2 text-right font-mono">{num(d.current_price)}</td>
-                      <td className="py-1.5 pr-2 text-right font-mono">{num(d.pe_ttm)}</td>
-                      <td className="py-1.5 pr-2 text-right font-mono">{num(d.pb_ratio)}</td>
-                      <td className="py-1.5 text-right font-mono text-muted-foreground">{num(d.market_cap)}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {scanResult && scanResult.items.length === 0 && (
-          <div className="mt-3 text-[12px] text-muted-foreground">
-            没有股票通过该策略的硬过滤条件
-            <span className="block mt-1 text-[11px] text-muted-foreground/70">
-              {new Date().getHours() < 9 || new Date().getHours() >= 15
-                ? '💡 当前为非交易时段, 腾讯行情中涨跌幅/量比/换手为 0, 依赖量能条件的策略(资金热度/放量突破)会筛不出票。建议交易时段使用, 或改选估值类策略(双低/低波质量)。'
-                : '可尝试放宽条件或切换为「自选+种子池」范围'}
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* ── 问财选股(L2 数据源面板) ── */}
-      <WencaiPanel />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {visibleItems.map((group) => {

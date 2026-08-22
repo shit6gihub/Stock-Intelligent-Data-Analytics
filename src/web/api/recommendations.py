@@ -81,6 +81,7 @@ def _refresh_worker(
     market_scan_limit: int,
     max_kline_symbols: int,
     limit_candidates: int,
+    skip_market_scan: bool = False,
 ):
     _set_refresh_state(
         running=True,
@@ -96,6 +97,7 @@ def _refresh_worker(
             market_scan_limit=market_scan_limit,
             max_kline_symbols=max_kline_symbols,
             limit_candidates=limit_candidates,
+            skip_market_scan=skip_market_scan,
         )
         _set_refresh_state(
             running=False,
@@ -383,6 +385,10 @@ def refresh_strategy_signal_list(
     max_kline_symbols: int = Query(72, ge=0, le=300),
     limit_candidates: int = Query(2000, ge=50, le=10000),
     wait: bool = Query(False, description="是否同步等待刷新完成（默认后台执行）"),
+    skip_market_scan: bool = Query(
+        False,
+        description="跳过东财榜单抓取, 市场池沿用 7 日内快照(共振查询联动秒级重算用)",
+    ),
 ):
     if wait:
         return refresh_strategy_signals(
@@ -392,6 +398,7 @@ def refresh_strategy_signal_list(
             market_scan_limit=market_scan_limit,
             max_kline_symbols=max_kline_symbols,
             limit_candidates=limit_candidates,
+            skip_market_scan=skip_market_scan,
         )
 
     started, state = _start_refresh_job(
@@ -401,6 +408,7 @@ def refresh_strategy_signal_list(
         market_scan_limit=market_scan_limit,
         max_kline_symbols=max_kline_symbols,
         limit_candidates=limit_candidates,
+        skip_market_scan=skip_market_scan,
     )
     latest_snapshot = _latest_strategy_snapshot()
     return {

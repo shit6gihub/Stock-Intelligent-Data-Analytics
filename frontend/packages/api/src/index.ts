@@ -19,6 +19,7 @@ export * from './providers'
 export * from './reports'
 export * from "./strategies"
 export * from './tdx'
+export * from './wencai'
 export * from './fundamentals'
 export * from './notify'
 export * from './users'

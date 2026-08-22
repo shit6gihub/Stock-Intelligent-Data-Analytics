@@ -587,6 +587,8 @@ export const recommendationsApi = {
     max_kline_symbols?: number
     limit_candidates?: number
     wait?: boolean
+    /** 跳过东财榜单抓取, 市场池沿用快照(共振查询联动秒级重算) */
+    skip_market_scan?: boolean
   }) => {
     const q = new URLSearchParams()
     appendQuery(q, 'rebuild_candidates', params?.rebuild_candidates ?? true)
@@ -596,6 +598,7 @@ export const recommendationsApi = {
     appendQuery(q, 'max_kline_symbols', params?.max_kline_symbols)
     appendQuery(q, 'limit_candidates', params?.limit_candidates)
     appendQuery(q, 'wait', params?.wait ?? false)
+    appendQuery(q, 'skip_market_scan', params?.skip_market_scan)
     const qs = q.toString()
     return fetchAPI<StrategySignalsResponse>(
       `/recommendations/strategy-signals/refresh${qs ? `?${qs}` : ''}`,
