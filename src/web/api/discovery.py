@@ -1,5 +1,5 @@
 import logging
-import time
+import threading
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,9 +17,6 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-_cache: dict[str, tuple[float, object]] = {}
-
-
 def _resolve_proxy() -> str:
     # Prefer UI-configured proxy, fallback to env settings.
     try:
@@ -30,19 +27,25 @@ def _resolve_proxy() -> str:
         return ""
 
 
+# 2026-08-22: 业务缓存接入 Redis(L1 内存 + L2 Redis), 跨进程共享 + 重启不丢。
+# 每个 key 单独记 TTL(原来全局 _cache 用同一个 time.time() 计算, TTL 由调用方传)。
+_CACHE_TTL: dict[str, int] = {}
+_CACHE_TTL_LOCK = threading.Lock()
+
+
 def _cache_get(key: str, ttl_s: int) -> object | None:
-    now = time.time()
-    hit = _cache.get(key)
-    if not hit:
-        return None
-    ts, obj = hit
-    if now - ts > ttl_s:
-        return None
-    return obj
+    # 记录 TTL(供 set 时写入 Redis 用)
+    with _CACHE_TTL_LOCK:
+        _CACHE_TTL[key] = ttl_s
+    from src.web.cache.biz_cache import biz_cache
+    return biz_cache.get_json(key)
 
 
 def _cache_set(key: str, obj: object) -> None:
-    _cache[key] = (time.time(), obj)
+    from src.web.cache.biz_cache import biz_cache
+    with _CACHE_TTL_LOCK:
+        ttl = _CACHE_TTL.get(key, 60)
+    biz_cache.set_json(key, obj, ttl=ttl)
 
 
 def _to_number(value) -> float | None:

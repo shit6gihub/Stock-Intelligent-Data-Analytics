@@ -1712,6 +1712,13 @@ async def lifespan(app):
         await _rc.connect()
     except Exception as e:
         logger.warning(f"[Redis] 启动连接失败,降级运行: {e}")
+    # 2026-08-22: biz_cache 是懒连接(首次 set/get 时才连),无需显式预热;
+    # 但这里主动触发一次连接,让 /health 的 biz_cache.redis 字段在启动后即为 ok/down
+    try:
+        from src.web.cache.biz_cache import biz_cache as _bc
+        _bc._ensure_redis()
+    except Exception as e:
+        logger.warning(f"[biz-cache] 启动预热失败(懒连接兜底): {e}")
     setup_logging()
     setup_proxy()  # 设置进程 env 代理(HTTP_PROXY/NO_PROXY);所有 httpx(trust_env=True)据此走代理
     setup_ssl()

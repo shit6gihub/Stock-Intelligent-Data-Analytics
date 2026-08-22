@@ -15,7 +15,6 @@ from src.web.api.auth import get_current_user
 from src.web.models import Account, PriceAlertRule, Position, Stock, User
 from src.core.marketdata_client import md_quote_rows
 from src.core.quote_period import classify_quote_period, summarize_daily_pnl_period
-from src.collectors.market_http import TTLCache
 from src.models.market import MarketCode
 
 logger = logging.getLogger(__name__)
@@ -31,10 +30,25 @@ EXCHANGE_RATE_FAIL_TTL = 300
 _fx_lock = threading.Lock()
 
 
-def _fetch_fx_rate(url: str, cache: dict, name: str, fail_ttl: int = EXCHANGE_RATE_FAIL_TTL) -> float:
-    """拉取单个汇率(带失败短缓存)。返回当前生效汇率。"""
+def _fetch_fx_rate(
+    url: str,
+    cache: dict,
+    name: str,
+    redis_key: str,
+    fail_ttl: int = EXCHANGE_RATE_FAIL_TTL,
+) -> float:
+    """拉取单个汇率(带失败短缓存 + Redis 跨进程缓存)。返回当前生效汇率。"""
     if time.time() - cache["ts"] < EXCHANGE_RATE_TTL:
         return cache["rate"]
+    # 2026-08-22: 内存 miss 时查 Redis(跨进程/重启兜底), 命中则回填内存。
+    from src.web.cache.biz_cache import biz_cache
+    cached = biz_cache.get_json(redis_key)
+    if cached is not None:
+        try:
+            cache["rate"], cache["ts"] = float(cached), time.time()
+            return cache["rate"]
+        except (TypeError, ValueError):
+            pass
     try:
         # 2026-08-12: 数据源从新浪(hq.sinajs.cn)换成腾讯 qt.gtimg.cn——
         # 海外节点新浪超时(冷启动白等 3s×2), 腾讯 0.1s 秒回且支持外汇。
@@ -49,6 +63,7 @@ def _fetch_fx_rate(url: str, cache: dict, name: str, fail_ttl: int = EXCHANGE_RA
             if len(parts) > 3:
                 rate = float(parts[3])  # 第4字段 = 现价
                 cache["rate"], cache["ts"] = rate, time.time()  # 成功: 长 TTL
+                biz_cache.set_json(redis_key, rate, ttl=EXCHANGE_RATE_TTL)
                 logger.info(f"更新{name}汇率: {rate}")
                 return rate
     except Exception as e:
@@ -63,14 +78,18 @@ def get_hkd_cny_rate() -> float:
     """获取港币兑人民币汇率(腾讯 qt.gtimg.cn, 海外可达)"""
     global _hkd_rate_cache
     with _fx_lock:
-        return _fetch_fx_rate("https://qt.gtimg.cn/q=whHKDCNY", _hkd_rate_cache, "港币")
+        return _fetch_fx_rate(
+            "https://qt.gtimg.cn/q=whHKDCNY", _hkd_rate_cache, "港币", "fx:rate:hkd"
+        )
 
 
 def get_usd_cny_rate() -> float:
     """获取美元兑人民币汇率(腾讯 qt.gtimg.cn, 海外可达)"""
     global _usd_rate_cache
     with _fx_lock:
-        return _fetch_fx_rate("https://qt.gtimg.cn/q=whUSDCNY", _usd_rate_cache, "美元")
+        return _fetch_fx_rate(
+            "https://qt.gtimg.cn/q=whUSDCNY", _usd_rate_cache, "美元", "fx:rate:usd"
+        )
 
 
 # ========== Pydantic Models ==========
@@ -635,8 +654,8 @@ def _fetch_quotes_for_stocks(stocks: list[Stock]) -> dict:
 
 
 # 组合基准/归因结果缓存:重建全持仓 NAV 很贵(逐只拉 K 线),按持仓指纹缓存结果。
+# 2026-08-22: 已迁到 biz_cache(L1 内存 + L2 Redis), 跨进程共享 + 重启不丢。
 # 持仓变动即失效(指纹变);失败/空结果不缓存,避免把瞬时故障冻住 10 分钟。
-_PORTFOLIO_RESULT_CACHE = TTLCache(default_ttl_sec=600.0)
 
 
 def _holdings_signature(db: Session, user: User | None = None) -> str:
@@ -724,8 +743,9 @@ def portfolio_benchmark(
     sig = _holdings_signature(db, user)
     if not sig:
         return {"empty": True, "reason": "no_holdings"}
-    ckey = f"bench:{days}:{bcode}:{sig}"
-    cached = _PORTFOLIO_RESULT_CACHE.get(ckey)
+    ckey = f"portfolio:bench:{days}:{bcode}:{sig}"
+    from src.web.cache.biz_cache import biz_cache
+    cached = biz_cache.get_json(ckey)
     if cached is not None:
         return cached
 
@@ -736,7 +756,7 @@ def portfolio_benchmark(
     if not res:
         # 失败/数据不足不缓存,下轮可重试(由 K 线负缓存兜住打爆)
         return {"empty": True, "reason": "insufficient_data"}
-    _PORTFOLIO_RESULT_CACHE.set(ckey, res)
+    biz_cache.set_json(ckey, res, ttl=600)
     return res
 
 
@@ -804,8 +824,9 @@ def portfolio_attribution(days: int = 60, benchmark: str = "000300", db: Session
     sig = _holdings_signature(db, user)
     if not sig:
         return {"items": []}
-    ckey = f"attr:{days}:{bcode}:{sig}"
-    cached = _PORTFOLIO_RESULT_CACHE.get(ckey)
+    ckey = f"portfolio:attr:{days}:{bcode}:{sig}"
+    from src.web.cache.biz_cache import biz_cache
+    cached = biz_cache.get_json(ckey)
     if cached is not None:
         return cached
 
@@ -815,7 +836,7 @@ def portfolio_attribution(days: int = 60, benchmark: str = "000300", db: Session
     items = build_attribution(holdings, days=days, benchmark_code=bcode)
     result = {"items": items}
     if items:  # 空结果不缓存,下轮可重试
-        _PORTFOLIO_RESULT_CACHE.set(ckey, result)
+        biz_cache.set_json(ckey, result, ttl=600)
     return result
 
 

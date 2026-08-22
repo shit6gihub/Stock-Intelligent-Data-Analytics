@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-08-22
+
+### feature — Redis 业务缓存落地(L1 内存 + L2 Redis)
+
+**feature(cache): 新增统一业务缓存层 biz_cache, 业务数据缓存跨进程 + 重启不丢**
+
+- 新增 `src/web/cache/biz_cache.py`: L1 进程内 dict + L2 Redis 两级缓存,
+  同步接口(redis-py 连接池, 线程安全), 优雅降级(Redis 不可达退回纯 L1,
+  行为等价于原内存 dict), 连接失败 30s 冷却避免反复撞超时
+- 接入三处业务缓存点:
+  - 发现页热点(stocks/boards, TTL 45/60s) — discovery.py 的 _cache 迁 biz_cache
+  - 汇率缓存(HKD/USD, TTL 3600s) — accounts.py 成功结果写 Redis, 内存 miss 时跨进程兜底
+  - 组合基准/归因结果(TTL 600s) — _PORTFOLIO_RESULT_CACHE 从 TTLCache 迁 biz_cache,
+    持仓指纹 key 加 portfolio: 前缀
+- `/api/health` 新增 `biz_cache` 组件字段(l1_entries + redis 连通状态)
+- server.py 启动时预热 biz_cache 连接
+- 修复 Redis 连接前提: 生产容器此前未设 REDIS_URL(默认 localhost:6379 不通,
+  Redis 在独立容器 panwatch-redis), 需在部署时注入 REDIS_URL=redis://panwatch-redis:6379/0
+
+**验证**: py_compile 通过; Redis 不可达降级读写 ✅; Redis 可达跨进程共享(进程A写/进程B读)✅;
+get_or_fetch 防穿透 / TTL 过期 / delete ✅
+
 ## 2026-08-21
 
 ### feature — 机会页整合 P2 前端: 今日机会榜+共振标记+统一筛选

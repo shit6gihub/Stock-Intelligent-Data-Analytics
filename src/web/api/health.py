@@ -178,6 +178,13 @@ async def health() -> dict[str, Any]:
     except Exception as e:
         components["redis"] = {"status": "down", "error": str(e)[:100]}
 
+    # ─── 业务缓存层(biz_cache: L1 内存 + L2 Redis)检查 ───
+    try:
+        from src.web.cache.biz_cache import biz_cache
+        components["biz_cache"] = biz_cache.stats()
+    except Exception as e:
+        components["biz_cache"] = {"status": "down", "error": str(e)[:100]}
+
     # ─── 调度器存活检查 ───
     try:
         import server as srv_mod
