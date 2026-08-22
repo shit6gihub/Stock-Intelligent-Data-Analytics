@@ -257,19 +257,54 @@ def _write_notification(overall: str, checks: list[dict], now: datetime) -> None
     之前直接 db.add 绕过了 push_notification, 导致: ①push_status 为空(前端显示
     "未送达") ②根本不外发。改为走 push_notification, 站内落库 + 外发 + 回写状态
     一步到位。
+
+    推送目标(2026-08-22): 生产渠道全是用户级(user_id 非空), user_id=None 只推
+    全局渠道会 skipped("未配置通知渠道")。学 scheduler.py 订阅推送模式:
+    owner 必推, 其余活跃用户有订阅意向才推——哨兵是系统级告警, 推 owner 即可,
+    避免打扰全部用户。
     """
     from src.core.notify_center import push_notification
+    from src.web.database import SessionLocal
+    from src.web.models import User
 
     level = "error" if overall == "fail" else "warning"
     title = f"数据质量哨兵[{overall.upper()}] {now.strftime('%Y-%m-%d %H:%M')}"
     body = "; ".join(f"{c['check']}:{c['status']}" for c in checks)
-    push_notification(
-        title=title,
-        body=body,
-        category="system",
-        level=level,
-        source=_SOURCE,
-    )
+
+    target_user_ids: list[str] = []
+    try:
+        db = SessionLocal()
+        try:
+            owners = (
+                db.query(User)
+                .filter(User.role == "owner", User.is_active.is_(True))
+                .all()
+            )
+            target_user_ids = [u.id for u in owners]
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("[dq] 查询 owner 失败, 回退全局推送: %s", e)
+
+    if not target_user_ids:
+        # 无 owner(异常情况) → 走全局渠道兜底
+        push_notification(
+            title=title, body=body, category="system", level=level, source=_SOURCE
+        )
+        return
+
+    for uid in target_user_ids:
+        try:
+            push_notification(
+                title=title,
+                body=body,
+                category="system",
+                level=level,
+                source=_SOURCE,
+                user_id=uid,
+            )
+        except Exception as e:
+            logger.warning("[dq] 哨兵推送用户 %s 失败: %s", uid[:8], e)
 
 
 def run_dq_checks(db) -> dict:

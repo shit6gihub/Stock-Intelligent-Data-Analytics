@@ -1,5 +1,12 @@
 # Changelog
 
+### fix — 哨兵推送目标修复(生产渠道全是用户级, user_id=None 推不出去)
+
+- 生产 notify_channels 全部带 user_id(用户级), 哨兵 user_id=None 只匹配全局
+  渠道 → push_status='skipped'(未配置通知渠道), 依然收不到
+- 修法: 学 scheduler.py 订阅推送模式, 查 owner 活跃用户逐个
+  user_id=uid 推送; 无 owner 时回退全局兜底
+
 ## 2026-08-22
 
 ### fix — 预测引擎/报告中心/时区口径三处线上问题修复
