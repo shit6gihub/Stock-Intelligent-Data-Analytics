@@ -5,7 +5,6 @@
 """
 
 import json
-from datetime import datetime
 
 from src.core import event_catalyst_engine as ec
 
@@ -20,12 +19,6 @@ VALID_LLM_JSON = json.dumps(
     },
     ensure_ascii=False,
 )
-
-
-def _today_event(title, importance=3):
-    from types import SimpleNamespace
-
-    return SimpleNamespace(title=title, publish_time=datetime.now(), importance=importance)
 
 
 # ---------- parse_catalyst_reply ----------
@@ -188,13 +181,14 @@ def test_analyze_llm_invalid_json_returns_none(monkeypatch):
 
 
 def test_analyze_with_mocked_vendor_and_chat(monkeypatch):
-    """端到端: mock EventsVendor.fetch + AIClient.chat → 返回结构化信号。"""
-    from marketdata.vendors import events as events_mod
+    """端到端: mock _fetch_today_events + AIClient.chat → 返回结构化信号。
 
-    fake_item = _today_event("硅料厂商集体停产检修", importance=3)
-    monkeypatch.setattr(
-        events_mod.EventsVendor, "fetch", lambda self, symbols, config: [fake_item]
-    )
+    注意: 不 mock EventsVendor.fetch(它走 _fetch_today_events 内部真实的
+    publish_time.date()==today 日期过滤, CI UTC 时区与本地 Asia/Shanghai 不同
+    会误伤), 而是像其他 analyze 测试一样直接 mock _fetch_today_events,
+    让本测试聚焦「LLM 调用 + 解析」核心逻辑。
+    """
+    monkeypatch.setattr(ec, "_fetch_today_events", lambda symbol: ["硅料厂商集体停产检修"])
 
     from src.core.ai_client import AIClient
 
