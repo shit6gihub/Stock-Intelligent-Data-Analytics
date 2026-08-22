@@ -223,9 +223,10 @@ def classify_sentiment_cycle(metrics: dict) -> dict:
             'hints': [],
         }
 
-    # 置信度: 根据得分占该周期满分比例
-    max_possible = max(cfg[2] for cfg in _CYCLE_CONFIGS)
-    ratio = best_score / max_possible
+    # 置信度: 根据得分占「命中周期」满分比例(不是全局最大, 否则满分只有 7 的
+    # 修复/发酵周期即使拿满也到不了 0.8 的"高"门槛)。
+    best_max = next((cfg[2] for cfg in _CYCLE_CONFIGS if cfg[0] == best_cycle), 9)
+    ratio = best_score / best_max if best_max > 0 else 0.0
     if ratio >= 0.8:
         confidence = '高'
     elif ratio >= 0.5:
