@@ -181,22 +181,21 @@ def test_analyze_llm_invalid_json_returns_none(monkeypatch):
 
 
 def test_analyze_with_mocked_vendor_and_chat(monkeypatch):
-    """端到端: mock _fetch_today_events + AIClient.chat → 返回结构化信号。
+    """端到端: mock _fetch_today_events + _build_catalyst_client → 返回结构化信号。
 
-    注意: 不 mock EventsVendor.fetch(它走 _fetch_today_events 内部真实的
-    publish_time.date()==today 日期过滤, CI UTC 时区与本地 Asia/Shanghai 不同
-    会误伤), 而是像其他 analyze 测试一样直接 mock _fetch_today_events,
-    让本测试聚焦「LLM 调用 + 解析」核心逻辑。
+    注意: 不 mock AIClient.chat(它依赖 _build_catalyst_client 真实构造 AIClient,
+    CI 无 AI_API_KEY env 时 AsyncOpenAI(api_key="") 构造抛异常 → 被 analyze 的
+    except 吞掉返回 None)。直接 mock _build_catalyst_client 返回假 client,
+    让本测试聚焦「LLM 调用 + 解析」核心逻辑, 不依赖时区/环境变量。
     """
     monkeypatch.setattr(ec, "_fetch_today_events", lambda symbol: ["硅料厂商集体停产检修"])
 
-    from src.core.ai_client import AIClient
+    class _FakeClient:
+        async def chat(self, system_prompt, user_content, images=None, temperature=None):
+            assert "硅料厂商集体停产检修" in user_content
+            return VALID_LLM_JSON
 
-    async def fake_chat(self, system_prompt, user_content, images=None, temperature=None):
-        assert "硅料厂商集体停产检修" in user_content
-        return VALID_LLM_JSON
-
-    monkeypatch.setattr(AIClient, "chat", fake_chat)
+    monkeypatch.setattr(ec, "_build_catalyst_client", lambda db=None: _FakeClient())
     result = ec.analyze_event_catalyst("600519")
     assert result is not None
     assert result["catalyst"] == "硅料停产涨价"
