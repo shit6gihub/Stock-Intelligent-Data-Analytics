@@ -273,6 +273,40 @@ class PremarketOutlookAgent(BaseAgent):
             event_stream = []
             catalyst = {}
 
+        # 6.5 个股事件催化预期差(DeepSeek 推理: 当日公告→催化信号+受益链+预期差)
+        #     对 watchlist 的 A 股标的并发调 event_catalyst_engine, 输出每只的
+        #     预期差分(利好未反应=高预期差=潜伏价值)。限制并发数量防盘前过慢。
+        catalyst_analysis: dict[str, dict] = {}
+        try:
+            import asyncio
+
+            from src.core.event_catalyst_engine import analyze_event_catalyst
+
+            cn_symbols = [
+                s.symbol for s in context.watchlist
+                if (getattr(s.market, "value", None) or str(s.market)) == "CN"
+            ]
+            cn_symbols = cn_symbols[:8]
+
+            async def _one_catalyst(sym: str):
+                return sym, await asyncio.to_thread(analyze_event_catalyst, sym)
+
+            results = await asyncio.gather(
+                *[_one_catalyst(s) for s in cn_symbols], return_exceptions=True
+            )
+            for item in results:
+                if isinstance(item, tuple) and item[1]:
+                    catalyst_analysis[item[0]] = item[1]
+            logger.info(
+                "[%s] 个股事件催化预期差完成: %s/%s",
+                trace_id,
+                len(catalyst_analysis),
+                len(cn_symbols),
+            )
+        except Exception as e:
+            logger.warning("[%s] 个股事件催化预期差失败: %s", trace_id, e)
+            catalyst_analysis = {}
+
         # 4.5 通达信问小达投研查询(盘前: 主力净流入/题材资金流向/强势板块)
         tdx_wenda: dict = {}
         try:
@@ -307,6 +341,7 @@ class PremarketOutlookAgent(BaseAgent):
             "market_sentiment": market_sentiment,
             "event_stream": event_stream,
             "catalyst": catalyst,
+            "catalyst_analysis": catalyst_analysis,
             "tdx_wenda": tdx_wenda,
             "timestamp": datetime.now().isoformat(),
             "run_trace_id": trace_id,
@@ -421,6 +456,29 @@ class PremarketOutlookAgent(BaseAgent):
                     lines.append(f"  - 主题: {'、'.join(str(s) for s in subs[:4])}")
             lines.append("")
             lines.append("> 以上事件是'提前发现题材'的核心输入: 每个事件 → 受益板块 → 潜伏标的(未涨停)。不要用涨停池选股(那是追高)。")
+            lines.append("")
+
+        # 个股事件催化预期差(DeepSeek 推理: 当日公告→催化信号+受益链+预期差)
+        # 仅自选/持仓 A 股标的, 有当日公告才出现; 预期差高 = 潜伏价值大
+        ca = data.get("catalyst_analysis", {}) or {}
+        if ca:
+            lines.append("## 个股事件催化与预期差(当日公告 AI 推理)")
+            for sym, r in ca.items():
+                if not isinstance(r, dict):
+                    continue
+                gap = r.get("expectation_gap") or {}
+                pool = r.get("beneficiary_pool") or []
+                lines.append(
+                    f"- [{sym}] {r.get('catalyst')} | 方向:{r.get('direction')} | "
+                    f"置信度:{r.get('confidence')} | 预期差:{gap.get('level')}"
+                )
+                if pool:
+                    lines.append(f"  受益链: {' / '.join(pool)}")
+                if gap.get("note"):
+                    lines.append(f"  预期差说明: {gap.get('note')}")
+                if r.get("reason"):
+                    lines.append(f"  理由: {r['reason']}")
+            lines.append("> 预期差高 = 利好/利空尚未充分反映在股价, 是提前潜伏/规避的核心信号; 预期差低 = 已兑现, 追高需谨慎。")
             lines.append("")
 
         # 大宗商品轮动前瞻(联动涨价题材: 能源→金属→农产品→黄金)

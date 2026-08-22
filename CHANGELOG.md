@@ -2,6 +2,22 @@
 
 ## 2026-08-22
 
+### feature — 事件驱动预期差接入盘前分析 Agent
+
+**feature(premarket): 盘前分析新增「个股事件催化与预期差」采集 + prompt 渲染**
+
+- `collect()` 新增 6.5 步: 对 watchlist 的 A 股(CN)标的(上限 8 只)并发调
+  `event_catalyst_engine.analyze_event_catalyst`, 把每只的「催化题材/方向/置信度/
+  受益链/预期差分」存进 `catalyst_analysis`; 失败静默降级为空 dict 不阻塞盘前主流程
+- `build_prompt()` 在事件驱动扫描段之后渲染「个股事件催化与预期差」段:
+  预期差高 = 利好/利空尚未充分反映在股价(提前潜伏/规避的核心信号),
+  预期差低 = 已兑现追高需谨慎
+- 与现有「全网事件流」(市场级)互补: 事件流是市场级题材输入, 本段是自选/持仓
+  个股的当日公告 AI 推理, 落到具体标的
+
+**验证**: tests/test_premarket_catalyst.py 6 passed(渲染/空降级/非 dict 跳过/
+并发采集/失败降级/非 A 股跳过)
+
 ### feature — 三个 AI 推理层模块 + 注册为对话工具(DeepSeek 量化推理)
 
 **feature(core): 新增事件驱动预期差 / 主力意图 AI 解释 / 因子 IC 归因 三模块**
