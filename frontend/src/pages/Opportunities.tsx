@@ -50,6 +50,19 @@ type ResonanceRow = {
 const resonanceCountOf = (r: ResonanceRow): number =>
   [r.fromTdx, r.fromWencai, r.strategyPassed === true].filter(Boolean).length
 
+/** 共振排序: 共振数 > 策略分 > 引擎内排名 */
+const sortResRows = (rows: ResonanceRow[]): ResonanceRow[] =>
+  [...rows].sort((a, b) => {
+    const diff = resonanceCountOf(b) - resonanceCountOf(a)
+    if (diff !== 0) return diff
+    const sa = a.strategyScore ?? -1
+    const sb = b.strategyScore ?? -1
+    if (sa !== sb) return sb - sa
+    const pa = a.tdxRank ?? a.wencaiRank ?? 999
+    const pb = b.tdxRank ?? b.wencaiRank ?? 999
+    return pa - pb
+  })
+
 /** tdx 行字段名动态(中文键兜底,与后端入池口径一致 tdx.py): 识别不了返回 '' */
 const normSymbolTdx = (r: Record<string, unknown>): string => {
   const raw = r['代码'] ?? r['股票代码'] ?? r['sec_code'] ?? r['symbol'] ?? r['code']
@@ -653,11 +666,48 @@ export default function OpportunitiesPage() {
   const [resQuery, setResQuery] = useState('')
   const [resStrategyId, setResStrategyId] = useState('') // '' = 不精筛
   const [resLoading, setResLoading] = useState(false)
+  // 并发查询的原始合并结果(不含策略列): 精筛只对这份缓存跑 scan, 切换策略不重调 tdx/wencai
+  const [resBaseRows, setResBaseRows] = useState<ResonanceRow[]>([])
   const [resRows, setResRows] = useState<ResonanceRow[]>([])
+  const [resFiltering, setResFiltering] = useState(false)
+  const [resFilterDown, setResFilterDown] = useState(false)
   const [resLastQuery, setResLastQuery] = useState('')
   const [resMeta, setResMeta] = useState<{ tdx: number; wencai: number; strategy: number; dropped: number; enginesDown: string } | null>(null)
   const [resError, setResError] = useState('')
   const [resOnly, setResOnly] = useLocalStorage('panwatch_opportunities_res_only_v1', false)
+
+  // 策略精筛: 只对缓存的双引擎合并结果调 scan(symbols ≤100), 与并发查询解耦
+  const applyResFilter = useCallback(async (strategyId: string, base: ResonanceRow[]) => {
+    if (base.length === 0) return
+    if (!strategyId) {
+      // 不精筛: 纯本地清除策略列, 零 API 调用
+      setResRows(sortResRows(base.map((r) => ({ ...r, strategyPassed: null, strategyScore: null }))))
+      setResMeta((m) => (m ? { ...m, strategy: 0 } : m))
+      setResFilterDown(false)
+      return
+    }
+    setResFiltering(true)
+    try {
+      const symbols = base.map((r) => r.symbol).slice(0, 100)
+      const scan = await strategiesApi.scan({ strategy_id: strategyId, market: 'CN', limit: 100, symbols, min_score: 0 })
+      const passed = new Map(scan.items.map((it) => [it.symbol, it.score]))
+      const rows = base.map((r) => (
+        passed.has(r.symbol)
+          ? { ...r, strategyPassed: true, strategyScore: passed.get(r.symbol) ?? null }
+          : { ...r, strategyPassed: false, strategyScore: null }
+      ))
+      setResRows(sortResRows(rows))
+      setResMeta((m) => (m ? { ...m, strategy: passed.size } : m))
+      setResFilterDown(false)
+    } catch {
+      // 精筛失败: 退回未精筛结果并标注, 不影响已有数据
+      setResRows(sortResRows(base))
+      setResMeta((m) => (m ? { ...m, strategy: 0 } : m))
+      setResFilterDown(true)
+    } finally {
+      setResFiltering(false)
+    }
+  }, [])
 
   const runResonance = useCallback(async () => {
     const q = resQuery.trim()
@@ -668,7 +718,9 @@ export default function OpportunitiesPage() {
     setResLoading(true)
     setResError('')
     setResRows([])
+    setResBaseRows([])
     setResMeta(null)
+    setResFilterDown(false)
     setResLastQuery(q)
     try {
       // ① 问小达 + 问财并发(各自失败降级, 不互相拖垮)
@@ -727,42 +779,17 @@ export default function OpportunitiesPage() {
         return
       }
 
-      // ② 策略精筛(可选): 只扫合并后的票(≤100), 不做全市场扫描
-      let strategyCount = 0
+      // ② 缓存合并结果; 若已选策略, 首次即精筛(只调 scan, 不重查引擎)
+      const base = Array.from(map.values())
+      setResBaseRows(base)
+      setResMeta({ tdx: tdxCount, wencai: wencaiCount, strategy: 0, dropped, enginesDown: enginesDown.join('、') })
       if (resStrategyId) {
-        try {
-          const symbols = Array.from(map.keys()).slice(0, 100)
-          const scan = await strategiesApi.scan({ strategy_id: resStrategyId, market: 'CN', limit: 100, symbols, min_score: 0 })
-          const passed = new Map(scan.items.map((it) => [it.symbol, it.score]))
-          for (const row of map.values()) {
-            if (passed.has(row.symbol)) {
-              row.strategyPassed = true
-              row.strategyScore = passed.get(row.symbol) ?? null
-              strategyCount += 1
-            } else {
-              row.strategyPassed = false
-            }
-          }
-        } catch {
-          enginesDown.push('策略精筛')
-        }
+        await applyResFilter(resStrategyId, base)
+      } else {
+        setResRows(sortResRows(base))
       }
 
-      // ③ 排序: 共振数 > 策略分 > 引擎内排名
-      const rows = Array.from(map.values()).sort((a, b) => {
-        const diff = resonanceCountOf(b) - resonanceCountOf(a)
-        if (diff !== 0) return diff
-        const sa = a.strategyScore ?? -1
-        const sb = b.strategyScore ?? -1
-        if (sa !== sb) return sb - sa
-        const pa = a.tdxRank ?? a.wencaiRank ?? 999
-        const pb = b.tdxRank ?? b.wencaiRank ?? 999
-        return pa - pb
-      })
-      setResRows(rows)
-      setResMeta({ tdx: tdxCount, wencai: wencaiCount, strategy: strategyCount, dropped, enginesDown: enginesDown.join('、') })
-
-      // ④ 联动: tdx/wencai 查询已在后端入池, 触发轻量重算(跳过东财)让机会页 🔥 立即更新
+      // ③ 联动: tdx/wencai 查询已在后端入池, 触发轻量重算(跳过东财)让机会页 🔥 立即更新
       if (tdxCount + wencaiCount > 0 && !refreshingRef.current) {
         refreshingRef.current = true
         setRefreshing(true)
@@ -780,7 +807,7 @@ export default function OpportunitiesPage() {
     } finally {
       setResLoading(false)
     }
-  }, [pollRefreshCompletion, resQuery, resStrategyId, toast])
+  }, [applyResFilter, pollRefreshCompletion, resQuery, resStrategyId, toast])
 
   const handleRefresh = async () => {
     if (refreshingRef.current) return
@@ -1282,7 +1309,16 @@ export default function OpportunitiesPage() {
                 className="flex-1 min-w-[260px]"
                 disabled={resLoading}
               />
-              <Select value={resStrategyId || 'none'} onValueChange={(v) => setResStrategyId(v === 'none' ? '' : v)}>
+              <Select
+                value={resStrategyId || 'none'}
+                onValueChange={(v) => {
+                  const id = v === 'none' ? '' : v
+                  setResStrategyId(id)
+                  // 切换策略只对已缓存的双引擎结果跑 scan, 不重复调用问小达/问财
+                  if (resBaseRows.length > 0 && !resLoading) void applyResFilter(id, resBaseRows)
+                }}
+                disabled={resLoading}
+              >
                 <SelectTrigger className="h-8 text-[12px] w-[180px]">
                   <SelectValue placeholder="策略精筛(可选)" />
                 </SelectTrigger>
@@ -1301,7 +1337,7 @@ export default function OpportunitiesPage() {
               </Button>
             </div>
             <div className="mt-1.5 text-[11px] text-muted-foreground">
-              问小达+问财同时查询合并去重,可选策略库规则只对结果精筛;每次查询消耗 1 次 tdx 配额
+              问小达+问财同时查询合并去重;查完后切换策略即时对结果精筛(不重复调用引擎);每次查询消耗 1 次 tdx 配额
             </div>
 
             {resError && (
@@ -1318,6 +1354,10 @@ export default function OpportunitiesPage() {
                   {resStrategyId ? ` · 策略通过 ${resMeta.strategy}` : ''})
                 </span>
                 {resMeta.dropped > 0 && <span>无法识别 {resMeta.dropped} 行已忽略</span>}
+                {resFiltering && <span className="text-primary">策略精筛中…</span>}
+                {resFilterDown && (
+                  <span className="text-amber-600 dark:text-amber-500">⚠ 策略精筛不可用,已显示未精筛结果</span>
+                )}
                 {resMeta.enginesDown && (
                   <span className="text-amber-600 dark:text-amber-500">⚠ {resMeta.enginesDown} 不可用,基于剩余引擎共振</span>
                 )}
