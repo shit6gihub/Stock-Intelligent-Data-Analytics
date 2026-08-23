@@ -301,7 +301,7 @@ def explain_main_intent(dark: dict, db=None) -> dict | None:
     # 数据不足/空直接不解释
     if not isinstance(dark, dict):
         return None
-    if dark.get("data_status") == "insufficient":
+    if dark.get("data_status") in ("insufficient", "suspect"):
         return None
 
     try:

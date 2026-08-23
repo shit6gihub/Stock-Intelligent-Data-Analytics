@@ -13,7 +13,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import sys
 import time
 from datetime import datetime, timezone
 
@@ -21,7 +20,7 @@ from sqlalchemy import create_engine, text
 
 from src.collectors.market_http import fetch_source
 from src.collectors.kline_collector import KlineCollector, KlineData
-from src.models.market import MarketCode, MARKETS
+from src.models.market import MarketCode
 from src.web.database import DB_URL  # 复用应用 DB 连接
 
 logger = logging.getLogger(__name__)

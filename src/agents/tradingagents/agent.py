@@ -18,7 +18,6 @@ from src.agents.base import AgentContext, AnalysisResult, BaseAgent, apply_scene
 from src.agents.tradingagents.cost_tracker import (
     check_budget,
     estimate_cost,
-    get_today_cache_key,
 )
 from src.agents.tradingagents.langchain_compat import apply_compat_patches
 from src.agents.tradingagents.llm_adapter import (

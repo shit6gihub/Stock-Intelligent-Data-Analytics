@@ -48,8 +48,6 @@ def _is_market_day() -> bool:
 
 def _backfill_in_worker(days: int) -> dict:
     """在线程里跑 backfill, 避免阻塞 asyncio 事件循环。"""
-    from src.models.market import MARKETS
-    from src.models.market import MarketCode
 
     # 简单判断当前是否在交易时段后(>= 16:00 Asia/Shanghai)
     # 18:00 跑一般收盘后 3 小时, 数据稳定

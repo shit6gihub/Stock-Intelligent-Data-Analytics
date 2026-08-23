@@ -18,7 +18,6 @@ from sqlalchemy.orm import Session
 
 from src.config import Settings
 from src.core.ai_client import AIClient
-from src.models.market import MarketCode
 from src.web.api.auth import get_current_user
 from src.web.database import SessionLocal, get_db
 from src.web.models import (
@@ -78,6 +77,7 @@ _TOOL_STAGE_LABELS = {
     "get_auction_data": "正在获取集合竞价数据...",
     "get_forecast": "正在读取系统预测...",
     "get_opportunities": "正在读取今日机会候选...",
+    "get_sentiment_cycle": "正在判别短线情绪周期...",
     "get_strategy_signals": "正在读取策略信号...",
     "get_notifications": "正在读取系统通知...",
     "get_fundamentals_detail": "正在查询基本面明细(龙虎榜/股东/分红/两融/事件)...",
@@ -331,15 +331,9 @@ CHAT_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "get_opportunities",
-            "description": "读取系统今日机会候选（入场候选榜：信号/得分/操作建议/目标价，按得分排序）。用于回答「今天发现什么机会」「今日机会候选有哪些」「系统今天推荐了什么股票」「XX股票入选机会榜了吗」等问题。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "limit": {"type": "integer", "description": "返回条数，默认 10", "default": 10},
-                },
-                "required": [],
-            },
+            "name": "get_sentiment_cycle",
+            "description": "读取当前 A 股短线情绪周期(冰点/修复/发酵/高潮/退潮)及操作提示。用于回答「现在市场情绪怎么样」「短线情绪处于什么阶段」「现在适合打板还是防守」等问题。",
+            "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
     {
@@ -682,7 +676,7 @@ def _read_forecast(symbol: str = "", limit: int = 5) -> str:
             params.append(str(max(1, min(int(limit), 50))))
             rows = cur.execute(sql, params).fetchall()
             if not rows:
-                return f"暂无系统预测" + (f"（{symbol}）" if symbol else "") + "。"
+                return "暂无系统预测" + (f"（{symbol}）" if symbol else "") + "。"
             today = datetime.now().date().isoformat()
             lines = [f"【系统预测】最近{len(rows)}条" + (f"（{symbol}）" if symbol else "") + f"，来自预测引擎 {table} 表:"]
             for r in rows:
@@ -698,7 +692,7 @@ def _read_forecast(symbol: str = "", limit: int = 5) -> str:
                 close = d.get("last_close")
                 close_str = f"{close:.2f}" if isinstance(close, (int, float)) else (str(close) if close else "—")
                 tdate = (d.get("target_date") or "")[:10]
-                expired = f"已到期" if (tdate and tdate < today) else ("未到期" if tdate else "—")
+                expired = "已到期" if (tdate and tdate < today) else ("未到期" if tdate else "—")
                 created = (d.get("created_at") or "")[:16]
                 conf = d.get("confidence") if cmap.get("confidence") else None
                 conf_str = f" 置信度:{conf}" if conf else ""
@@ -751,6 +745,27 @@ def _read_opportunities(db: Session, limit: int = 10) -> str:
             f"信号:{c.signal} 目标价:{target_str}"
         )
     return "\n".join(lines)
+
+
+async def _read_sentiment_cycle() -> str:
+    """情绪周期判别(2026-08-23 F1 接线): 接 MarketSentimentCollector 取涨停池
+    指标 → classify_sentiment_cycle(此前为死代码, 生产零引用)。"""
+    from src.core.sentiment_cycle import classify_sentiment_cycle, format_cycle
+    from src.core.report_generator import _collect_limit_up_summary
+
+    summary = await _collect_limit_up_summary()
+    if not isinstance(summary, dict) or summary.get("error"):
+        return "情绪周期: 涨停池数据获取失败, 暂无法判别短线情绪周期。"
+
+    metrics = {
+        "limit_up_count": summary.get("total"),
+        "max_board_height": summary.get("max_days"),
+        "break_rate": summary.get("break_rate"),
+        "yesterday_board_perf": summary.get("yesterday_board_perf"),
+        "losing_effect": summary.get("losing_effect"),
+    }
+    result = classify_sentiment_cycle(metrics)
+    return "短线情绪周期: " + format_cycle(result)
 
 
 def _read_strategy_signals(db: Session, limit: int = 10) -> str:
@@ -1264,6 +1279,8 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
         elif name == "get_opportunities":
             limit = int(args.get("limit", 10) or 10)
             return _read_opportunities(db, limit)
+        elif name == "get_sentiment_cycle":
+            return await _read_sentiment_cycle()
         elif name == "get_strategy_signals":
             limit = int(args.get("limit", 10) or 10)
             return _read_strategy_signals(db, limit)
@@ -1980,6 +1997,69 @@ def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+async def _run_tool_loop_stream(ai_client, messages_for_ai, db):
+    """流式 tool 循环(2026-08-23 U1 真流式): 边流式出字边执行工具。
+
+    与 _run_tool_loop 等价, 但最终回答由 chat_with_tools_stream 单次调用
+    边流式产出(delta), 不再"拿全文再假打字机"。产出事件:
+    - ("stage", 文案): 工具执行前
+    - ("delta", 正文增量): 最终回答实时增量
+    - ("done", 全文): 结束时产出一次, 供落库
+    """
+    try:
+        for _round in range(MAX_TOOL_ROUNDS):
+            response_msg = None
+            acc: list[str] = []
+            try:
+                async for kind, payload in ai_client.chat_with_tools_stream(
+                    messages_for_ai, tools=CHAT_TOOLS, temperature=0.5
+                ):
+                    if kind == "delta":
+                        acc.append(payload)
+                        yield "delta", payload
+                    else:
+                        response_msg = payload
+            except Exception:
+                logger.info("流式 tool use 不可用，使用普通对话")
+                ai_response = await ai_client.chat_multi(messages_for_ai, temperature=0.5)
+                yield "delta", ai_response
+                yield "done", ai_response
+                return
+
+            if response_msg is None or not response_msg.tool_calls:
+                yield "done", "".join(acc)
+                return
+
+            # 执行 tool calls(与 _run_tool_loop 同款)
+            messages_for_ai.append({
+                "role": "assistant",
+                "content": response_msg.content or None,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                    }
+                    for tc in response_msg.tool_calls
+                ],
+            })
+            for tc in response_msg.tool_calls:
+                tool_args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                logger.info(f"Tool call: {tc.function.name}({tool_args})")
+                yield "stage", _TOOL_STAGE_LABELS.get(tc.function.name, f"正在调用 {tc.function.name}...")
+                result = await _execute_tool(db, tc.function.name, tool_args)
+                messages_for_ai.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result,
+                })
+        else:
+            yield "done", "抱歉，处理轮次过多，请精简问题再试。"
+    except Exception as e:
+        logger.error(f"AI 流式对话失败: {e}")
+        yield "done", f"抱歉，AI 服务暂时不可用：{e}"
+
+
 def _iter_text_chunks(text: str, size: int = 6):
     """把最终回复切成小块, 模拟打字机逐段输出。"""
     for i in range(0, len(text), size):
@@ -2672,9 +2752,9 @@ async def send_message_stream(
 
             # demo 账号限流: 每日对话次数上限, 防共享模型 key 被公开访客滥用
             if user.username == "demo":
-                from src.core.demo_limit import allow, remaining
+                from src.core.demo_limit import allow
                 if not allow(user.id):
-                    yield _sse_event("error", {"message": f"演示账号每日对话次数已用完(10次/天)。请自行部署体验完整功能: https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics"})
+                    yield _sse_event("error", {"message": "演示账号每日对话次数已用完(10次/天)。请自行部署体验完整功能: https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics"})
                     return
 
             # 多模态: 图片先由 agnes 视觉代理转成文字描述(在保存前处理, 保证 DB 历史连贯)
@@ -2710,11 +2790,13 @@ async def send_message_stream(
             messages_for_ai = await _build_ai_messages(db, conv, user, image_data=body.image_data)
             ai_client = _get_ai_client(db, conv.ai_model_id, user=user)
 
-            # 多轮 tool use: 每轮 tool 执行前推送阶段提示
+            # 多轮 tool use + 真流式(2026-08-23 U1): 边流式出字边执行工具
             ai_response = ""
-            async for kind, payload in _run_tool_loop(ai_client, messages_for_ai, db):
+            async for kind, payload in _run_tool_loop_stream(ai_client, messages_for_ai, db):
                 if kind == "stage":
                     yield _sse_event("stage", {"message": payload})
+                elif kind == "delta":
+                    yield _sse_event("delta", {"content": payload})
                 else:
                     ai_response = payload
 
@@ -2730,11 +2812,6 @@ async def send_message_stream(
             conv.updated_at = datetime.now(timezone.utc)
             db.commit()
             db.refresh(assistant_msg)
-
-            # 最终回复正文: 打字机增量推送
-            for chunk in _iter_text_chunks(ai_response):
-                yield _sse_event("delta", {"content": chunk})
-                await asyncio.sleep(0.004)
 
             yield _sse_event("done", {
                 "id": assistant_msg.id,

@@ -21,7 +21,6 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "forecast_lib"))
 
 import numpy as np
-import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 
@@ -51,15 +50,13 @@ except ImportError:  # forecast_lib 目录已在 sys.path 的 direct 运行方�
         load_weights, update_weights_after_backtest, last_weights_source,
     )
 from forecast_sentiment import (
-    fetch_sentiment, _load_llm_config,
+    _load_llm_config,
 )
 from forecast_traces import (
-    start_run, record_model_output, record_sentiment_eval,
-    finalize_run, run_model_with_trace, _pick_pred_close,
-    list_runs_for_symbol, list_model_outputs, list_sentiment_evals,
+    start_run, finalize_run, run_model_with_trace, list_runs_for_symbol, list_model_outputs, list_sentiment_evals,
     save_backtest_result,
     save_prediction_report, get_prediction_report, list_reports_for_symbol,
-    get_backtest, list_backtests_for_symbol,
+    list_backtests_for_symbol,
 )
 from forecast_reports import generate_report, generate_backtest_report, generate_wecom_report
 from forecast_utils import (
@@ -601,7 +598,6 @@ def _do_backtest(symbol: str, force_legacy: bool = False):
             llm_correct = []
             llm_wrong = []
 
-            from datetime import datetime as _dt
             for r in valid_runs:
                 target_date = r["target_date"]
                 if not target_date or target_date not in price_idx:

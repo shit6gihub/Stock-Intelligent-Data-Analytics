@@ -6,7 +6,7 @@ import logging
 from datetime import date, datetime, timedelta
 from math import sqrt
 
-from sqlalchemy import and_, case, func
+from sqlalchemy import case, func
 
 from src.collectors.kline_collector import KlineCollector
 from src.core.entry_candidates import refresh_entry_candidates
@@ -1241,7 +1241,11 @@ def refresh_strategy_signals(
 
         candidates = (
             db.query(EntryCandidate)
-            .filter(EntryCandidate.snapshot_date == snapshot)
+            .filter(
+                EntryCandidate.snapshot_date == snapshot,
+                # 2026-08-23 P1: 只用当前代候选生成信号, retired(历史代)不再触发
+                EntryCandidate.status == "active",
+            )
             .order_by(EntryCandidate.score.desc(), EntryCandidate.updated_at.desc())
             .limit(max(20, int(limit_candidates)))
             .all()
@@ -1405,16 +1409,21 @@ def refresh_strategy_signals(
                 constraint_stats.get("by_reason", {}),
             )
 
-        # Remove stale strategy rows for same candidate snapshot when strategy mapping changed.
+        # 2026-08-23 P1 修复: 当轮未命中的信号行不再物理删除 —
+        # StrategyOutcome/StrategyFactorSnapshot 外键 CASCADE 会连坐删,
+        # 摧毁后验样本; 改标 inactive 保留历史(GET 默认只返回 active)
         stale_ids = [
             int(row.id)
             for key, row in existing.items()
-            if row.id is not None and key not in touched_keys
+            if row.id is not None and key not in touched_keys and (row.status or "") != "inactive"
         ]
         if stale_ids:
             db.query(StrategySignalRun).filter(
                 StrategySignalRun.id.in_(stale_ids)
-            ).delete(synchronize_session=False)
+            ).update({"status": "inactive", "updated_at": utc_now()}, synchronize_session=False)
+            logger.info(
+                "[策略层] %s 本轮退役 %d 条信号(标 inactive 保留历史)", snapshot, len(stale_ids)
+            )
 
         db.commit()
 
@@ -1442,17 +1451,20 @@ def refresh_strategy_signals(
                 .all()
             )
             factor_map = {int(f.signal_run_id): f for f in factors if f.signal_run_id is not None}
+        # 2026-08-23 P1: 全量行(含 inactive)交给快照同步以保留历史因子快照,
+        # 返回结果只取当前代(active)
+        active_rows = [x for x in rows if (x.status or "inactive") == "active"]
         items = [
             _format_signal(
                 x,
                 include_payload=False,
                 factor_snapshot=factor_map.get(int(x.id)) if (x.id is not None) else None,
             )
-            for x in rows[:3000]
+            for x in active_rows[:3000]
         ]
         return {
             "snapshot_date": snapshot,
-            "count": len(rows),
+            "count": len(active_rows),
             "items": items,
             "constraints": constraint_stats,
         }

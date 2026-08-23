@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from typing import Callable, Awaitable
+from typing import Callable
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 

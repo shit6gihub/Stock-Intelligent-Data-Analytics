@@ -162,6 +162,86 @@ class AIClient:
             logger.error(f"AI tool use 调用失败: {e}")
             raise
 
+    async def chat_with_tools_stream(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        temperature: float = 0.4,
+    ):
+        """带 tool use 的流式调用(2026-08-23 U1 真流式)。
+
+        单次调用同时完成: 边流式产出正文 delta, 边累积工具调用;
+        产出事件:
+        - ("delta", str): 正文增量(最终回答直接由这些 delta 拼接, 无需二次调用)
+        - ("tool_calls", message): 模型本轮返回了工具调用(累积完整后产出一次)
+        """
+        import time as _t
+
+        _t0 = _t.perf_counter()
+        create_kwargs = {
+            "model": self.model,
+            "messages": messages,
+            "tools": tools,
+            "temperature": temperature,
+            "stream": True,
+        }
+        try:
+            stream = await self.client.chat.completions.create(**create_kwargs)
+        except TypeError:
+            # 兼容不支持 stream_options 的服务商: 去掉该参数重试
+            create_kwargs.pop("stream_options", None)
+            stream = await self.client.chat.completions.create(**create_kwargs)
+
+        content_parts: list[str] = []
+        tool_calls: dict[int, dict] = {}
+        usage = None
+        try:
+            async for chunk in stream:
+                if getattr(chunk, "usage", None):
+                    usage = chunk.usage
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                if getattr(delta, "content", None):
+                    content_parts.append(delta.content)
+                    yield "delta", delta.content
+                for tc in (getattr(delta, "tool_calls", None) or []):
+                    idx = tc.index
+                    slot = tool_calls.setdefault(idx, {
+                        "id": "", "type": "function",
+                        "function": {"name": "", "arguments": ""},
+                    })
+                    if getattr(tc, "id", None):
+                        slot["id"] = tc.id
+                    if getattr(tc.function, "name", None):
+                        slot["function"]["name"] = tc.function.name
+                    if getattr(tc.function, "arguments", None):
+                        slot["function"]["arguments"] += tc.function.arguments
+        finally:
+            _latency_ms = (_t.perf_counter() - _t0) * 1000
+            if usage:
+                self._log_usage(None, self.model, usage, int(_latency_ms))
+
+        if tool_calls:
+            # 复用 chat_with_tools 返回的 message 结构(简化: 用 SimpleNamespace 兼容下游)
+            from types import SimpleNamespace
+
+            msg = SimpleNamespace(
+                content="".join(content_parts) or None,
+                tool_calls=[
+                    SimpleNamespace(
+                        id=tc["id"],
+                        type="function",
+                        function=SimpleNamespace(
+                            name=tc["function"]["name"],
+                            arguments=tc["function"]["arguments"],
+                        ),
+                    )
+                    for tc in sorted(tool_calls.values(), key=lambda x: x["id"])
+                ],
+            )
+            yield "tool_calls", msg
+
     async def list_models(self) -> list[str]:
         """通过 OpenAI 兼容的 /v1/models 拉取可用模型 id 列表。"""
         resp = await self.client.models.list()

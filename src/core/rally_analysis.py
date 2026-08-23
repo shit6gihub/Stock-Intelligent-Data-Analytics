@@ -492,7 +492,7 @@ def analyze_swings(symbol: str) -> dict | None:
     """
     try:
         from marketdata import Symbol as MDSymbol
-        from src.core.dark_flow import _fetch_all_ticks, _tencent_code, _TICKS_CACHE
+        from src.core.dark_flow import _fetch_all_ticks, _tencent_code
 
         mdsym = MDSymbol.parse(symbol, "CN")
         code = _tencent_code(mdsym)

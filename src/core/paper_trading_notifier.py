@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from src.core.notifier import NotifierManager
 from src.web.database import SessionLocal
@@ -359,7 +358,7 @@ async def send_daily_summary() -> None:
             if not account or not account.enabled:
                 return
 
-            from datetime import datetime, timezone, timedelta
+            from datetime import datetime, timezone
             now = datetime.now(timezone.utc)
             today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 

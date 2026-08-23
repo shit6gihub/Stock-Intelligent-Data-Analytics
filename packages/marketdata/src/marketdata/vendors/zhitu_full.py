@@ -18,7 +18,6 @@ from marketdata.vendors.zhitu_api import (
     kline as zhitu_kline,
     capital_flow as zhitu_capital_flow,
     top10_holders as zhitu_top10,
-    top_holder_changes as zhitu_holder_changes,
     finance_main as zhitu_finance_main,
 )
 

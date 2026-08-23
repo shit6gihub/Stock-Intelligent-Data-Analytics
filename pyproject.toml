@@ -14,3 +14,12 @@ python_functions = ["test_*"]
 # strict 模式)下 async def 测试报 "not natively supported"。本地 venv 被误降级到
 # pytest-asyncio 1.4.0(auto 默认)故本地能过 CI 不能 —— 根治靠这里显式声明。
 asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+# 2026-08-23 Q3: CI 门禁只卡"真 bug"类 — 语法(E9)/未定义名(F821)/重复键(F601)/
+# 重定义(F811), 不引入风格噪声。本地全量 F 级另议。
+select = ["E9", "F821", "F601", "F811"]

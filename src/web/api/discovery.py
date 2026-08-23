@@ -142,7 +142,7 @@ async def _hot_stocks_live_or_snapshot(
     try:
         import requests as _req
         gw_items = _req.get(
-            f"http://115.190.177.213:8100/cn/hot-stocks",
+            "http://115.190.177.213:8100/cn/hot-stocks",
             params={"mode": mode, "limit": limit},
             timeout=6,
         ).json().get("items") or []

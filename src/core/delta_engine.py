@@ -76,7 +76,7 @@ def compute_delta_series(
     agg: dict[int, dict] = {}
     for tk in ticks:
         if not isinstance(tk, dict) or "d" not in tk or "t" not in tk:
-            raise ValueError(f"非法 tick 行: {tk!r}, 需要 {d/amt/vol/price/t} 字段")
+            raise ValueError(f"非法 tick 行: {tk!r}, 需要 d/amt/vol/price/t 字段")
         sec = _t2sec(tk["t"])
         a = agg.setdefault(sec, {"buy": 0.0, "sell": 0.0, "price": 0.0, "vol": 0.0})
         # 同一秒内多笔: 价格取最后一笔

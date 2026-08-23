@@ -247,7 +247,6 @@ def create_stock(stock: StockCreate, db: Session = Depends(get_db), user: User =
 
     # 2026-08-17 加股快速 backfill(60s 内): 用户加股后立即拉 K线, 不必等 18:00 cron
     # 60s 延迟是为了合并 1 分钟内多次 add(用户连续点不会重复拉)
-    from src.core.kline_backfill_scheduler import KlineBackfillScheduler
     try:
         # 复用 server.py lifespan 已启动的 scheduler(单例), 不要新建
         # 因为新建会创建第二个 AsyncIOScheduler, schedule_one_off 的 job

@@ -8,7 +8,6 @@ import re
 import apprise
 import asyncio
 import httpx
-import time
 
 logger = logging.getLogger(__name__)
 

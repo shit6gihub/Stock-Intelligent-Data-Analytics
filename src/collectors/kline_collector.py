@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import threading
@@ -440,7 +440,6 @@ _TALIB_CN: dict[str, str] = {
     "CDLKICKING": "踢出形态",
     "CDLKICKINGBYLENGTH": "放量踢出",
     "CDLLADDERBOTTOM": "梯底形态",
-    "CDLLONGLEGGEDDOJI": "长脚十字",
     "CDLLONGLINE": "长线形态",
     "CDLMARUBOZU": "光头光脚",
     "CDLMATCHINGLOW": "低点相同",
@@ -449,7 +448,6 @@ _TALIB_CN: dict[str, str] = {
     "CDLRICKSHAWMAN": "黄包车夫",
     "CDLRISEFALL3METHODS": "上升三法",
     "CDLSEPARATINGLINES": "分离线",
-    "CDLSHOOTINGSTAR": "射击之星",
     "CDLSHORTLINE": "短线形态",
     "CDLSPINNINGTOP": "纺锤线",
     "CDLSTALLEDPATTERN": "停滞形态",

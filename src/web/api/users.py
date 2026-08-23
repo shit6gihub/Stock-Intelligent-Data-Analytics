@@ -22,12 +22,9 @@ from sqlalchemy.orm import Session
 
 from src.web.database import get_db
 from src.web.api.auth import (
-    create_user,
     get_current_user,
     get_user_by_id,
-    get_user_by_username,
     require_owner,
-    user_to_dict,
 )
 from src.web.models import AIModel, AIService, User
 

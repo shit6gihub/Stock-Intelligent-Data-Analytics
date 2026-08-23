@@ -18,9 +18,7 @@ import json
 import logging
 import urllib.request
 from datetime import datetime
-from typing import Any
 
-from marketdata.http import market_get
 from marketdata.symbol import Symbol
 from marketdata.types import NewsArticle
 from marketdata.vendors.base import NewsVendor

@@ -2,6 +2,39 @@
 
 ## 2026-08-23
 
+### 判断准确性大修(P1-P4)
+
+- **P1 后验样本存活**: 候选池由"每日 3 次全量删除重建"改幂等 upsert + 消失候选标
+  `retired`(信号层同理标 `inactive`), 候选 ID 稳定 → 后验 Outcome/因子快照不再被
+  FK CASCADE 连坐删, 盘中真实信号进入 1/3/5/10 日胜率与因子标定闭环(修幸存者偏差)
+- **P2 共振加分接线**: `_score_suggestion` 此前读 ORM 对象 meta 从未生效、
+  `_score_market_scan_candidate` 完全没读 — 🔥 共振现在真正参与候选排序
+- **P3 策略口径**: 字段缺失=不通过(防"无量能的放量策略"裸筛); reversal 因子方向
+  修正(企稳高分); low_pe 对 PE<3 异常封顶; 策略描述对齐实现
+- **P4 主力意图物理守卫**: 主力成交额 > 总成交额 130% 盘中即标 `suspect` 并拒判
+  吸筹/派发(2026-08 两次净额翻倍事故的实时拦截, 下游与 insufficient 同款跳过)
+
+### 系统质量(Q1-Q4)
+
+- **Q1 调度器选主**: Redis 租约防多 uvicorn worker 双跑定时任务(LLM 费用翻倍/通知
+  重复/撮合双份), `SIDA_ENABLE_SCHEDULERS=1/0` 可强制, Redis 不可用回退旧行为
+- **Q2 Secrets**: Grafana 密码变量化(不再入仓); `admin/admin123` 兜底需
+  `AUTH_ALLOW_DEFAULT_ADMIN=1`(生产未配置则拒绝创建默认账号)
+- **Q3 超时+lint**: marketdata per-vendor 8s 超时(坏源不拖垮主备链); CI 加 ruff
+  门禁(真 bug 类); 存量修复 intraday 主力意图 MDSymbol 未导入(该路径一直静默
+  返回空)、delta_engine f-string、kline 重复键、redis_client 双定义等
+- **Q4 备份+告警**: scripts/backup_pg.sh(pg_dump+滚动保留); Prometheus 告警规则
+  (5xx率/心跳/数据源失败/Redis 降级)
+
+### 体验(U1-U2) + 接线(F1)
+
+- **U1 对话真流式**: `chat_with_tools_stream` 单次调用边流式出字边执行工具,
+  SSE 端点替换 6字/4ms 假打字机; 非流式路径不变
+- **U2 前端**: 定义 `.page-container` + 去三处双倍留白; Dashboard 涨跌色收敛到
+  `stock.up/down` token; 帮助页机会板块重写(共振查询/统一筛选/双策略口径)
+- **F1 接线死件**: `sentiment_cycle` 情绪周期注册为对话工具 `get_sentiment_cycle`;
+  auction_review/theme_launch_detector/stock_attribution 补种子(默认关)
+
 ### fix — 共振查询策略精筛不再重调引擎(结果缓存 + 切换即时精筛)
 
 - 问题: 并发查询后切换精筛策略需要重新点「并发查询」, 问小达/问财被

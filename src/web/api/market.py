@@ -170,7 +170,6 @@ async def get_index_detail(symbol: str):
     # 2. 日K线(腾讯,120天) — 同步 requests 用 to_thread 避免阻塞事件循环
     klines = []
     try:
-        import requests as _req
 
         if idx["market"] == "CN":
             tencent_code = idx["tencent_symbol"]

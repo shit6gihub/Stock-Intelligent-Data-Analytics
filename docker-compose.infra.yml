@@ -37,6 +37,7 @@ services:
       - "127.0.0.1:9090:9090"   # 只本机,经 SSH 访问
     volumes:
       - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus-rules.yml:/etc/prometheus/prometheus-rules.yml:ro
       - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -78,7 +79,8 @@ services:
     ports:
       - "127.0.0.1:35099:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=xz.170530
+      # 2026-08-23 Q2: 真实密码不再入仓, 部署时用 env 覆盖(默认 admin 仅本机绑定)
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_ADMIN_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana_data:/var/lib/grafana

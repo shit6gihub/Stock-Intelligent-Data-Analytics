@@ -409,6 +409,7 @@ def _score_suggestion(
     suggestion: StockSuggestion,
     quote: dict | None,
     kline: dict | None,
+    resonance_meta: dict | None = None,
 ) -> tuple[float, list[str]]:
     score = ACTION_BASE_SCORE.get((action or "").strip().lower(), 45.0)
     evidence: list[str] = []
@@ -492,13 +493,16 @@ def _score_suggestion(
         except Exception:
             pass
 
-    # 多源共振加分(2026-08-21 P1): N 个独立来源命中同一票 → (N-1)*8 分
-    meta = suggestion.meta if isinstance(suggestion.meta, dict) else {}
-    resonance = _safe_float(meta.get("resonance_bonus"))
+    # 多源共振加分(2026-08-21 P1; 2026-08-23 P2 修复): 共振值写在种子 meta 里,
+    # 此前误读 ORM suggestion.meta 导致从未生效 — 优先读调用方传入的种子 meta
+    seed_meta = resonance_meta if isinstance(resonance_meta, dict) else {}
+    sug_meta = suggestion.meta if isinstance(suggestion.meta, dict) else {}
+    res_meta = {**sug_meta, **seed_meta}
+    resonance = _safe_float(res_meta.get("resonance_bonus"))
     if resonance and resonance > 0:
-        n = int(_safe_float(meta.get("resonance_count")) or 2)
+        n = int(_safe_float(res_meta.get("resonance_count")) or 2)
         score += resonance
-        sources = meta.get("resonance_sources") or []
+        sources = res_meta.get("resonance_sources") or []
         evidence.append(f"多源共振×{n}({','.join(sources[:4])})")
 
     score = _clamp(score, 0.0, 100.0)
@@ -730,7 +734,8 @@ def _derive_market_scan_decision(quote: dict | None, kline: dict | None) -> dict
 
 
 def _score_market_scan_candidate(
-    *, action: str, quote: dict | None, kline: dict | None, strategy_tags: list[str] | None
+    *, action: str, quote: dict | None, kline: dict | None, strategy_tags: list[str] | None,
+    resonance_meta: dict | None = None,
 ) -> tuple[float, list[str]]:
     score = ACTION_BASE_SCORE.get((action or "").strip().lower(), 45.0)
     evidence: list[str] = []
@@ -767,6 +772,15 @@ def _score_market_scan_candidate(
     elif trend == "空头排列":
         score -= 6
         evidence.append("均线空头排列")
+
+    # 多源共振加分(2026-08-23 P2 修复): 市场池/多源种子路径此前完全没读共振字段
+    res_meta = resonance_meta if isinstance(resonance_meta, dict) else {}
+    resonance = _safe_float(res_meta.get("resonance_bonus"))
+    if resonance and resonance > 0:
+        n = int(_safe_float(res_meta.get("resonance_count")) or 2)
+        score += resonance
+        sources = res_meta.get("resonance_sources") or []
+        evidence.append(f"多源共振×{n}({','.join(sources[:4])})")
 
     score = _clamp(score, 0.0, 100.0)
     return score, evidence[:8]
@@ -1698,9 +1712,19 @@ def refresh_entry_candidates(
     items: list[dict] = []
     filtered_count = 0
     try:
-        db.query(EntryCandidate).filter(
-            EntryCandidate.snapshot_date == snapshot
-        ).delete(synchronize_session=False)
+        # 幂等 upsert(2026-08-23 P1 修复): 按 (market, symbol) 原行更新保持 ID 稳定,
+        # EntryCandidateOutcome 外键不再因每日 3 次全量重建而级联删除;
+        # 当轮消失的候选标 retired 保留历史(供 1/3/5/10 日后验评估), 不物理删除
+        existing_rows = (
+            db.query(EntryCandidate)
+            .filter(EntryCandidate.snapshot_date == snapshot)
+            .all()
+        )
+        existing_map = {
+            ((r.stock_market or "CN").upper(), (r.stock_symbol or "").strip()): r
+            for r in existing_rows
+        }
+        touched_keys: set[tuple[str, str]] = set()
 
         for key, inp in input_map.items():
             market, symbol = key.split(":", 1)
@@ -1729,6 +1753,7 @@ def refresh_entry_candidates(
                     suggestion=suggestion_obj,
                     quote=quote,
                     kline=kline,
+                    resonance_meta=inp.get("meta") or {},
                 )
                 if (kline.get("trend") or "").strip() == "多头排列":
                     strategy_tags.append("trend_follow")
@@ -1768,6 +1793,7 @@ def refresh_entry_candidates(
                     quote=quote,
                     kline=kline,
                     strategy_tags=strategy_tags,
+                    resonance_meta=inp.get("meta") or {},
                 )
 
             if is_holding and action == "buy":
@@ -1809,53 +1835,74 @@ def refresh_entry_candidates(
                 filtered_count += 1
                 continue
 
-            row = EntryCandidate(
-                stock_symbol=symbol,
-                stock_market=market,
-                stock_name=(inp.get("stock_name") or symbol).strip(),
-                snapshot_date=snapshot,
-                status=status,
-                score=score,
-                confidence=confidence,
-                action=action,
-                action_label=action_label,
-                signal=signal,
-                reason=reason,
-                candidate_source=candidate_source,
-                strategy_tags=to_jsonable(strategy_tags),
-                is_holding_snapshot=bool(is_holding),
-                plan_quality=quality,
-                entry_low=_safe_float(plan.get("entry_low")),
-                entry_high=_safe_float(plan.get("entry_high")),
-                stop_loss=_safe_float(plan.get("stop_loss")),
-                target_price=_safe_float(plan.get("target_price")),
-                invalidation=str(plan.get("invalidation") or ""),
-                source_agent=(inp.get("source_agent") or ""),
-                source_suggestion_id=inp.get("source_suggestion_id"),
-                source_trace_id=str(inp.get("source_trace_id") or ""),
-                evidence=to_jsonable(evidence),
-                plan=to_jsonable(plan),
-                meta=to_jsonable(
-                    {
-                        "candidate_source": candidate_source,
-                        "quote": quote,
-                        "kline": {
-                            "trend": kline.get("trend"),
-                            "macd_cross": kline.get("macd_cross"),
-                            "rsi_status": kline.get("rsi_status"),
-                            "kdj_status": kline.get("kdj_status"),
-                            "volume_ratio": kline.get("volume_ratio"),
-                            "support": kline.get("support"),
-                            "resistance": kline.get("resistance"),
-                        },
-                        "strategy_tags": strategy_tags,
-                        "is_holding_snapshot": bool(is_holding),
-                        "source_meta": inp.get("meta") or {},
-                    }
-                ),
+            row_key = (market, symbol)
+            row = existing_map.get(row_key)
+            if row is None:
+                row = EntryCandidate(
+                    stock_symbol=symbol,
+                    stock_market=market,
+                    snapshot_date=snapshot,
+                )
+                db.add(row)
+                existing_map[row_key] = row
+            row.stock_name = (inp.get("stock_name") or symbol).strip()
+            row.status = status
+            row.score = score
+            row.confidence = confidence
+            row.action = action
+            row.action_label = action_label
+            row.signal = signal
+            row.reason = reason
+            row.candidate_source = candidate_source
+            row.strategy_tags = to_jsonable(strategy_tags)
+            row.is_holding_snapshot = bool(is_holding)
+            row.plan_quality = quality
+            row.entry_low = _safe_float(plan.get("entry_low"))
+            row.entry_high = _safe_float(plan.get("entry_high"))
+            row.stop_loss = _safe_float(plan.get("stop_loss"))
+            row.target_price = _safe_float(plan.get("target_price"))
+            row.invalidation = str(plan.get("invalidation") or "")
+            row.source_agent = (inp.get("source_agent") or "")
+            row.source_suggestion_id = inp.get("source_suggestion_id")
+            row.source_trace_id = str(inp.get("source_trace_id") or "")
+            row.evidence = to_jsonable(evidence)
+            row.plan = to_jsonable(plan)
+            row.meta = to_jsonable(
+                {
+                    "candidate_source": candidate_source,
+                    "quote": quote,
+                    "kline": {
+                        "trend": kline.get("trend"),
+                        "macd_cross": kline.get("macd_cross"),
+                        "rsi_status": kline.get("rsi_status"),
+                        "kdj_status": kline.get("kdj_status"),
+                        "volume_ratio": kline.get("volume_ratio"),
+                        "support": kline.get("support"),
+                        "resistance": kline.get("resistance"),
+                    },
+                    "strategy_tags": strategy_tags,
+                    "is_holding_snapshot": bool(is_holding),
+                    "source_meta": inp.get("meta") or {},
+                }
             )
-            db.add(row)
+            row.updated_at = utc_now()
+            touched_keys.add(row_key)
             items.append(_format_candidate_row(row))
+
+        retired_rows = [
+            r
+            for k, r in existing_map.items()
+            if k not in touched_keys and (r.status or "") != "retired"
+        ]
+        for r in retired_rows:
+            r.status = "retired"
+            r.updated_at = utc_now()
+        if retired_rows:
+            logger.info(
+                "[候选池] %s 本轮退役 %d 只(标 retired 保留历史, 供后验评估)",
+                snapshot,
+                len(retired_rows),
+            )
 
         db.commit()
     except Exception as e:
@@ -2173,7 +2220,9 @@ def evaluate_entry_candidate_outcomes(
         candidates = (
             db.query(EntryCandidate)
             .filter(
-                EntryCandidate.status == "active",
+                # retired = 当日早间曾入池、后续刷新退出的候选 — 曾对用户可见,
+                # 必须纳入后验(retired 不评估会重造幸存者偏差)
+                EntryCandidate.status.in_(("active", "retired")),
                 EntryCandidate.snapshot_date >= cutoff.strftime("%Y-%m-%d"),
             )
             .order_by(EntryCandidate.snapshot_date.asc(), EntryCandidate.score.desc())
@@ -2366,7 +2415,7 @@ def _due_unverified_pairs(
     cand_rows = (
         db.query(EntryCandidate.id, EntryCandidate.snapshot_date)
         .filter(
-            EntryCandidate.status == "active",
+            EntryCandidate.status.in_(("active", "retired")),
             EntryCandidate.snapshot_date >= cutoff_str,
         )
         .all()
@@ -2421,7 +2470,7 @@ def count_missing_candidate_outcomes(
         total_active = (
             db.query(func.count(EntryCandidate.id))
             .filter(
-                EntryCandidate.status == "active",
+                EntryCandidate.status.in_(("active", "retired")),
                 EntryCandidate.snapshot_date >= cutoff.strftime("%Y-%m-%d"),
             )
             .scalar()

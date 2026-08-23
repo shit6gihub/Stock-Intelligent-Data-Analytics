@@ -17,11 +17,10 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any
 
 from marketdata.http import market_get
 from marketdata.symbol import Symbol
-from marketdata.types import HotBoard, HotStock
+from marketdata.types import HotStock
 from marketdata.vendors.base import Vendor
 
 logger = logging.getLogger(__name__)

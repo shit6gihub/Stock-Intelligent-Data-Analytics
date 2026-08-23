@@ -152,5 +152,39 @@ AGENT_SEED_SPECS: tuple[AgentSeedSpec, ...] = (
                                                   # 驱动模拟盘自动开仓 (默认关,需用户主动启用)
         },
     ),
+    # 2026-08-23 F1: 三个已建成能力此前未入种子(注册了但不可调度), 补种, 默认关
+    AgentSeedSpec(
+        name="auction_review",
+        display_name="竞价复盘",
+        description="9:30 后解读当日集合竞价:情绪定性/主线定向/盯盘名单",
+        enabled=False,
+        schedule="30 9 * * 1-5",
+        execution_mode="batch",
+        kind=AGENT_KIND_WORKFLOW,
+        visible=True,
+        display_order=41,
+    ),
+    AgentSeedSpec(
+        name="theme_launch_detector",
+        display_name="题材启动识别",
+        description="9:45 识别题材启动信号与首板候选(潜伏池)",
+        enabled=False,
+        schedule="45 9 * * 1-5",
+        execution_mode="batch",
+        kind=AGENT_KIND_WORKFLOW,
+        visible=True,
+        display_order=42,
+    ),
+    AgentSeedSpec(
+        name="stock_attribution",
+        display_name="短线归因",
+        description="判断单只股票上涨/涨停/异动的核心原因(5W 证据)",
+        enabled=False,
+        schedule="",
+        execution_mode="single",
+        kind=AGENT_KIND_WORKFLOW,
+        visible=True,
+        display_order=43,
+    ),
 )
 

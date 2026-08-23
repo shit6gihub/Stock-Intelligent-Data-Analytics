@@ -15,7 +15,6 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query
 
-from src.core.entry_candidates import record_manual_query_candidates
 
 logger = logging.getLogger(__name__)
 

@@ -164,7 +164,22 @@ def get_or_create_owner(db: Session) -> User:
         db.commit()
         return user
 
-    # 3. 兜底默认账号(首次部署)
+    # 3. 兜底默认账号(首次部署) — 2026-08-23 Q2: 公开仓库场景默认账号是失守入口,
+    # 需显式 AUTH_ALLOW_DEFAULT_ADMIN=1(本地开发)才创建; 生产应配置 AUTH_USERNAME/PASSWORD
+    import logging as _logging
+
+    _log = _logging.getLogger(__name__)
+    if (os.getenv("AUTH_ALLOW_DEFAULT_ADMIN", "").strip().lower() or "0") not in ("1", "true", "yes"):
+        _log.critical(
+            "[安全] 无 owner 且未配置 AUTH_USERNAME/AUTH_PASSWORD, 且未设置 "
+            "AUTH_ALLOW_DEFAULT_ADMIN=1 — 不再创建默认 admin/admin123。"
+            "请在环境变量配置管理员账号后重启。"
+        )
+        raise RuntimeError(
+            "拒绝创建默认账号: 请配置 AUTH_USERNAME/AUTH_PASSWORD, "
+            "或本地开发时设置 AUTH_ALLOW_DEFAULT_ADMIN=1"
+        )
+    _log.warning("[安全] 已创建默认账号 admin(仅限本地开发, AUTH_ALLOW_DEFAULT_ADMIN=1)")
     user = User(
         id=str(uuid.uuid4()),
         username="admin",

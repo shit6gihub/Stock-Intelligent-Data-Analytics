@@ -48,6 +48,18 @@ class _FakeAIClient:
             )
         return _FakeMsg(content=FINAL_TEXT, tool_calls=None)
 
+    async def chat_with_tools_stream(self, messages, tools, temperature=0.5):
+        """U1 真流式脚本: 第1次给工具调用, 第2次分块流式产出最终正文。"""
+        self.calls += 1
+        if self.calls == 1:
+            yield "tool_calls", _FakeMsg(
+                content=None,
+                tool_calls=[_FakeToolCall("get_capital_flow", '{"symbol": "600519"}')],
+            )
+            return
+        for part in (FINAL_TEXT[:12], FINAL_TEXT[12:]):
+            yield "delta", part
+
     async def chat_multi(self, messages, temperature=0.4):
         return "fallback reply"
 

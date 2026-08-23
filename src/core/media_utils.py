@@ -74,7 +74,6 @@ def image_to_text(path_or_bytes) -> tuple[str, str | None]:
     """
     save_path: str | None = None
     try:
-        from PIL import Image
         import pytesseract
 
         img = _open_image(path_or_bytes)

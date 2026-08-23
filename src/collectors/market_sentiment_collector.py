@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import logging
-import time
 from datetime import datetime
 
 from src.collectors.market_http import market_get

@@ -10,17 +10,14 @@
 """
 from __future__ import annotations
 
-import asyncio
 import logging
-from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from src.agents.tradingagents.presets import (
     get_preset,
     list_presets,
-    run_preset as _run_preset,
 )
 
 logger = logging.getLogger(__name__)

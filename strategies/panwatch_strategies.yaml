@@ -4,7 +4,8 @@
 #   - 实时可拿(腾讯接口 + ftshare): change_pct, volume_ratio, turnover_rate, amount, price, high, low
 #   - 盘后可拿(baostock/zhitu 需时): market_cap, pe_ttm, pb_ratio
 #
-# 当盘后字段缺失时, 策略筛选会跳过该过滤项并在报告里标注"⚠️ 数据缺失"
+# 2026-08-23 P3 口径修正: 字段缺失 = 无法验证 = 该票不通过(保守语义, 防止
+# "无量的放量策略/无估值的低估值策略"裸筛), 缺失项仍标注在 missing_fields
 
 dual_low:
   display_name: "双低选股(价值)"
@@ -72,9 +73,9 @@ volume_breakout:
 
 oversold_reversal:
   display_name: "超卖反弹"
-  description: "RSI/KDJ 超卖区金叉,缩量企稳后的小仓试探机会"
+  description: "前期超卖后当日跌幅收敛+缩量的小仓试探机会(纯量价规则, 无 RSI/KDJ)"
   category: "reversal"
-  tags: ["reversal", "rsi", "oversold"]
+  tags: ["reversal", "oversold", "volume"]
   filter:
     price_min: 3
     price_max: 100
@@ -112,7 +113,7 @@ momentum_quality:
 
 low_volatility_quality:
   display_name: "低波质量(防御)"
-  description: "波动低、回撤浅、估值不过热的防守型候选"
+  description: "单日波动受控+换手温和+估值不过热的防守型候选"
   category: "quality"
   tags: ["quality", "defensive", "low_volatility"]
   filter:

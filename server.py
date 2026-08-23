@@ -1767,79 +1767,86 @@ async def lifespan(app):
 
     threading.Thread(target=refresh_stock_cache, daemon=True).start()
 
-    global scheduler, price_alert_scheduler, paper_trading_scheduler, context_maintenance_scheduler, kline_backfill_scheduler, _kline_oneoff_loop
-    _kline_oneoff_loop = asyncio.get_running_loop()  # 跨线程调度用
-    scheduler = build_scheduler()
-    scheduler.start()
-    logger.info("Agent 调度器已启动")
-    try:
-        settings = Settings()
-        price_alert_scheduler = PriceAlertScheduler(
-            timezone=settings.app_timezone,
-            interval_seconds=60,
-        )
-        price_alert_scheduler.start()
-        logger.info("价格提醒调度器已启动")
-    except Exception as e:
-        logger.error(f"价格提醒调度器启动失败: {e}")
-    try:
-        settings = Settings()
-        paper_trading_scheduler = PaperTradingScheduler(
-            timezone=settings.app_timezone,
-            interval_seconds=60,
-        )
-        paper_trading_scheduler.start()
-        logger.info("模拟盘调度器已启动")
-    except Exception as e:
-        logger.error(f"模拟盘调度器启动失败: {e}")
-    try:
-        settings = Settings()
-        context_maintenance_scheduler = ContextMaintenanceScheduler(
-            timezone=settings.app_timezone,
-            eval_interval_hours=6,
-            snapshot_retention_days=180,
-            outcome_retention_days=365,
-        )
-        context_maintenance_scheduler.start()
-        logger.info("上下文维护调度器已启动")
-    except Exception as e:
-        logger.error(f"上下文维护调度器启动失败: {e}")
-    # SIDA 内置报告生成器(盘前 8:30 / 盘后 15:30, 周一至五)
-    try:
-        settings = Settings()
-        report_scheduler = ReportScheduler(timezone=settings.app_timezone)
-        report_scheduler.start()
-        logger.info("SIDA 报告调度器已启动")
-    except Exception as e:
-        logger.error(f"SIDA 报告调度器启动失败: {e}")
-    # 竞价异动同步 job(v0.3.0 阶段1.2): 复用 report_scheduler 的底层 APScheduler,
-    # 不新开 scheduler。工作日 09:25 拉竞价异动股落库(OFF-hook, 失败不崩)。
-    try:
-        settings = Settings()
-        from src.core.auction_pool import register_cron
+    # 调度器选主(2026-08-23 Q1): 多 uvicorn worker 下只有租约持有者启动
+    # 调度器与微信 BOT, 防止定时任务双跑; SIDA_ENABLE_SCHEDULERS=1/0 可强制
+    from src.core.scheduler_leader import try_acquire as _try_sched_leader
+    _leader_ok, _leader_why = _try_sched_leader()
+    if not _leader_ok:
+        logger.info("[选主] 本 worker 不启动调度器/微信BOT: %s", _leader_why)
+    if _leader_ok:
+        global scheduler, price_alert_scheduler, paper_trading_scheduler, context_maintenance_scheduler, kline_backfill_scheduler, _kline_oneoff_loop
+        _kline_oneoff_loop = asyncio.get_running_loop()  # 跨线程调度用
+        scheduler = build_scheduler()
+        scheduler.start()
+        logger.info("Agent 调度器已启动")
+        try:
+            settings = Settings()
+            price_alert_scheduler = PriceAlertScheduler(
+                timezone=settings.app_timezone,
+                interval_seconds=60,
+            )
+            price_alert_scheduler.start()
+            logger.info("价格提醒调度器已启动")
+        except Exception as e:
+            logger.error(f"价格提醒调度器启动失败: {e}")
+        try:
+            settings = Settings()
+            paper_trading_scheduler = PaperTradingScheduler(
+                timezone=settings.app_timezone,
+                interval_seconds=60,
+            )
+            paper_trading_scheduler.start()
+            logger.info("模拟盘调度器已启动")
+        except Exception as e:
+            logger.error(f"模拟盘调度器启动失败: {e}")
+        try:
+            settings = Settings()
+            context_maintenance_scheduler = ContextMaintenanceScheduler(
+                timezone=settings.app_timezone,
+                eval_interval_hours=6,
+                snapshot_retention_days=180,
+                outcome_retention_days=365,
+            )
+            context_maintenance_scheduler.start()
+            logger.info("上下文维护调度器已启动")
+        except Exception as e:
+            logger.error(f"上下文维护调度器启动失败: {e}")
+        # SIDA 内置报告生成器(盘前 8:30 / 盘后 15:30, 周一至五)
+        try:
+            settings = Settings()
+            report_scheduler = ReportScheduler(timezone=settings.app_timezone)
+            report_scheduler.start()
+            logger.info("SIDA 报告调度器已启动")
+        except Exception as e:
+            logger.error(f"SIDA 报告调度器启动失败: {e}")
+        # 竞价异动同步 job(v0.3.0 阶段1.2): 复用 report_scheduler 的底层 APScheduler,
+        # 不新开 scheduler。工作日 09:25 拉竞价异动股落库(OFF-hook, 失败不崩)。
+        try:
+            settings = Settings()
+            from src.core.auction_pool import register_cron
 
-        if not register_cron(locals().get("report_scheduler", None) and locals().get("report_scheduler").scheduler):
-            logger.warning("竞价异动 cron 注册未生效(调度器不可用), 09:25 同步将跳过")
-    except Exception as e:
-        logger.error(f"竞价异动 cron 注册失败: {e}")
-    # K线每日 backfill(收盘后 18:00, 周一至五, 拉最近 2 天)
-    try:
-        settings = Settings()
-        kline_backfill_scheduler = KlineBackfillScheduler(
-            timezone=settings.app_timezone
-        )
-        kline_backfill_scheduler.start()
-    except Exception as e:
-        logger.error(f"K线入库调度器启动失败: {e}")
+            if not register_cron(locals().get("report_scheduler", None) and locals().get("report_scheduler").scheduler):
+                logger.warning("竞价异动 cron 注册未生效(调度器不可用), 09:25 同步将跳过")
+        except Exception as e:
+            logger.error(f"竞价异动 cron 注册失败: {e}")
+        # K线每日 backfill(收盘后 18:00, 周一至五, 拉最近 2 天)
+        try:
+            settings = Settings()
+            kline_backfill_scheduler = KlineBackfillScheduler(
+                timezone=settings.app_timezone
+            )
+            kline_backfill_scheduler.start()
+        except Exception as e:
+            logger.error(f"K线入库调度器启动失败: {e}")
 
-    # 微信数智分析BOT worker: 长轮询 getupdates, 微信消息 → AI 回复 → 回微信
-    try:
-        from src.core.wechat_bot_worker import wechat_bot_worker
+        # 微信数智分析BOT worker: 长轮询 getupdates, 微信消息 → AI 回复 → 回微信
+        try:
+            from src.core.wechat_bot_worker import wechat_bot_worker
 
-        app.state.wechat_bot_task = asyncio.create_task(wechat_bot_worker(), name="wechat-bot-worker")
-        logger.info("微信数智分析BOT worker 已启动")
-    except Exception as e:
-        logger.error(f"微信数智分析BOT worker 启动失败: {e}")
+            app.state.wechat_bot_task = asyncio.create_task(wechat_bot_worker(), name="wechat-bot-worker")
+            logger.info("微信数智分析BOT worker 已启动")
+        except Exception as e:
+            logger.error(f"微信数智分析BOT worker 启动失败: {e}")
     yield
     # 2026-08-17 v0.2.65: Redis 客户端关闭
     try:
@@ -1875,7 +1882,6 @@ app.router.lifespan_context = lifespan
 # 生产环境静态文件服务
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
-    from fastapi.staticfiles import StaticFiles
     from fastapi.responses import FileResponse
 
     # SPA 路由：非 API 请求返回 index.html；但静态资源(.js/.css/图片等)
