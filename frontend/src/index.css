@@ -104,6 +104,10 @@
 }
 
 @layer components {
+.page-container {
+    @apply pb-10;
+  }
+
   .card {
     @apply bg-card rounded-xl border border-border/60 shadow-[0_1px_2px_hsl(240_15%_40%/0.05),0_1px_0_hsl(var(--border)/0.35)];
   }

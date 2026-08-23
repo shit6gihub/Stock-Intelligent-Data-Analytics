@@ -77,6 +77,7 @@ _TOOL_STAGE_LABELS = {
     "get_auction_data": "正在获取集合竞价数据...",
     "get_forecast": "正在读取系统预测...",
     "get_opportunities": "正在读取今日机会候选...",
+    "get_sentiment_cycle": "正在判别短线情绪周期...",
     "get_strategy_signals": "正在读取策略信号...",
     "get_notifications": "正在读取系统通知...",
     "get_fundamentals_detail": "正在查询基本面明细(龙虎榜/股东/分红/两融/事件)...",
@@ -330,15 +331,9 @@ CHAT_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "get_opportunities",
-            "description": "读取系统今日机会候选（入场候选榜：信号/得分/操作建议/目标价，按得分排序）。用于回答「今天发现什么机会」「今日机会候选有哪些」「系统今天推荐了什么股票」「XX股票入选机会榜了吗」等问题。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "limit": {"type": "integer", "description": "返回条数，默认 10", "default": 10},
-                },
-                "required": [],
-            },
+            "name": "get_sentiment_cycle",
+            "description": "读取当前 A 股短线情绪周期(冰点/修复/发酵/高潮/退潮)及操作提示。用于回答「现在市场情绪怎么样」「短线情绪处于什么阶段」「现在适合打板还是防守」等问题。",
+            "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
     {
@@ -750,6 +745,27 @@ def _read_opportunities(db: Session, limit: int = 10) -> str:
             f"信号:{c.signal} 目标价:{target_str}"
         )
     return "\n".join(lines)
+
+
+async def _read_sentiment_cycle() -> str:
+    """情绪周期判别(2026-08-23 F1 接线): 接 MarketSentimentCollector 取涨停池
+    指标 → classify_sentiment_cycle(此前为死代码, 生产零引用)。"""
+    from src.core.sentiment_cycle import classify_sentiment_cycle, format_cycle
+    from src.core.report_generator import _collect_limit_up_summary
+
+    summary = await _collect_limit_up_summary()
+    if not isinstance(summary, dict) or summary.get("error"):
+        return "情绪周期: 涨停池数据获取失败, 暂无法判别短线情绪周期。"
+
+    metrics = {
+        "limit_up_count": summary.get("total"),
+        "max_board_height": summary.get("max_days"),
+        "break_rate": summary.get("break_rate"),
+        "yesterday_board_perf": summary.get("yesterday_board_perf"),
+        "losing_effect": summary.get("losing_effect"),
+    }
+    result = classify_sentiment_cycle(metrics)
+    return "短线情绪周期: " + format_cycle(result)
 
 
 def _read_strategy_signals(db: Session, limit: int = 10) -> str:
@@ -1263,6 +1279,8 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
         elif name == "get_opportunities":
             limit = int(args.get("limit", 10) or 10)
             return _read_opportunities(db, limit)
+        elif name == "get_sentiment_cycle":
+            return await _read_sentiment_cycle()
         elif name == "get_strategy_signals":
             limit = int(args.get("limit", 10) or 10)
             return _read_strategy_signals(db, limit)

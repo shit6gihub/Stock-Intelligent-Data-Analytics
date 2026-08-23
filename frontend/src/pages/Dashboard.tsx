@@ -70,14 +70,15 @@ function pct(v?: number | null, digits = 2): string {
   return `${v > 0 ? '+' : ''}${v.toFixed(digits)}%`
 }
 function moveColor(v?: number | null): string {
+  // 2026-08-23 U2: 收敛到 stock.up/down token(红涨绿跌, 暗色对比度统一控制)
   if (v == null) return 'text-muted-foreground'
-  return v > 0 ? 'text-red-600' : v < 0 ? 'text-green-700' : 'text-muted-foreground'
+  return v > 0 ? 'text-stock-up' : v < 0 ? 'text-stock-down' : 'text-muted-foreground'
 }
 /** 涨跌着色 chip 的背景+文字类;null/平盘 → 灰底。红涨绿跌(A股口径)。 */
 function pctChipCls(v?: number | null): string {
   if (v == null) return 'bg-accent text-muted-foreground'
-  if (v > 0) return 'bg-red-600/10 text-red-600'
-  if (v < 0) return 'bg-green-700/10 text-green-700'
+  if (v > 0) return 'bg-stock-up/10 text-stock-up'
+  if (v < 0) return 'bg-stock-down/10 text-stock-down'
   return 'bg-accent text-muted-foreground'
 }
 /** 归一化后端列表响应:可能直接是数组,也可能是 {items:[...]} / {data:[...]},取不到返回空数组。 */
