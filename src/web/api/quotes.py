@@ -3,11 +3,10 @@ import json
 import logging
 import time as _time
 
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from src.web.database import get_db
 from src.web.models import Stock
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.core.marketdata_client import md_quote_rows

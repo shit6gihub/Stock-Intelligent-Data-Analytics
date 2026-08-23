@@ -11,7 +11,6 @@ LLM 没法做真正的基本面分析。本模块用 akshare 的 stock_financial
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 logger = logging.getLogger(__name__)
 

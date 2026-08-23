@@ -29,10 +29,11 @@ def _run(monkeypatch, ticks, turnover: float) -> dict | None:
         prev_close=9.9,
     )
     import marketdata.vendors.tencent as tencent_mod
+    import marketdata.vendors.tencent_panel as tencent_panel_mod
     monkeypatch.setattr(
         tencent_mod.TencentQuoteVendor, "fetch", lambda self, syms, opts: [fake_q]
     )
-    monkeypatch.setattr(df, "fetch_price_distribution", lambda symbol, limit=70: [])
+    monkeypatch.setattr(tencent_panel_mod, "fetch_price_distribution", lambda symbol, limit=70: [])
     return df.compute_dark_flow(Symbol.parse("600519", "CN"))
 
 

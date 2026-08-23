@@ -163,41 +163,6 @@ class RedisClient:
         except Exception as e:
             logger.warning(f"[Redis] xadd({stream}) failed: {e}")
             return None
-        if not self.enabled:
-            return False
-        try:
-            if ttl_seconds:
-                await self._client.setex(key, ttl_seconds, value)
-            else:
-                await self._client.set(key, value)
-            return True
-        except Exception as e:
-            logger.warning(f"[Redis] set({key}) failed: {e}")
-            return False
-
-    async def delete(self, *keys: str) -> int:
-        if not self.enabled or not keys:
-            return 0
-        try:
-            return await self._client.delete(*keys)
-        except Exception as e:
-            logger.warning(f"[Redis] delete failed: {e}")
-            return 0
-
-    async def incr(self, key: str, ttl_seconds: Optional[int] = None) -> Optional[int]:
-        """原子递增 — 用于限流计数器"""
-        if not self.enabled:
-            return None
-        try:
-            pipe = self._client.pipeline()
-            pipe.incr(key)
-            if ttl_seconds:
-                pipe.expire(key, ttl_seconds)
-            results = await pipe.execute()
-            return int(results[0])
-        except Exception as e:
-            logger.warning(f"[Redis] incr({key}) failed: {e}")
-            return None
 
     # ─── JSON helper ───
     async def get_json(self, key: str) -> Optional[Any]:
@@ -216,16 +181,6 @@ class RedisClient:
             return False
 
     # ─── Redis Streams (Phase 1 任务队列) ───
-    async def stream_add(self, stream: str, data: dict, maxlen: int = 10000) -> Optional[str]:
-        """XADD 到 stream, 满了截断到 maxlen"""
-        if not self.enabled:
-            return None
-        try:
-            return await self._client.xadd(stream, data, maxlen=maxlen, approximate=True)
-        except Exception as e:
-            logger.warning(f"[Redis] xadd({stream}) failed: {e}")
-            return None
-
     async def stream_len(self, stream: str) -> int:
         if not self.enabled:
             return 0

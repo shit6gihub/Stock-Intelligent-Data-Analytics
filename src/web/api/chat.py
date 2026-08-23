@@ -18,7 +18,6 @@ from sqlalchemy.orm import Session
 
 from src.config import Settings
 from src.core.ai_client import AIClient
-from src.models.market import MarketCode
 from src.web.api.auth import get_current_user
 from src.web.database import SessionLocal, get_db
 from src.web.models import (
@@ -682,7 +681,7 @@ def _read_forecast(symbol: str = "", limit: int = 5) -> str:
             params.append(str(max(1, min(int(limit), 50))))
             rows = cur.execute(sql, params).fetchall()
             if not rows:
-                return f"暂无系统预测" + (f"（{symbol}）" if symbol else "") + "。"
+                return "暂无系统预测" + (f"（{symbol}）" if symbol else "") + "。"
             today = datetime.now().date().isoformat()
             lines = [f"【系统预测】最近{len(rows)}条" + (f"（{symbol}）" if symbol else "") + f"，来自预测引擎 {table} 表:"]
             for r in rows:
@@ -698,7 +697,7 @@ def _read_forecast(symbol: str = "", limit: int = 5) -> str:
                 close = d.get("last_close")
                 close_str = f"{close:.2f}" if isinstance(close, (int, float)) else (str(close) if close else "—")
                 tdate = (d.get("target_date") or "")[:10]
-                expired = f"已到期" if (tdate and tdate < today) else ("未到期" if tdate else "—")
+                expired = "已到期" if (tdate and tdate < today) else ("未到期" if tdate else "—")
                 created = (d.get("created_at") or "")[:16]
                 conf = d.get("confidence") if cmap.get("confidence") else None
                 conf_str = f" 置信度:{conf}" if conf else ""
@@ -2672,9 +2671,9 @@ async def send_message_stream(
 
             # demo 账号限流: 每日对话次数上限, 防共享模型 key 被公开访客滥用
             if user.username == "demo":
-                from src.core.demo_limit import allow, remaining
+                from src.core.demo_limit import allow
                 if not allow(user.id):
-                    yield _sse_event("error", {"message": f"演示账号每日对话次数已用完(10次/天)。请自行部署体验完整功能: https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics"})
+                    yield _sse_event("error", {"message": "演示账号每日对话次数已用完(10次/天)。请自行部署体验完整功能: https://github.com/xiaoze-hub/Stock-Intelligent-Data-Analytics"})
                     return
 
             # 多模态: 图片先由 agnes 视觉代理转成文字描述(在保存前处理, 保证 DB 历史连贯)

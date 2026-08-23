@@ -28,7 +28,6 @@ class WudaoMCPClient:
 
     def __init__(self, url: str | None = None, token: str | None = None):
         import os
-        import sqlite3
 
         self.url = url or os.getenv("WUDAO_MCP_URL") or _DEFAULT_URL
         self.token = token or self._db_token() or os.getenv("WUDAO_MCP_TOKEN") or ""

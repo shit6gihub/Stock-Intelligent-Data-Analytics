@@ -8,7 +8,6 @@ from datetime import datetime, timedelta, date, timezone
 from pathlib import Path
 
 from src.agents.base import BaseAgent, AgentContext, AnalysisResult, apply_scene_binding
-from src.collectors.kline_collector import KlineCollector
 from src.core.analysis_history import get_latest_analysis, get_analysis
 from src.core.context_builder import ContextBuilder
 from src.core.context_store import (
@@ -52,6 +51,7 @@ def _main_intent_both(symbol: str) -> tuple[str, dict | None]:
 def _main_intent_both_inner(symbol: str) -> tuple[str, dict | None]:
     try:
         from src.core.dark_flow import compute_dark_flow
+        from marketdata.symbol import Symbol as MDSymbol
         mdsym = MDSymbol.parse(symbol, "CN")
         dark = compute_dark_flow(mdsym)
         if not dark:
@@ -1258,7 +1258,7 @@ class IntradayMonitorAgent(BaseAgent):
                 if own:
                     lines.append(f"- 个股所属概念：{'、'.join(own)}")
                 else:
-                    lines.append(f"- 个股所属概念：未在涨幅榜(板块偏弱或不在领涨)")
+                    lines.append("- 个股所属概念：未在涨幅榜(板块偏弱或不在领涨)")
             except Exception:
                 pass
             lines.append("")
@@ -1401,7 +1401,7 @@ class IntradayMonitorAgent(BaseAgent):
         _append_main_intent(lines, stock.symbol)
 
         # 账户资金情况
-        lines.append(f"\n## 账户资金")
+        lines.append("\n## 账户资金")
         lines.append(f"- 总可用资金：{context.portfolio.total_available_funds:.0f} 元")
         for acc in context.portfolio.accounts:
             lines.append(f"  - {acc.name}：{acc.available_funds:.0f} 元")
@@ -1451,7 +1451,7 @@ class IntradayMonitorAgent(BaseAgent):
                 lines.append(f"- 账户可用：{acc_funds:.0f} 元")
         else:
             lines.append("\n## 未持仓（仅关注）")
-            lines.append(f"- 可用资金充足，可考虑建仓")
+            lines.append("- 可用资金充足，可考虑建仓")
 
         # 历史分析上下文（帮助 AI 做出更好的判断）
         daily_analysis = data.get("daily_analysis")
@@ -1467,7 +1467,7 @@ class IntradayMonitorAgent(BaseAgent):
                     if len(daily_analysis) > 300
                     else daily_analysis
                 )
-                lines.append(f"\n### 昨日盘后分析摘要")
+                lines.append("\n### 昨日盘后分析摘要")
                 lines.append(content)
 
             if premarket_analysis:
@@ -1476,7 +1476,7 @@ class IntradayMonitorAgent(BaseAgent):
                     if len(premarket_analysis) > 300
                     else premarket_analysis
                 )
-                lines.append(f"\n### 今日盘前分析摘要")
+                lines.append("\n### 今日盘前分析摘要")
                 lines.append(content)
 
         lines.append("\n请结合技术分析、资金情况和历史分析，给出明确的操作建议。")

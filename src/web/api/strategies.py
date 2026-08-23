@@ -5,13 +5,11 @@
 - 单只股票评分(快速) + 全市场扫描(慢, 盘后)
 - 字段缺失时显式标注, 不静默跳过
 """
-import os
 import logging
 from pathlib import Path
-from typing import Optional
 
 import yaml
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 router = APIRouter()

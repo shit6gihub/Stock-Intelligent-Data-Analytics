@@ -122,8 +122,7 @@ def _anomaly_get(path: str, page_size: int, page_no: int, **extra: Any) -> dict:
     return r
 
 
-# 异动 vendor 借用 base.Vendor 基类(无对应 AnomalyVendor 类型)
-from marketdata.vendors.base import Vendor
+# 异动 vendor 借用 base.Vendor 基类(无对应 AnomalyVendor 类型), 已在模块顶部导入
 
 
 class EmAnomalyVendor(Vendor):

@@ -118,7 +118,6 @@ def get_klines(symbol: str, market: str = "CN", days: int = 60, interval: str = 
     is_index = any(idx["symbol"] == symbol for idx in MARKET_INDICES)
     if is_index:
         # 云服务器东财必失败(502) → 直接腾讯K线,避免每次白等 10s 超时
-        import requests as _req
         import logging
         _log_k = logging.getLogger(__name__)
 
@@ -216,7 +215,7 @@ def get_klines(symbol: str, market: str = "CN", days: int = 60, interval: str = 
                 "klines": _serialize_klines(klines),
                 "source": "pg_klines_hypertable",
             }
-    except Exception as e:
+    except Exception:
         # 库表可能不存在(SQLite/老库)或查询失败 → fallback 联网
         pass
 

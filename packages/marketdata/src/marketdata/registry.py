@@ -44,7 +44,6 @@ from marketdata.vendors.ftshare import FtshareDragonTigerVendor, FtshareMarginVe
 from marketdata.vendors.zhitu import ZhituDividendVendor
 from marketdata.vendors.zhitu_full import (
     ZhituKlineVendor,
-    ZhituCapitalFlowVendor,
     ZhituShareholdersVendor,
     ZhituFundamentalsVendor,
 )

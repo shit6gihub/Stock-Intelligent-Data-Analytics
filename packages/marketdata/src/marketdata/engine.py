@@ -7,7 +7,9 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
+import os
 import threading
 import time
 
@@ -35,6 +37,13 @@ class Engine:
         # 每个源(vendor)一个 KeyPool 实例, 进程级复用(按 vendor 名索引)
         self._keypools: dict[str, KeyPool] = {}
         self._kp_lock = threading.Lock()
+        # 2026-08-23 Q3: per-vendor 超时 — 坏源不再拖垮整条主备链
+        # (CHANGELOG 事故: 5 源串联 24s 全阻塞)。超时线程无法强杀, 由共享池自然回收;
+        # MARKETDATA_VENDOR_TIMEOUT 可配(默认 8s)。
+        self.vendor_timeout_sec = float(os.getenv("MARKETDATA_VENDOR_TIMEOUT", "8"))
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="md-vendor"
+        )
 
     def _get_keypool(self, vendor: str, key_pool: list[str]) -> KeyPool | None:
         if not key_pool:
@@ -87,7 +96,20 @@ class Engine:
 
                 t0 = time.monotonic()
                 try:
-                    data = vendor.fetch(syms, call_config)
+                    fut = self._executor.submit(vendor.fetch, syms, call_config)
+                    data = fut.result(timeout=self.vendor_timeout_sec)
+                except concurrent.futures.TimeoutError:
+                    # 2026-08-23 Q3: 单源超时直接跳下一个源(不换 key 重试)
+                    latency = int((time.monotonic() - t0) * 1000)
+                    err = f"vendor timeout after {self.vendor_timeout_sec}s"
+                    if kp and api_key:
+                        kp.mark_failure(api_key, rate_limited=False)
+                    self.metrics.record(vendor=src.vendor, datatype=self.datatype, market=market,
+                                        ok=False, count=0, latency_ms=latency, error=err)
+                    last_err = err
+                    logger.warning(f"[marketdata/{self.datatype}] vendor={src.vendor} TIMEOUT {err}")
+                    record_error(f"{src.vendor}: {err}")
+                    break
                 except Exception as e:
                     latency = int((time.monotonic() - t0) * 1000)
                     err = str(e)

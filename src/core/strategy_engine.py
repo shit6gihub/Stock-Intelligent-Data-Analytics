@@ -6,7 +6,7 @@ import logging
 from datetime import date, datetime, timedelta
 from math import sqrt
 
-from sqlalchemy import and_, case, func
+from sqlalchemy import case, func
 
 from src.collectors.kline_collector import KlineCollector
 from src.core.entry_candidates import refresh_entry_candidates

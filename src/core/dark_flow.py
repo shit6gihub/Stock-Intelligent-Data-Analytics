@@ -20,7 +20,6 @@ import re
 import urllib.request
 
 from marketdata.symbol import Symbol
-from marketdata.vendors.tencent_panel import fetch_price_distribution
 
 logger = logging.getLogger(__name__)
 

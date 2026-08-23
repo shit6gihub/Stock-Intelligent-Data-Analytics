@@ -6,7 +6,7 @@
 """
 import logging
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket
 
 logger = logging.getLogger(__name__)
 

@@ -16,7 +16,7 @@ import logging
 import time
 import os
 from collections import defaultdict
-from typing import Optional, Tuple
+from typing import Tuple
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request

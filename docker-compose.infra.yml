@@ -78,7 +78,8 @@ services:
     ports:
       - "127.0.0.1:35099:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=xz.170530
+      # 2026-08-23 Q2: 真实密码不再入仓, 部署时用 env 覆盖(默认 admin 仅本机绑定)
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_ADMIN_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana_data:/var/lib/grafana
