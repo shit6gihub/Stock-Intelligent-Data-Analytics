@@ -80,10 +80,10 @@ jobs:
         # 2026-08-21: conftest 已加 _init_test_db + _clear_module_caches fixture 修好顺序污染,
         # 缓存类 3 文件不再需要 ignore; 但 CI 海外机房访问不了国内行情源, 联网测试文件仍需排除
         # (与 build-and-push-image.yml 保持一致)。
+        env:
+          # 2026-08-23 Q2: 测试用默认 admin 登录(仅 CI 虚拟库)
+          AUTH_ALLOW_DEFAULT_ADMIN: "1"
         run: |
-          env:
-            # 2026-08-23 Q2: 测试用默认 admin 登录(仅 CI 虚拟库)
-            AUTH_ALLOW_DEFAULT_ADMIN: "1"
           python -m pytest tests/ \
             --ignore=tests/test_dark_flow.py \
             --ignore=tests/test_dark_l2_engine.py \
