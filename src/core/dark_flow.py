@@ -774,6 +774,7 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
             "volume_ratio": q.volume_ratio,
             "volume_outer": q.volume_outer,
             "volume_inner": q.volume_inner,
+            "turnover": getattr(q, "turnover", None),
         }
     except Exception:
         pass
@@ -842,6 +843,16 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
     main_intensity = (main_buy_amt + main_sell_amt) / (buy_amt + sell_amt) * 100 if (buy_amt + sell_amt) else None  # 主力参与度%
     main_buy_ratio = main_buy_amt / (main_buy_amt + main_sell_amt) * 100 if (main_buy_amt + main_sell_amt) else None  # 主力买占主力成交%
 
+    # ---- 物理守卫(2026-08-23 P4): 盘中实时对账 ----
+    # 主力成交额(买+卖)物理上不可能超过全日总成交额; 超过即数据异常
+    # (典型故障: 逐笔缓存重复计数, 2026-08 两次净额翻倍事故均为此类, 当时只有
+    # 盘后哨兵能发现)。对标 data_quality_sentinel 的 130% 阈值, 盘中即时拦截。
+    _quote_turnover = _num((quote_dict or {}).get("turnover")) or 0.0
+    data_suspect = bool(
+        _quote_turnover > 0
+        and (main_buy_amt + main_sell_amt) > _quote_turnover * 1.30
+    )
+
     result = {
         "dark_net": round(dark_net),           # 全量主动净额
         "main_net": round(main_net),           # 主力净额(≥20万, 腾讯官方口径)
@@ -873,7 +884,11 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
         "tick_count": len(ticks),
         # 2026-08-12: 盘中数据量门槛 —— 竞价/开盘初期(非竞价成交<30笔)不算主力意图,
         # 直接给"数据不足"标记, 避免把竞价单/零星成交误判成吸筹派发
-        "data_status": "insufficient" if len(non_auction) < 30 else "ok",
+        # 2026-08-23 P4: suspect = 主力成交额超总成交额 130%(物理不可能, 疑重复计数),
+        # 下游(insufficient 同款处理)不判吸筹/派发、不做 AI 意图解释
+        "data_status": (
+            "insufficient" if len(non_auction) < 30 else ("suspect" if data_suspect else "ok")
+        ),
     }
 
     # ---- 价格维度(分价表) ----
@@ -909,14 +924,22 @@ def compute_dark_flow(symbol: Symbol) -> dict | None:
     except Exception:
         pass
 
-    result["signal"] = _judge_signal(
-        dark_net, main_net, big_net, mid_net, retail_net, seg,
-        result.get("low_price_ratio"),
-        result.get("strong_buy_zones", []),
-        result.get("strong_sell_zones", []),
-        auction_amt, auction_vol,
-        result.get("main_intensity"), result.get("main_buy_ratio"),
-    )
+    if result.get("data_status") == "suspect":
+        # P4: 数据异常时不给吸筹/派发结论, 防止翻倍净额被当成强吸筹推送
+        result["signal"] = (
+            f"⚠ 数据异常: 主力成交额超总成交额130%"
+            f"(主力买+卖 {round((main_buy_amt + main_sell_amt) / 1e8, 2)}亿 vs "
+            f"成交额 {round(_quote_turnover / 1e8, 2)}亿), 疑逐笔重复计数, 本轮不判意图"
+        )
+    else:
+        result["signal"] = _judge_signal(
+            dark_net, main_net, big_net, mid_net, retail_net, seg,
+            result.get("low_price_ratio"),
+            result.get("strong_buy_zones", []),
+            result.get("strong_sell_zones", []),
+            auction_amt, auction_vol,
+            result.get("main_intensity"), result.get("main_buy_ratio"),
+        )
 
     # ---- 主力意图增强算法(2026-08-14): 超大单/大单背离 + 量价背离 + 时段节奏 ----
     # 三个独立纯函数(可单测), 注入 result 新字段, 不破坏现有字段。

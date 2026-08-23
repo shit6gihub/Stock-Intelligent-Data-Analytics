@@ -88,7 +88,7 @@ def _main_intent_both_inner(symbol: str) -> tuple[str, dict | None]:
         buy_ratio = dark.get("main_buy_ratio")
         seg = dark.get("segments") or {}
         tail = seg.get("tail", 0)
-        if dark.get("data_status") == "insufficient":
+        if dark.get("data_status") in ("insufficient", "suspect"):
             structured = {
                 "direction": "neutral",
                 "main_net": main_net,
@@ -221,7 +221,7 @@ def _main_intent_structured(symbol: str) -> dict | None:
         tail = seg.get("tail", 0)
         # 2026-08-12: 竞价/开盘初期数据不足(<30笔非竞价成交) → 标记 insufficient,
         # 前端显示"数据不足"而非误导性结论
-        if dark.get("data_status") == "insufficient":
+        if dark.get("data_status") in ("insufficient", "suspect"):
             return {
                 "direction": "neutral",
                 "main_net": main_net,
@@ -406,7 +406,7 @@ def _derive_direction(dark: dict) -> str:
     buy_ratio = dark.get("main_buy_ratio")
     if buy_ratio is None:
         buy_ratio = dark.get("buy_ratio")
-    if dark.get("data_status") == "insufficient":
+    if dark.get("data_status") in ("insufficient", "suspect"):
         return "neutral"
     strong_absorb = (intensity or 0) >= 35 and (buy_ratio or 0) >= 48
     if main_net > 500e4:
