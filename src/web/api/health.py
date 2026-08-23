@@ -218,7 +218,19 @@ async def health() -> dict[str, Any]:
             **schedulers_status,
         }
         if schedulers_status["running"] < 2:
-            overall_ok = False
+            # 2026-08-23 Q1: 非 leader worker 的调度器数为 0 是预期(调度器由 leader
+            # 进程运行), 不应把整体健康打成 down。只有 leader 自身调度器 <2 才算故障。
+            from src.core.scheduler_leader import is_leader
+            if schedulers_status["running"] == 0 and not is_leader():
+                components["scheduler"] = {
+                    "status": "ok",
+                    "schedulers": [],
+                    "running": 0,
+                    "shutdown": 0,
+                    "note": "non-leader worker(调度器由 leader 进程运行)",
+                }
+            else:
+                overall_ok = False
     except Exception as e:
         components["scheduler"] = {"status": "down", "error": str(e)[:100]}
         overall_ok = False

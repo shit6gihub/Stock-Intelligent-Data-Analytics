@@ -24,6 +24,12 @@ RENEW_INTERVAL = 10
 ACQUIRE_RETRY_SECONDS = 40
 
 _holder: dict = {"id": ""}
+_acquired: bool = False  # 本 worker 是否成为调度器租约持有者(或回退运行)
+
+
+def is_leader() -> bool:
+    """本进程是否持有调度器职责(供 health 探针判断非 leader 是预期还是故障)。"""
+    return _acquired
 
 
 def _client():
@@ -42,10 +48,13 @@ def worker_id() -> str:
 
 def try_acquire() -> tuple[bool, str]:
     """决定本 worker 是否启动调度器。返回 (是否启动, 原因说明)。"""
+    global _acquired
     force = (os.getenv("SIDA_ENABLE_SCHEDULERS") or "").strip().lower()
     if force == "0":
+        _acquired = False
         return False, "SIDA_ENABLE_SCHEDULERS=0"
     if force == "1":
+        _acquired = True
         return True, "SIDA_ENABLE_SCHEDULERS=1 强制启动"
 
     wid = worker_id()
@@ -57,12 +66,14 @@ def try_acquire() -> tuple[bool, str]:
             got = r.set(LOCK_KEY, wid, nx=True, ex=TTL_SECONDS)
             if got:
                 _start_renewal(r, wid)
+                _acquired = True
                 return True, "Redis 选主成功"
             current = r.get(LOCK_KEY)
             current_owner = current.decode("utf-8", "replace") if current else "?"
             if current_owner == wid:
                 r.expire(LOCK_KEY, TTL_SECONDS)
                 _start_renewal(r, wid)
+                _acquired = True
                 return True, "Redis 选主续期(reload 重入)"
             last_note = f"leader={current_owner}"
         except Exception as e:
@@ -71,8 +82,10 @@ def try_acquire() -> tuple[bool, str]:
                 "[选主] Redis 不可用(%s), 回退为本 worker 启动调度器"
                 "(多 worker 部署下可能重复执行, 请修复 Redis)", e,
             )
+            _acquired = True
             return True, "Redis 不可用回退(旧行为)"
         if time.time() >= deadline:
+            _acquired = False
             return False, f"选主失败({last_note}), 本 worker 让位"
         time.sleep(5)
 
