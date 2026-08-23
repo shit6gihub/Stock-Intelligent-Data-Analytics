@@ -7,6 +7,7 @@ import { Input } from '@panwatch/base-ui/components/ui/input'
 import { Label } from '@panwatch/base-ui/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@panwatch/base-ui/components/ui/select'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
+import { safeFixed, safeNum } from '@/lib/format'
 
 interface KronosResult {
   median: number[]
@@ -168,10 +169,10 @@ function ModelDivergenceChart({ result }: { result: PredictResult }) {
               <div className="absolute inset-y-0 w-px bg-border/80" style={{ left: `${anchorPct}%` }} />
             </div>
             <span className="w-28 shrink-0 truncate text-right font-mono text-[11px]">
-              {r.start.toFixed(2)} → {r.end.toFixed(2)}
+              {safeFixed(r.start)} → {safeFixed(r.end)}
               {r.band && (
                 <span className="block text-[9.5px] text-muted-foreground/80">
-                  P5 {r.band.lo.toFixed(2)} ~ P95 {r.band.hi.toFixed(2)}
+                  P5 {safeFixed(r.band.lo)} ~ P95 {safeFixed(r.band.hi)}
                 </span>
               )}
             </span>
@@ -752,10 +753,16 @@ export default function ForecastPage() {
                   <div key={i} className="bg-muted rounded-lg px-3 py-2 text-center">
                     <div className="text-xs text-muted-foreground">T+{i + 1}</div>
                     <div className={`font-num font-bold tabular-nums ${p > result.last_close ? 'text-red-600' : 'text-green-700'}`}>
-                      {p.toFixed(2)}
+                      {safeFixed(p)}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {((p / result.last_close - 1) * 100).toFixed(1)}%
+                      {(() => {
+                        // 修复(M-8, 2026-08-23): last_close 可能为字符串/null, 原 .toFixed 抛 TypeError
+                        const lc = safeNum(result.last_close)
+                        const pp = safeNum(p)
+                        if (lc === null || pp === null || lc === 0) return '--'
+                        return `${((pp / lc - 1) * 100).toFixed(1)}%`
+                      })()}
                     </div>
                   </div>
                 ))}
@@ -917,8 +924,8 @@ export default function ForecastPage() {
                     {backtest.recent_samples.slice().reverse().map((s, i) => (
                       <tr key={i} className="border-b">
                         <td className="py-1.5">{s.date}</td>
-                        <td className="text-right font-mono">{s.pred_close.toFixed(2)}</td>
-                        <td className="text-right font-mono">{s.actual_close.toFixed(2)}</td>
+                        <td className="text-right font-mono">{safeFixed(s.pred_close)}</td>
+                        <td className="text-right font-mono">{safeFixed(s.actual_close)}</td>
                         <td className={`text-right ${s.hit ? 'text-green-700' : 'text-red-600'}`}>
                           {s.hit ? '✓' : '✗'}
                         </td>

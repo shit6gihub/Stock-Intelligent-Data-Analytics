@@ -75,7 +75,7 @@ class StockAttributionAgent(BaseAgent):
                 logger.warning("[%s] 龙虎榜采集失败: %s", trace_id, e)
                 data["dragon_tiger"] = []
 
-            # 2. 资金流(每只自选股)
+            # 2. 资金面(东财四档口径, 与主力意图段不同源; 仅作资金面参考)
             flows = []
             for sym in symbols:
                 try:
@@ -93,6 +93,26 @@ class StockAttributionAgent(BaseAgent):
                 except Exception as e:
                     logger.debug("[%s] 资金流失败 %s: %s", trace_id, sym, e)
             data["capital_flows"] = flows
+
+            # 2.6 主力意图(S5, 2026-08-23, 逐笔口径, 与资金面段不同源;
+            #     判断主力吸筹/派发一律以本段为准, 资金面段仅作参考)
+            # 复盘场景采集可能超过单只, 串行 + 短超时避免阻塞 collect 整体
+            import concurrent.futures as _cf
+            main_intents: dict[str, str] = {}
+            try:
+                # 复用 intraday_monitor 的 _main_intent_summary: 同源逐笔V14实现
+                from src.agents.intraday_monitor import _main_intent_summary as _mis
+                with _cf.ThreadPoolExecutor(max_workers=min(4, max(1, len(symbols)))) as ex:
+                    future_map = {ex.submit(_mis, sym): sym for sym in symbols}
+                    for fut in _cf.as_completed(future_map, timeout=15):
+                        sym = future_map[fut]
+                        try:
+                            main_intents[sym] = fut.result(timeout=12) or ""
+                        except Exception:
+                            main_intents[sym] = ""
+            except Exception as e:
+                logger.debug("[%s] 主力意图批量采集失败: %s", trace_id, e)
+            data["main_intents"] = main_intents
 
             # 2.5 行情快照(涨幅/换手/量比 — 归因的核心市场证据)
             quotes = []
@@ -228,10 +248,10 @@ unknown(证据不足)
                 user_content.append(f"  原因:{d['reason']}")
             user_content.append("")
 
-        # 资金流
+        # 资金面(东财四档口径, 与主力意图段不同源; 仅作资金面参考)
         flows = ad.get("capital_flows", [])
         if flows:
-            user_content.append("## 资金流")
+            user_content.append("## 资金面(东财四档口径, 与主力意图段不同源)")
             for f in flows:
                 user_content.append(
                     f"- {f['symbol']}: 主力净流入{f['main_net_inflow']/1e8:.2f}亿 "
@@ -239,6 +259,22 @@ unknown(证据不足)
                     f"超大单{f['super_net_inflow']/1e8:.2f}亿 "
                     f"5日{f['main_net_5d']/1e8:.2f}亿"
                 )
+            user_content.append("")
+
+        # 主力意图(逐笔V14, S5 2026-08-23): 与上方资金面段不同源, 主力行为判断以本段为准
+        main_intents = ad.get("main_intents", {}) or {}
+        intents_lines = [
+            f"- {sym}: {txt}" for sym, txt in main_intents.items() if txt
+        ]
+        if intents_lines:
+            user_content.append("## 主力意图(逐笔V14)")
+            user_content.extend(intents_lines)
+            user_content.append(
+                "> 口径提醒: 上方「资金面」段为东财四档口径(按单笔金额分档), "
+                "本段「主力意图」为腾讯逐笔实时口径(≥20万或600手, 已对齐同花顺暗盘)。"
+                "两段可能方向不同; **判断主力吸筹/派发一律以「主力意图」段为准**, "
+                "「资金面」段仅作资金面参考。"
+            )
             user_content.append("")
 
         # 行情快照

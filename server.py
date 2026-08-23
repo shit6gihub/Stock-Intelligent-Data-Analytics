@@ -1909,7 +1909,8 @@ if os.path.exists(static_dir):
 
 if __name__ == "__main__":
     print("盯盘侠启动: http://127.0.0.1:8000")
-    print("API 文档: http://127.0.0.1:8000/docs")
+    # P2-1 (2026-08-23 审计): /docs 已关(docs_url=None), 不再打印误导链接
+    print("API 文档: 已关闭(生产安全策略, 防接口地图泄露)")
     # 生产(Docker `python server.py`)不应开 reload:uvicorn 文件监听会多起一个 reloader
     # 子进程、浪费资源,且监听 data/ 写入易误触发重启。本地热重载用 `make dev-api`
     # (uvicorn --reload),或显式设 DEV_RELOAD=1。
@@ -1918,12 +1919,17 @@ if __name__ == "__main__":
     # 单 worker + sync def 在线程池排队 → 26 并发全部排队,实测平均 2.2s
     # 加 workers 后多进程分担,实测 avg < 500ms
     _workers = int(os.environ.get("WEB_WORKERS", "2"))
+    # P1-1 (2026-08-23 审计): 默认绑定 127.0.0.1,避免无反代场景直接公网裸奔
+    # (历史靠 iptables 兜底是单点防御)。Docker compose 已用 expose/ports 转发,
+    # 主机内裸跑只需 127 即可;如需公网请显式 WEB_HOST=0.0.0.0 + 前置反代。
+    _host = os.environ.get("WEB_HOST", "127.0.0.1")
+    # P2-2 (2026-08-23 审计): reload 监听去掉根目录 ".",防根目录文件变更误触发重启
     uvicorn.run(
         "server:app",
-        host="0.0.0.0",
+        host=_host,
         port=8000,
         workers=_workers,
         reload=_dev_reload,
-        reload_dirs=["src", "."] if _dev_reload else None,
+        reload_dirs=["src"] if _dev_reload else None,
         reload_excludes=["data/*", "frontend/*", ".claude/*"] if _dev_reload else None,
     )

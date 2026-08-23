@@ -4,6 +4,19 @@ from datetime import datetime
 from pathlib import Path
 
 from src.agents.base import BaseAgent, AgentContext, AnalysisResult, apply_scene_binding
+
+
+def _resolve_user_id(context: AgentContext) -> str | None:
+    """M3(2026-08-23): 提取 Agent 触发用户 UUID, 系统调度/批量任务返回 None。
+
+    user 是 dataclass 字段, 默认 None; server.py trigger_agent_for_stock 在手动触发
+    时会注入 context.user(取自 users 表), 通过此函数喂给 save_analysis/save_suggestion,
+    history/建议池按用户归属, 端点按用户过滤(S1/M2/M3)。
+    """
+    user = getattr(context, "user", None)
+    if user is None:
+        return None
+    return getattr(user, "id", None)
 from src.core.analysis_history import save_analysis
 from src.core.cn_symbol import get_cn_prefix
 from src.core.suggestion_pool import save_suggestion
@@ -754,6 +767,7 @@ class DailyReportAgent(BaseAgent):
                     prompt_context=user_content,
                     ai_response=result.content,
                     stock_market=stock.market.value,
+                    user_id=_resolve_user_id(context),
                     meta={
                         "analysis_date": analysis_date,
                         "source": "daily_report",
@@ -878,6 +892,7 @@ class DailyReportAgent(BaseAgent):
             stock_symbol="*",
             content=result.content,
             title=result.title,
+            user_id=_resolve_user_id(context),
             raw_data={
                 "symbols": symbols,
                 "timestamp": data.get("timestamp"),

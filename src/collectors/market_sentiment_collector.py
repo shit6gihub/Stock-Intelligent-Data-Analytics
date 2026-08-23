@@ -7,7 +7,12 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
+
+# 修复(L-2, 2026-08-23): 双源各回溯 6 天,无总超时会导致最坏 240s(MCP 限流/源宕时)。
+# 给 get_limit_up_pool 整体加 30s 总预算, 命中即短路, 避免整页扫描接口卡 4 分钟。
+_LIMITUP_TOTAL_BUDGET_S = 30.0
 
 from src.collectors.market_http import market_get
 
@@ -95,7 +100,12 @@ class MarketSentimentCollector:
         date: YYYYMMDD,默认今天。当天(盘前)无数据时自动回退最近交易日(最多5天)。
         返回: [{code, name, price, pct, amount, ltsz, first_time, last_time, days(连板数), sector/theme, ...}]
         wudao 源额外带: theme(开盘啦主类题材) / reason(涨停原因) / turnover_rate / order_amount(封单额)。
+
+        修复(L-2, 2026-08-23): 双源各 6 次回溯最坏 12*10+2*backoff=240s, 加总预算 _LIMITUP_TOTAL_BUDGET_S(30s)
+        后命中即返回, 超时直接放弃后续回溯避免阻塞整页扫描。
         """
+        # 修复(L-2): 总预算封顶
+        deadline = time.monotonic() + _LIMITUP_TOTAL_BUDGET_S
         date = date or datetime.now().strftime("%Y%m%d")
         from datetime import timedelta
 
@@ -109,6 +119,10 @@ class MarketSentimentCollector:
 
         # ① wudao 优先:找最近非空交易日(最多 5 天)。wudao 字段更全(题材/原因/封单/换手)
         for back in range(6):
+            # 修复(L-2, 2026-08-23): 总预算耗尽则直接跳过, 不再白白超时
+            if time.monotonic() >= deadline:
+                logger.warning("market_sentiment.get_limit_up_pool 超总预算 %ss, 跳过 wudao 回溯", _LIMITUP_TOTAL_BUDGET_S)
+                break
             probe = _probe(back)
             try:
                 pool = self._limit_up_pool_wudao(probe)
@@ -120,6 +134,10 @@ class MarketSentimentCollector:
 
         # ② 东财兜底:同逻辑找最近非空交易日
         for back in range(6):
+            # 修复(L-2): 总预算耗尽即停
+            if time.monotonic() >= deadline:
+                logger.warning("market_sentiment.get_limit_up_pool 超总预算 %ss, 跳过东财回溯", _LIMITUP_TOTAL_BUDGET_S)
+                break
             probe = _probe(back)
             params = {
                 "ut": "7eea3edcaed734bea9cbfc24409ed989",
@@ -129,13 +147,15 @@ class MarketSentimentCollector:
                 "sort": "fbt:asc",
                 "date": probe,
             }
+            # 修复(M-12): market_get 已默认 max_total_s=10s, 此处显式传入同时收紧单次回溯.
             data = market_get(
                 _ZTPOOL_URL,
                 host_key="push2ex.eastmoney.com",
                 params=params,
                 headers=_ZT_HEADERS,
-                timeout=10,
-                retries=2,
+                timeout=6,
+                retries=1,
+                max_total_s=8.0,  # 单次回溯预算 8s, 6 天回溯 + wudao 部分可控制在总预算内
                 parse="json",
                 log_label="涨停池",
             )

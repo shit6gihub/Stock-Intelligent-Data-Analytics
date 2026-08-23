@@ -1,4 +1,5 @@
 """K线图截图采集器 - 基于 Playwright"""
+import asyncio
 import logging
 import os
 import tempfile
@@ -110,6 +111,11 @@ class ScreenshotCollector:
         prefix = get_cn_prefix(symbol, upper=True)
         return f"https://xueqiu.com/S/{prefix}{symbol}"
 
+    # 2026-08-23 修复(S-4): 单只截图硬上限。原先 wait_for_selector=15s + networkidle=10s + extra_wait=3s
+    # 全部最坏情况堆叠可至 80s+, 上百只股票批次阻塞调度线程十几分钟。
+    # 给单只硬封顶 _CAPTURE_TIMEOUT_S 秒, 批量任务不会再被一只卡死的股票拖住。
+    _CAPTURE_TIMEOUT_S = 30.0
+
     async def capture(
         self,
         symbol: str,
@@ -121,6 +127,11 @@ class ScreenshotCollector:
         """
         截取单只股票的 K 线图
 
+        修复(S-3 + S-4, 2026-08-23):
+        - S-3: playwright context 在 finally 中关闭, 任何中间异常不泄漏资源。
+        - S-4: asyncio.wait_for 限制单只总耗时(默认 30s),
+               防止 wait_for_selector / networkidle / extra_wait 三段累计拖死调度。
+
         Args:
             symbol: 股票代码
             name: 股票名称
@@ -129,13 +140,38 @@ class ScreenshotCollector:
             provider: 数据源 (xueqiu/eastmoney)
 
         Returns:
-            ChartScreenshot 或 None（失败时）
+            ChartScreenshot 或 None(失败/超时)
         """
         await self._ensure_browser()
 
         url = self._get_url(symbol, market, provider)
         filepath = str(SCREENSHOT_DIR / f"{symbol}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
+        capture_timeout_s = float(self.config.get("capture_timeout_s", self._CAPTURE_TIMEOUT_S))
+        try:
+            return await asyncio.wait_for(
+                self._capture_inner(symbol, name, market, period, provider, url, filepath),
+                timeout=capture_timeout_s,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"单只截图超时({capture_timeout_s:.0f}s), 跳过 {name}({symbol}) 防止阻塞整批"
+            )
+            return None
+        except Exception as e:
+            logger.error(f"截图失败 {name}({symbol}): {e}")
+            return None
 
+    async def _capture_inner(
+        self,
+        symbol: str,
+        name: str,
+        market: str,
+        period: str,
+        provider: str,
+        url: str,
+        filepath: str,
+    ) -> ChartScreenshot | None:
+        """capture() 的核心实现: 由 capture() 外层用 asyncio.wait_for 封顶。"""
         try:
             # 使用真实的 User-Agent 和反检测设置
             context = await self._browser.new_context(
@@ -180,8 +216,6 @@ class ScreenshotCollector:
             else:
                 await self._capture_eastmoney(page, filepath, period)
 
-            await context.close()
-
             logger.info(f"截图成功: {name}({symbol}) -> {filepath}")
             return ChartScreenshot(
                 symbol=symbol,
@@ -190,10 +224,17 @@ class ScreenshotCollector:
                 filepath=filepath,
                 period=period,
             )
-
         except Exception as e:
+            # 修复(S-3, 2026-08-23): finally 仍会跑,context 能保证关闭。
             logger.error(f"截图失败 {name}({symbol}): {e}")
             return None
+        # 修复(S-3, 2026-08-23): 把 context.close() 移到 finally,
+        # 即便 wait_for_selector / wait_for_timeout / 网络错误抛错,context 也能保证释放。
+        finally:
+            try:
+                await context.close()
+            except Exception:
+                pass
 
     async def _capture_xueqiu(self, page, filepath: str, period: str):
         """雪球截图逻辑"""
@@ -405,35 +446,76 @@ class ScreenshotCollector:
             except Exception:
                 continue
 
+    # 2026-08-23 修复(S-4): 批量截图并发数,避免串行拖垮调度线程
+    _DEFAULT_BATCH_CONCURRENCY = 2
+    # 整批总超时(秒)。超过这个时间未完成的任务直接终止,
+    # 让调度线程能继续跑其他 batch / 健康检查。
+    _DEFAULT_BATCH_TIMEOUT_S = 120.0
+
     async def capture_batch(
         self,
         stocks: list[dict],
         period: str = "daily",
         provider: str = "xueqiu",
+        *,
+        concurrency: int | None = None,
+        batch_timeout_s: float | None = None,
     ) -> list[ChartScreenshot]:
         """
-        批量截取K线图
+        批量截取K线图(并发 + 总超时)
+
+        修复(S-4, 2026-08-23):
+        - 用 asyncio.Semaphore 控制并发(默认 2), 防止同时启动 100 个 chromium context。
+        - 外层 asyncio.wait_for 整批封顶, 单批不会拖死调度主线程。
 
         Args:
             stocks: 股票列表，每项包含 symbol, name, market
             period: K线周期
             provider: 数据源 (xueqiu/eastmoney)
+            concurrency: 最大并发数(默认 2)
+            batch_timeout_s: 整批总超时秒数(默认 120s); None/0=不限制
 
         Returns:
-            ChartScreenshot 列表
+            ChartScreenshot 列表(失败/超时项被跳过, 不影响其他项)
         """
-        results = []
-        for stock in stocks:
-            screenshot = await self.capture(
-                symbol=stock.get("symbol", ""),
-                name=stock.get("name", ""),
-                market=stock.get("market", "CN"),
-                period=period,
-                provider=provider,
-            )
-            if screenshot:
-                results.append(screenshot)
+        conc = int(concurrency if concurrency else self.config.get(
+            "batch_concurrency", self._DEFAULT_BATCH_CONCURRENCY))
+        bt = float(batch_timeout_s if batch_timeout_s is not None else self.config.get(
+            "batch_timeout_s", self._DEFAULT_BATCH_TIMEOUT_S))
+        sem = asyncio.Semaphore(max(1, conc))
 
+        async def _one(stock: dict):
+            async with sem:
+                try:
+                    return await self.capture(
+                        symbol=stock.get("symbol", ""),
+                        name=stock.get("name", ""),
+                        market=stock.get("market", "CN"),
+                        period=period,
+                        provider=provider,
+                    )
+                except Exception as e:
+                    logger.warning(f"批量截图单只异常({stock.get('symbol','?')}): {e}")
+                    return None
+
+        tasks = [asyncio.create_task(_one(s)) for s in stocks]
+        try:
+            done = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=False),
+                timeout=bt if bt > 0 else None,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"批量截图整批超时({bt:.0f}s), 已完成的截屏保留, 未完成的取消")
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+            # 收集已完成的(避免 dangling)
+            done = [t.result() if t.done() and not t.cancelled() else None for t in tasks]
+        # 过滤 None / 异常
+        results: list[ChartScreenshot] = []
+        for r in done:
+            if isinstance(r, ChartScreenshot):
+                results.append(r)
         return results
 
     def cleanup_old_screenshots(self, max_age_hours: int = 24):

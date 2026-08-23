@@ -51,7 +51,7 @@ def test_owner_auto_created(client):
 
 def test_login_and_me(client):
     """登录返回 user 信息, me 返回当前用户。"""
-    token = _login(client, "admin", "admin123")
+    token = _login(client, "admin", "xz.170530")
     r = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200
     assert r.json()["data"]["user"]["username"] == "admin"
@@ -60,7 +60,7 @@ def test_login_and_me(client):
 
 def test_create_member_and_login(client):
     """owner 建子账号, 子账号可登录。"""
-    token = _login(client, "admin", "admin123")
+    token = _login(client, "admin", "xz.170530")
     u = _create_member(client, token)
     assert u["role"] == "member"
     assert u["is_active"] is True
@@ -74,7 +74,7 @@ def test_create_member_and_login(client):
 
 def test_member_cannot_manage_users(client):
     """member 访问用户管理 → 403。"""
-    token = _login(client, "admin", "admin123")
+    token = _login(client, "admin", "xz.170530")
     _create_member(client, token)
     tok2 = _login(client, "alice", "alice12345")
 
@@ -88,15 +88,15 @@ def test_member_cannot_manage_users(client):
 
 def test_duplicate_username_rejected(client):
     """重复用户名 → 400。"""
-    token = _login(client, "admin", "admin123")
+    token = _login(client, "admin", "xz.170530")
     r = client.post("/api/auth/users", headers={"Authorization": f"Bearer {token}"},
-                    json={"username": "admin", "password": "admin12345", "role": "member"})
+                    json={"username": "admin", "password": "xz.17053045", "role": "member"})
     assert r.status_code == 400
 
 
 def test_disable_user_kicks_token(client):
     """禁用用户后其 token 失效。"""
-    token = _login(client, "admin", "admin123")
+    token = _login(client, "admin", "xz.170530")
     u = _create_member(client, token)
     tok2 = _login(client, "alice", "alice12345")
 
@@ -112,7 +112,7 @@ def test_disable_user_kicks_token(client):
 
 def test_change_password_bumps_token(client):
     """改密后旧 token 失效(踢人)。"""
-    token = _login(client, "admin", "admin123")
+    token = _login(client, "admin", "xz.170530")
     u = _create_member(client, token)
     tok2 = _login(client, "alice", "alice12345")
 
@@ -131,7 +131,7 @@ def test_change_password_bumps_token(client):
 
 def test_cannot_disable_self(client):
     """owner 不能禁用自己。"""
-    token = _login(client, "admin", "admin123")
+    token = _login(client, "admin", "xz.170530")
     me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"}).json()["data"]["user"]
     r = client.patch(f"/api/auth/users/{me['id']}", headers={"Authorization": f"Bearer {token}"},
                      json={"is_active": False})

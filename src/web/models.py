@@ -402,12 +402,21 @@ class NotifyThrottle(Base):
 
 
 class AnalysisHistory(Base):
-    """分析历史记录（盘后分析、盘前分析等）"""
+    """分析历史记录（盘后分析、盘前分析等）
+
+    UNIQUE 约束加 user_id 维度(S1/M3, 2026-08-23): 多账号下同一 (agent, stock, date)
+    各自可独立存储一行; user_id=NULL 的旧数据/系统报告继续保留 NULL 共享语义
+    (SQLite/PG 的 UNIQUE 都不比较 NULL 与 NULL, 允许多个 NULL 共存)。
+    """
 
     __tablename__ = "analysis_history"
     __table_args__ = (
         UniqueConstraint(
-            "agent_name", "stock_symbol", "analysis_date", name="uq_agent_stock_date"
+            "agent_name",
+            "stock_symbol",
+            "analysis_date",
+            "user_id",
+            name="uq_agent_stock_date_user",
         ),
     )
 
@@ -529,11 +538,15 @@ class AgentPredictionOutcome(Base):
 
 
 class StockSuggestion(Base):
-    """股票建议池 - 汇总各 Agent 建议"""
+    """股票建议池 - 汇总各 Agent 建议
+
+    user_id(M2): 建议归属用户, NULL=旧数据; dedupe key 加 user_id 维度, 不同账号可同时存同标的建议。
+    """
 
     __tablename__ = "stock_suggestions"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)  # 建议归属(NULL=旧数据)
     stock_symbol = Column(String, nullable=False, index=True)
     stock_market = Column(String, nullable=False, default="CN", index=True)
     stock_name = Column(String, default="")
@@ -1053,15 +1066,20 @@ class SuggestionFeedback(Base):
 
 
 class PriceAlertRule(Base):
-    """价格提醒规则"""
+    """价格提醒规则
+
+    user_id(S3): 规则归属用户, NULL=旧数据; 端点按 user 过滤, 缺失则返回 404。
+    """
 
     __tablename__ = "price_alert_rules"
     __table_args__ = (
         Index("ix_price_alert_enabled", "enabled"),
         Index("ix_price_alert_stock_enabled", "stock_id", "enabled"),
+        Index("ix_price_alert_user", "user_id", "updated_at"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)  # 规则归属(NULL=旧数据)
     stock_id = Column(
         Integer, ForeignKey("stocks.id", ondelete="CASCADE"), nullable=False
     )
@@ -1195,15 +1213,21 @@ class PaperTradingTrade(Base):
 
 
 class ChatConversation(Base):
-    """AI 对话会话"""
+    """AI 对话会话
+
+    user_id(S2): 会话归属用户, NULL=旧数据/系统; 多账号下各自只看到自己的会话。
+    端点(list/get/delete/send_message)按 user 过滤, 缺失则返回 404 防账号探测。
+    """
 
     __tablename__ = "chat_conversations"
     __table_args__ = (
         Index("ix_chat_conv_updated", "updated_at"),
         Index("ix_chat_conv_stock", "stock_symbol", "stock_market"),
+        Index("ix_chat_conv_user", "user_id", "updated_at"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)  # 会话归属(NULL=旧数据/系统)
     title = Column(String, default="")
     stock_symbol = Column(String, nullable=True)
     stock_market = Column(String, nullable=True)
@@ -1233,15 +1257,19 @@ class Notification(Base):
 
     后台任务(报告/Agent/策略刷新)完成或失败时写一条, 前端铃铛轮询未读数。
     与外发推送(notify_channels)互补: 站内保证"关掉页面也不失联", 外发保证"人不在也能收到"。
+
+    user_id(S4): 通知归属用户, NULL=旧数据/全局系统通知; 多账号下端点按 user 过滤。
     """
 
     __tablename__ = "notifications"
     __table_args__ = (
         Index("ix_notifications_unread", "read_at", "created_at"),
         Index("ix_notifications_trace", "trace_id"),
+        Index("ix_notifications_user", "user_id", "created_at"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)  # 通知归属(NULL=旧数据/全局系统通知)
     # 分类: agent_run / report / strategy / price_alert / system
     category = Column(String, nullable=False, default="system")
     # 级别: info / success / warning / error

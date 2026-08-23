@@ -94,7 +94,7 @@ def _cleanup_test_conversations():
 
 
 def _login(client) -> str:
-    r = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+    r = client.post("/api/auth/login", json={"username": "admin", "password": "xz.170530"})
     assert r.status_code == 200, r.text
     return r.json()["data"]["token"]
 

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Plus, Trash2, Pencil, Search, X, TrendingUp, Bot, Play, RefreshCw, Wallet, PiggyBank, ArrowUpRight, ArrowDownRight, Building2, ChevronDown, ChevronRight, Cpu, Bell, Clock, Newspaper, ExternalLink, BarChart3, Brain, Activity, Download } from 'lucide-react'
 import { fetchAPI, getToken, stocksApi, type AIService, type NotifyChannel } from '@panwatch/api'
 import { useLocalStorage, parseServerTime } from '@/lib/utils'
+import { safeFixed, safeNum, safeMoney, safePrice } from '@/lib/format'
 import { SuggestionBadge, type SuggestionInfo, type KlineSummary } from '@panwatch/biz-ui/components/suggestion-badge'
 import { buildKlineSuggestion } from '@/lib/kline-scorer'
 import { KlineSummaryDialog } from '@panwatch/biz-ui/components/kline-summary-dialog'
@@ -1516,12 +1517,9 @@ export default function StocksPage() {
   }
 
   // ========== Helpers ==========
-  const formatMoney = (value: number) => {
-    if (Math.abs(value) >= 10000) {
-      return `${(value / 10000).toFixed(2)}万`
-    }
-    return value.toFixed(2)
-  }
+  // 修复(S-5, 2026-08-23): PG DECIMAL 经 psycopg2 后变字符串, 裸 .toFixed 抛 TypeError.
+  // 改走 lib/format.safeMoney (null/NaN/字符串数字都走 fallback).
+  const formatMoney = (value: unknown) => safeMoney(value)
 
   const marketLabel = (m: string) => m === 'CN' ? 'A股' : m === 'HK' ? '港股' : m === 'US' ? '美股' : m
 
@@ -1532,12 +1530,8 @@ export default function StocksPage() {
     return { style: 'bg-blue-500/10 text-blue-600', label: 'A' }
   }
 
-  // 保留原始精度显示价格（不强制截断小数位）
-  const formatPrice = (value: number) => {
-    // 最多显示4位小数，去除末尾的0
-    const formatted = value.toFixed(4).replace(/\.?0+$/, '')
-    return formatted
-  }
+  // 修复(S-5, 2026-08-23): 同 formatMoney, 价格字段也走 safe wrapper.
+  const formatPrice = (value: unknown) => safePrice(value)
 
   // 获取股票的行情信息
   const getStockQuote = (quoteKey: string) => {
@@ -1897,7 +1891,7 @@ export default function StocksPage() {
             <div className={`text-[20px] font-bold font-num tabular-nums ${portfolio.total.total_pnl >= 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
               {portfolio.total.total_pnl >= 0 ? '+' : ''}{formatMoney(portfolio.total.total_pnl)}
               <span className="text-[13px] ml-1.5">
-                ({portfolio.total.total_pnl_pct >= 0 ? '+' : ''}{portfolio.total.total_pnl_pct.toFixed(2)}%)
+                ({safeNum(portfolio.total.total_pnl_pct) === null ? '--' : `${portfolio.total.total_pnl_pct >= 0 ? '+' : ''}${safeFixed(portfolio.total.total_pnl_pct)}%`})
               </span>
             </div>
           </div>
@@ -1925,7 +1919,7 @@ export default function StocksPage() {
                 </div>
                 <div className={`text-[20px] font-bold font-mono tabular-nums ${isUp ? 'text-rose-600' : 'text-emerald-700'}`}>
                   {isUp ? '+' : ''}{formatMoney(dayPnl)}
-                  <span className="text-[13px] ml-1.5">({pct >= 0 ? '+' : ''}{pct.toFixed(2)}%)</span>
+                  <span className="text-[13px] ml-1.5">({pct != null && Number.isFinite(pct) ? `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` : '--'})</span>
                 </div>
               </div>
             )
@@ -1956,7 +1950,7 @@ export default function StocksPage() {
               <span className="text-[12px]">仓位占比</span>
             </div>
             <div className="text-[20px] font-bold text-foreground font-mono tabular-nums">
-              {positionRatio ? `${positionRatio.pct.toFixed(1)}%` : '--'}
+              {positionRatio && safeNum(positionRatio.pct) !== null ? `${positionRatio.pct.toFixed(1)}%` : '--'}
             </div>
             <div className="mt-1 text-[11px] text-muted-foreground line-clamp-1">
               {positionRatio ? `持仓市值 ${formatMoney(positionRatio.mv)} / 总资产 ${formatMoney(positionRatio.assets)}` : '—'}
@@ -2125,7 +2119,7 @@ export default function StocksPage() {
                       <div className="text-[10px] md:text-[11px] text-muted-foreground">盈亏</div>
                       <div className={`text-[12px] md:text-[13px] font-mono font-medium whitespace-nowrap tabular-nums ${account.total_pnl >= 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
                         {account.total_pnl >= 0 ? '+' : ''}{formatMoney(account.total_pnl)}
-                        <span className="text-[10px] md:text-[11px] ml-1 hidden md:inline">({account.total_pnl_pct >= 0 ? '+' : ''}{account.total_pnl_pct.toFixed(2)}%)</span>
+                        <span className="text-[10px] md:text-[11px] ml-1 hidden md:inline">({safeNum(account.total_pnl_pct) === null ? '--' : `${account.total_pnl_pct >= 0 ? '+' : ''}${safeFixed(account.total_pnl_pct)}%`})</span>
                       </div>
                     </div>
                     <div className="text-left md:text-right">
@@ -2261,10 +2255,10 @@ export default function StocksPage() {
                                     })()}
                                   </td>
                                   <td className={`px-4 py-2.5 text-right font-mono tabular-nums text-[12px] ${changeColor}`}>
-                                    {pos.current_price != null ? <span>{pos.current_price.toFixed(2)}{isForeign ? (pos.market === 'HK' ? ' HKD' : ' USD') : ''}</span> : '—'}
+                                    {pos.current_price != null && Number.isFinite(Number(pos.current_price)) ? <span>{Number(pos.current_price).toFixed(2)}{isForeign ? (pos.market === 'HK' ? ' HKD' : ' USD') : ''}</span> : '—'}
                                   </td>
                                   <td className={`px-4 py-2.5 text-right font-mono tabular-nums text-[12px] ${changeColor}`}>
-                                    {pos.change_pct != null ? `${pos.change_pct >= 0 ? '+' : ''}${pos.change_pct.toFixed(2)}%` : '—'}
+                                    {pos.change_pct != null && Number.isFinite(Number(pos.change_pct)) ? `${pos.change_pct >= 0 ? '+' : ''}${Number(pos.change_pct).toFixed(2)}%` : '—'}
                                   </td>
                                   <td className="px-4 py-2.5 text-right font-mono tabular-nums text-[12px] text-muted-foreground">{formatPrice(pos.cost_price)}</td>
                                   <td className="px-4 py-2.5 text-right font-mono tabular-nums text-[12px] text-muted-foreground">{pos.quantity}</td>
@@ -2284,7 +2278,7 @@ export default function StocksPage() {
                                     {pos.pnl != null ? (
                                       <div className="flex flex-col items-end">
                                         <span>{pos.pnl >= 0 ? '+' : ''}{formatMoney(pos.pnl)}</span>
-                                        <span className="text-[10px] opacity-70">{pos.pnl_pct != null ? `${pos.pnl_pct >= 0 ? '+' : ''}${pos.pnl_pct.toFixed(2)}%` : ''}{isForeign && ' CNY'}</span>
+                                        <span className="text-[10px] opacity-70">{pos.pnl_pct != null && Number.isFinite(Number(pos.pnl_pct)) ? `${pos.pnl_pct >= 0 ? '+' : ''}${Number(pos.pnl_pct).toFixed(2)}%` : ''}{isForeign && ' CNY'}</span>
                                       </div>
                                     ) : '—'}
                                   </td>
@@ -2295,7 +2289,7 @@ export default function StocksPage() {
                                     {pos.daily_pnl != null ? (
                                       <div className="flex flex-col items-end">
                                         <span>{pos.daily_pnl >= 0 ? '+' : ''}{formatMoney(pos.daily_pnl)}</span>
-                                        <span className="text-[10px] opacity-70">{pos.daily_pnl_pct != null ? `${pos.daily_pnl_pct >= 0 ? '+' : ''}${pos.daily_pnl_pct.toFixed(2)}%` : ''}</span>
+                                        <span className="text-[10px] opacity-70">{pos.daily_pnl_pct != null && Number.isFinite(Number(pos.daily_pnl_pct)) ? `${pos.daily_pnl_pct >= 0 ? '+' : ''}${Number(pos.daily_pnl_pct).toFixed(2)}%` : ''}</span>
                                       </div>
                                     ) : '—'}
                                   </td>
@@ -2431,8 +2425,8 @@ export default function StocksPage() {
                                   )}
                                 </div>
                                 <div className={`font-mono text-[13px] font-medium whitespace-nowrap shrink-0 tabular-nums ${changeColor}`}>
-                                  {pos.current_price?.toFixed(2) || '—'}
-                                  {pos.change_pct != null && <span className="text-[11px] ml-1">{pos.change_pct >= 0 ? '+' : ''}{pos.change_pct.toFixed(2)}%</span>}
+                                  {safePrice(pos.current_price) === '--' ? '—' : safePrice(pos.current_price)}
+                                  {pos.change_pct != null && Number.isFinite(Number(pos.change_pct)) && <span className="text-[11px] ml-1">{pos.change_pct >= 0 ? '+' : ''}{Number(pos.change_pct).toFixed(2)}%</span>}
                                 </div>
                               </div>
                               {/* Row 2 (Suggestion badge, dedicated row to avoid wrapping mess) */}
@@ -2468,7 +2462,7 @@ export default function StocksPage() {
                                   </div>
                                   {pos.pnl_pct != null && (
                                     <div className={`text-[10px] font-mono tabular-nums ${pnlColor} opacity-80`}>
-                                      {pos.pnl_pct >= 0 ? '+' : ''}{pos.pnl_pct.toFixed(2)}%
+                                      {safeNum(pos.pnl_pct) === null ? '' : `${pos.pnl_pct >= 0 ? '+' : ''}${safeFixed(pos.pnl_pct)}%`}
                                     </div>
                                   )}
                                 </div>
@@ -2671,10 +2665,10 @@ export default function StocksPage() {
                       </div>
                       <div className="text-right shrink-0 whitespace-nowrap">
                         <div className={`font-mono text-[14px] font-bold leading-tight tabular-nums ${changeColor}`}>
-                          {quote?.current_price != null ? quote.current_price.toFixed(2) : '--'}
+                          {quote?.current_price != null && Number.isFinite(Number(quote.current_price)) ? Number(quote.current_price).toFixed(2) : '--'}
                         </div>
                         <div className={`font-mono text-[11px] leading-tight tabular-nums ${changeColor}`}>
-                          {quote?.change_pct != null ? `${quote.change_pct >= 0 ? '+' : ''}${quote.change_pct.toFixed(2)}%` : '--'}
+                          {quote?.change_pct != null && Number.isFinite(Number(quote.change_pct)) ? `${quote.change_pct >= 0 ? '+' : ''}${Number(quote.change_pct).toFixed(2)}%` : '--'}
                         </div>
                       </div>
                     </div>

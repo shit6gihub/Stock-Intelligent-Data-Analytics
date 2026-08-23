@@ -81,31 +81,40 @@ app = FastAPI(
 app.add_middleware(ResponseWrapperMiddleware)
 from starlette.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+# P1-8 (2026-08-23 审计): 解析 CORS 来源(给下方 CORSMiddleware 用)。
+# 必须在 CORSMiddleware add 之前解析 env, 但 add 顺序按 Starlette 语义: Audit 先 add
+# (最内), CORS 最后 add (最外)。所以解析放在这里, 真正 add 放到下面业务中间件组里。
 _cors_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:8000").split(",") if origin.strip()]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+# (CORSMiddleware 已上移到业务中间件之后 add, 见下方)
 # 2026-08-17 v0.2.65 (Phase 1): 统一网关中间件
 # - JWTDecodeMiddleware: 解析 JWT 放 request.state.user(给限流/日志用)
 # - RateLimitMiddleware: 基于 IP/user_id 限流(Redis 优先, 内存降级)
 # - RequestLoggerMiddleware: 结构化 JSON 日志(给 Loki 聚合)
-# - AuditMiddleware (2026-08-18): 写操作自动审计(依赖 JWTDecode 先填充 state.user)
-# 顺序: CORS(最外层) → 日志(看所有) → 限流 → JWT(最内, 共享给业务依赖) → 审计(最内, 拿 user)
+# - AuditMiddleware (2026-08-18): 写操作自动审计(自己解 JWT, 不依赖中间件顺序)
+#
+# P1-8 (2026-08-23 审计): 修正 add_middleware 顺序, 真正匹配原注释意图。
+# Starlette `add_middleware` 后加的先执行(越后越外层)。
+# 目标实际执行顺序(从最外到最内): CORS → 日志 → 限流 → JWT → 审计 → 路由
+# → add 顺序必须反着来: Audit(先add=最内) → JWT → 限流 → 日志 → CORS(后add=最外)
+# 收益: CORS 最外 → 即使被限流/鉴权拒也会带 CORS 头; 限流先于 JWT → 匿名爆破
+#      不付 JWT 解码 CPU; 日志在内, 限流外 → 能看到被限流的请求; 审计最内 →
+#      拿到 request.state.user 并对 2xx 写操作落 audit_logs。
 from src.web.middleware import (
     JWTDecodeMiddleware,
     RateLimitMiddleware,
     RequestLoggerMiddleware,
     AuditMiddleware,
 )
-app.add_middleware(RequestLoggerMiddleware)
-app.add_middleware(RateLimitMiddleware)
-app.add_middleware(JWTDecodeMiddleware)
-app.add_middleware(AuditMiddleware)
+app.add_middleware(AuditMiddleware)        # innermost: add first
+app.add_middleware(JWTDecodeMiddleware)    # user state for downstream
+app.add_middleware(RateLimitMiddleware)    # rejects before JWT decode cost on attacks
+app.add_middleware(RequestLoggerMiddleware)  # sees rate-limited requests too
+app.add_middleware(CORSMiddleware,         # outermost: CORS headers even on 429/401
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # 轻量错误追踪(2026-08-21): 捕获未处理异常 → JSONL 落盘 + 高频聚合告警
 # 尽量内层(最后 add)以贴近路由, 捕获路由/处理器抛出的未处理异常, 原样 re-raise 不吞。

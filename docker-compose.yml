@@ -27,8 +27,12 @@ services:
     restart: unless-stopped
     profiles: ["infra"]
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    # P1-3 (2026-08-23 审计): 6379 绑主机 127.0.0.1 而非 0.0.0.0, 防未授权访问;
+    # 若主机有公网入口仍可达公网, 旧端口映射直接暴露所有 redis 数据。
+    # compose 内其它服务通过 panwatch-redis:6379 网络访问, 主机仅 localhost 可达。
+    # (未加密码避免打断现有容器; 加强方案: 加 --requirepass + bind 0.0.0.0 + 反代)
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -81,7 +85,10 @@ services:
     ports:
       - "35099:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=xz.170530
+      # P1-2 (2026-08-23 审计): 不再硬编码 admin 密码, 从 env_file 必读;
+      # ${VAR:?err} 语法使缺失时 compose up 直接报错而不是用危险默认值。
+      # 在 .env (或 compose env_file) 里设 GF_SECURITY_ADMIN_PASSWORD=<强密码>。
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:?err GF_SECURITY_ADMIN_PASSWORD not set in .env}
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana_data:/var/lib/grafana

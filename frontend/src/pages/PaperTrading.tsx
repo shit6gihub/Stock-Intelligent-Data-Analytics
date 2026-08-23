@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { safeFixed, safeNum, safeThousand } from '@/lib/format'
 import { RefreshCw, Power, RotateCcw, X, TrendingUp, TrendingDown, Trophy, BarChart3, Wallet, Activity, Play, Bell, SlidersHorizontal } from 'lucide-react'
 import {
   paperTradingApi,
@@ -23,20 +24,24 @@ const EXIT_REASON_MAP: Record<string, string> = {
   manual: '手动平仓',
 }
 
-function formatCurrency(v: number) {
-  return v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+// 修复(S-5, 2026-08-23): 原 toLocaleString 对 null/字符串数字返回 "NaN"; 改 safe 包装.
+function formatCurrency(v: unknown) {
+  return safeThousand(v, 2)
 }
 
-function PnlText({ value, suffix = '' }: { value: number; suffix?: string }) {
-  const color = value > 0 ? 'text-rose-500' : value < 0 ? 'text-emerald-500' : 'text-muted-foreground'
-  const prefix = value > 0 ? '+' : ''
+function PnlText({ value, suffix = '' }: { value: unknown; suffix?: string }) {
+  const n = safeNum(value)
+  const color = n === null ? 'text-muted-foreground' : n > 0 ? 'text-rose-500' : n < 0 ? 'text-emerald-500' : 'text-muted-foreground'
+  const prefix = n !== null && n > 0 ? '+' : ''
   return <span className={color}>{prefix}{formatCurrency(value)}{suffix}</span>
 }
 
-function PnlPctText({ value }: { value: number }) {
-  const color = value > 0 ? 'text-rose-500' : value < 0 ? 'text-emerald-500' : 'text-muted-foreground'
-  const prefix = value > 0 ? '+' : ''
-  return <span className={color}>{prefix}{value.toFixed(2)}%</span>
+function PnlPctText({ value }: { value: unknown }) {
+  const n = safeNum(value)
+  const color = n === null ? 'text-muted-foreground' : n > 0 ? 'text-rose-500' : n < 0 ? 'text-emerald-500' : 'text-muted-foreground'
+  const prefix = n !== null && n > 0 ? '+' : ''
+  const txt = n === null ? '--' : `${n.toFixed(2)}%`
+  return <span className={color}>{prefix}{txt}</span>
 }
 
 function EquityChart({ data }: { data: EquityCurvePoint[] }) {
@@ -86,7 +91,7 @@ function EquityChart({ data }: { data: EquityCurvePoint[] }) {
         <g key={i}>
           <line x1={pad.left} x2={width - pad.right} y1={t.y} y2={t.y} stroke="hsl(var(--border))" strokeWidth={0.5} />
           <text x={pad.left - 6} y={t.y + 4} textAnchor="end" fill="hsl(var(--muted-foreground))" fontSize={10}>
-            {(t.v / 10000).toFixed(1)}万
+            {safeNum(t?.v) !== null ? `${(Number(t.v) / 10000).toFixed(1)}万` : '--'}
           </text>
         </g>
       ))}
@@ -430,7 +435,7 @@ export default function PaperTradingPage() {
               <Trophy className="w-3.5 h-3.5" />
               胜率
             </div>
-            <div className="text-lg font-bold">{account.win_rate.toFixed(1)}%</div>
+            <div className="text-lg font-bold">{safeFixed(account.win_rate, 1)}%</div>
             <div className="text-xs text-muted-foreground">{account.winning_trades}/{account.total_trades} 笔</div>
           </div>
           <div className="card p-3">
@@ -438,7 +443,7 @@ export default function PaperTradingPage() {
               <BarChart3 className="w-3.5 h-3.5" />
               最大回撤
             </div>
-            <div className="text-lg font-bold text-emerald-500">{account.max_drawdown_pct.toFixed(2)}%</div>
+            <div className="text-lg font-bold text-emerald-500">{safeFixed(account.max_drawdown_pct)}%</div>
           </div>
           <div className="card p-3">
             <div className="flex items-center gap-1.5 text-muted-foreground text-xs mb-1">
@@ -482,7 +487,7 @@ export default function PaperTradingPage() {
                     <td className="text-right py-2 px-2">
                       {s.total_trades > 0 ? (
                         <span className={s.win_rate >= 50 ? 'text-rose-500' : s.win_rate > 0 ? 'text-amber-500' : 'text-muted-foreground'}>
-                          {s.win_rate.toFixed(1)}%
+                          {safeFixed(s.win_rate, 1)}%
                         </span>
                       ) : '-'}
                     </td>
@@ -529,14 +534,14 @@ export default function PaperTradingPage() {
                       <div className="font-medium">{p.stock_name || p.stock_symbol}</div>
                       <div className="text-xs text-muted-foreground">{p.stock_symbol} · {p.stock_market}</div>
                     </td>
-                    <td className="text-right py-2 px-2">{p.entry_price.toFixed(2)}</td>
-                    <td className="text-right py-2 px-2">{p.current_price?.toFixed(2) ?? '-'}</td>
+                    <td className="text-right py-2 px-2">{safeFixed(p.entry_price)}</td>
+                    <td className="text-right py-2 px-2">{safeFixed(p.current_price, 2, '-')}</td>
                     <td className="text-right py-2 px-2">
                       <PnlText value={p.unrealized_pnl} />
                       <div className="text-xs"><PnlPctText value={p.unrealized_pnl_pct} /></div>
                     </td>
-                    <td className="text-right py-2 px-2">{p.stop_loss?.toFixed(2) ?? '-'}</td>
-                    <td className="text-right py-2 px-2">{p.target_price?.toFixed(2) ?? '-'}</td>
+                    <td className="text-right py-2 px-2">{safeFixed(p.stop_loss, 2, '-')}</td>
+                    <td className="text-right py-2 px-2">{safeFixed(p.target_price, 2, '-')}</td>
                     <td className="py-2 px-2 text-xs text-muted-foreground">{p.strategy_code || '-'}</td>
                     <td className="text-right py-2 px-2">{p.holding_days}天</td>
                     <td className="text-right py-2 pl-2">
@@ -591,8 +596,8 @@ export default function PaperTradingPage() {
                           <div className="font-medium">{t.stock_name || t.stock_symbol}</div>
                           <div className="text-xs text-muted-foreground">{t.stock_symbol} · {t.stock_market}</div>
                         </td>
-                        <td className="text-right py-2 px-2">{t.entry_price.toFixed(2)}</td>
-                        <td className="text-right py-2 px-2">{t.exit_price.toFixed(2)}</td>
+                        <td className="text-right py-2 px-2">{safeFixed(t.entry_price)}</td>
+                        <td className="text-right py-2 px-2">{safeFixed(t.exit_price)}</td>
                         <td className="text-right py-2 px-2"><PnlText value={t.pnl} /></td>
                         <td className="text-right py-2 px-2"><PnlPctText value={t.pnl_pct} /></td>
                         <td className="py-2 px-2 text-xs">{EXIT_REASON_MAP[t.exit_reason] || t.exit_reason}</td>

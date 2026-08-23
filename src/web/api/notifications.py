@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 
 from src.core.notify_center import push_notification
 from src.core.timezone import beijing_now_naive
+from src.web.api.auth import get_current_user
 from src.web.database import get_db
-from src.web.models import AgentRun, Notification, NotifyChannel
+from src.web.models import AgentRun, Notification, NotifyChannel, User
 
 router = APIRouter()
 
@@ -103,9 +104,16 @@ def _configured_channels(db: Session) -> list[dict]:
 
 
 @router.get("/unread-count")
-def unread_count(db: Session = Depends(get_db)):
-    """铃铛红点用。轻量, 供前端高频轮询。"""
-    n = db.query(Notification).filter(Notification.read_at.is_(None)).count()
+def unread_count(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """S4(2026-08-23): 红点计数按用户过滤, 避免账号间串号。"""
+    n = (
+        db.query(Notification)
+        .filter(Notification.read_at.is_(None), Notification.user_id == user.id)
+        .count()
+    )
     return {"unread": n}
 
 
@@ -115,8 +123,10 @@ def list_notifications(
     only_unread: bool = Query(False),
     category: str | None = Query(None),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    q = db.query(Notification)
+    """S4(2026-08-23): 通知中心按用户过滤, 多账号各自只看自己的通知。"""
+    q = db.query(Notification).filter(Notification.user_id == user.id)
     if only_unread:
         q = q.filter(Notification.read_at.is_(None))
     if category:
@@ -133,7 +143,11 @@ def list_notifications(
         )
         for run in runs:
             run_by_trace.setdefault(str(run.trace_id or ""), run)
-    unread = db.query(Notification).filter(Notification.read_at.is_(None)).count()
+    unread = (
+        db.query(Notification)
+        .filter(Notification.read_at.is_(None), Notification.user_id == user.id)
+        .count()
+    )
     return {
         "items": [
             _to_out(row, run_by_trace.get(str(row.trace_id or ""))).model_dump()
@@ -145,9 +159,17 @@ def list_notifications(
 
 
 @router.get("/{nid}", response_model=NotificationDetailOut)
-def get_notification_detail(nid: int, db: Session = Depends(get_db)):
-    """读取通知及其 trace_id 关联的 Agent 完整执行结果。"""
-    notification = db.query(Notification).filter(Notification.id == nid).first()
+def get_notification_detail(
+    nid: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """S4(2026-08-23): 仅返回当前用户的通知详情; 否则 404 防账号探测。"""
+    notification = (
+        db.query(Notification)
+        .filter(Notification.id == nid, Notification.user_id == user.id)
+        .first()
+    )
     if not notification:
         raise HTTPException(status_code=404, detail="通知不存在")
 
@@ -178,8 +200,17 @@ def get_notification_detail(nid: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{nid}/read")
-def mark_read(nid: int, db: Session = Depends(get_db)):
-    n = db.query(Notification).filter(Notification.id == nid).first()
+def mark_read(
+    nid: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """S4(2026-08-23): 仅允许当前用户标记自己的通知为已读; 否则返回 ok=False 防账号探测。"""
+    n = (
+        db.query(Notification)
+        .filter(Notification.id == nid, Notification.user_id == user.id)
+        .first()
+    )
     if not n:
         return {"ok": False, "error": "not found"}
     if n.read_at is None:
@@ -189,11 +220,15 @@ def mark_read(nid: int, db: Session = Depends(get_db)):
 
 
 @router.post("/read-all")
-def mark_all_read(db: Session = Depends(get_db)):
+def mark_all_read(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """S4(2026-08-23): 仅标记当前用户的未读通知, 不影响其他账号。"""
     now = beijing_now_naive()
     cnt = (
         db.query(Notification)
-        .filter(Notification.read_at.is_(None))
+        .filter(Notification.read_at.is_(None), Notification.user_id == user.id)
         .update({Notification.read_at: now}, synchronize_session=False)
     )
     db.commit()
@@ -201,11 +236,14 @@ def mark_all_read(db: Session = Depends(get_db)):
 
 
 @router.delete("/clear")
-def clear_read(db: Session = Depends(get_db)):
-    """清空已读, 保留未读。"""
+def clear_read(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """S4(2026-08-23): 仅清空当前用户已读通知, 不影响其他账号。"""
     cnt = (
         db.query(Notification)
-        .filter(Notification.read_at.isnot(None))
+        .filter(Notification.read_at.isnot(None), Notification.user_id == user.id)
         .delete(synchronize_session=False)
     )
     db.commit()

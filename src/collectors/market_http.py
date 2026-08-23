@@ -64,6 +64,14 @@ def throttle(host_key: str, min_interval_s: float) -> None:
 
 
 # ── 统一同步 GET ─────────────────────────────────────────────────────────
+# 2026-08-23 修复(M-12): 默认 timeout 10s + retries=2 单次可拖到 ~42s,
+# 默认值太重 — 改为 timeout=6s / retries=1, 并引入 max_total_s 总预算封顶(默认 10s),
+# 超出预算直接抛显式异常,调用方标 "无数据"。这是 aud-20260823-frontend-collectors.md M-12 修复。
+_DEFAULT_TIMEOUT = 6.0
+_DEFAULT_RETRIES = 1
+_DEFAULT_MAX_TOTAL_S = 10.0
+
+
 def market_get(
     url: str,
     *,
@@ -71,10 +79,11 @@ def market_get(
     params: dict | None = None,
     headers: dict | None = None,
     min_interval_s: float = 0.0,
-    timeout: float = 10.0,
-    retries: int = 2,
+    timeout: float = _DEFAULT_TIMEOUT,
+    retries: int = _DEFAULT_RETRIES,
     backoff: float = 0.4,
     jitter: float = 0.25,
+    max_total_s: float = _DEFAULT_MAX_TOTAL_S,
     parse: str = "text",  # "text" | "json" | "content"
     encoding: str | None = None,  # 强制解码(如 "gbk")
     symbol: str = "",
@@ -84,14 +93,31 @@ def market_get(
     follow_redirects: bool = True,
     verify: bool = True,
 ) -> Any | None:
-    """按系统代理(env)+ host 节流 + 退避重试。成功返回解析结果,失败返回 None 并打带来源的日志。"""
+    """按系统代理(env)+ host 节流 + 退避重试。成功返回解析结果,失败返回 None 并打带来源的日志。
+
+    修复(M-12, 2026-08-23): 增加 max_total_s 总预算封顶, 避免重试叠加拖垮调度线程。
+    max_total_s <= 0 表示不限制。
+    """
     last_err: Any = None
+    deadline = None
+    if max_total_s and max_total_s > 0:
+        deadline = time.monotonic() + max_total_s
     for attempt in range(max(1, retries + 1)):
+        # 预算耗尽则中止后续重试,直接失败
+        if deadline is not None and time.monotonic() >= deadline:
+            break
         throttle(host_key, min_interval_s)
         try:
+            # 单次 timeout 也按剩余预算收紧,避免最后一次仍卡满 10s
+            per_attempt_timeout = timeout + attempt * 4
+            if deadline is not None:
+                remain = deadline - time.monotonic()
+                if remain <= 0:
+                    break
+                per_attempt_timeout = min(per_attempt_timeout, max(remain - 0.1, 0.5))
             with httpx.Client(
                 follow_redirects=follow_redirects,
-                timeout=timeout + attempt * 4,
+                timeout=per_attempt_timeout,
                 headers=headers,
                 trust_env=trust_env,
                 verify=verify,
@@ -108,8 +134,16 @@ def market_get(
                 return resp.text
         except Exception as e:
             last_err = e
+        # 下一次重试前也要看预算(避免 backoff 期间预算耗尽仍然空等)
         if attempt < retries:
-            time.sleep(backoff * (attempt + 1) + random.uniform(0, jitter))
+            sleep_for = backoff * (attempt + 1) + random.uniform(0, jitter)
+            if deadline is not None:
+                remain = deadline - time.monotonic()
+                if remain <= 0:
+                    break
+                sleep_for = min(sleep_for, max(remain - 0.1, 0.0))
+            if sleep_for > 0:
+                time.sleep(sleep_for)
 
     if last_err is not None:
         label = log_label or host_key

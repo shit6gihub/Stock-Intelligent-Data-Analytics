@@ -14,14 +14,15 @@ interface ShadowResult {
   report_pdf: string | null
 }
 
+// 修复(S-5, 2026-08-23): 原 fmt 对字符串数字直接 String(v) 返回, 大数字展示不利.
+// 改用 safeMoney 统一处理万/亿口径.
 function fmt(v: any, suffix = ''): string {
   if (v === null || v === undefined || v === '') return '--'
-  if (typeof v === 'number') {
-    if (Math.abs(v) >= 10000) return `${(v / 10000).toFixed(2)}万${suffix}`
-    if (Math.abs(v) >= 100) return v.toFixed(2) + suffix
-    return String(v) + suffix
-  }
-  return String(v) + suffix
+  const n = typeof v === 'number' ? v : Number(v)
+  if (!Number.isFinite(n)) return '--'
+  if (Math.abs(n) >= 10000) return `${(n / 10000).toFixed(2)}万${suffix}`
+  if (Math.abs(n) >= 100) return n.toFixed(2) + suffix
+  return String(n) + suffix
 }
 
 // rules 元素可能是 ShadowRule 对象(含 human_text)或历史字符串, 统一取人话文本。
@@ -93,15 +94,56 @@ export default function ShadowAccountPage() {
     }
   }
 
+  // 修复(S-2, 2026-08-23): 旧实现用 document.write 把服务器 HTML 写进新窗口,
+  // 新窗口同源 → 可读 parent document.localStorage.token, 形成 XSS→JWT 穿透链路.
+  // 改为 blob URL + sandbox iframe: 没有 origin, 没有 storage access, 即便 HTML
+  // 含恶意脚本也只能在隔离环境跑, 拿不到 token. 打印/下载按钮在 sandbox 内仍可用.
   const openReportHtml = async () => {
     if (!result) return
     try {
       const token = localStorage.getItem('token') || ''
       const resp = await fetch(result.report_html, { headers: { Authorization: `Bearer ${token}` } })
       const html = await resp.text()
+      // 1) 优先 blob URL 路径 — 在新窗口用 sandbox iframe 渲染, 内层 document 完全隔离.
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
+      const blobUrl = URL.createObjectURL(blob)
       const w = window.open('', '_blank')
-      if (w) { w.document.write(html); w.document.close() }
-    } catch { window.open(result.report_html, '_blank') }
+      if (!w) {
+        // 弹窗被拦截, 直接回退到新标签打开(用报告 URL, 走授权头失败再回退原 URL)
+        window.open(result.report_html, '_blank')
+        return
+      }
+      // 2) 在新窗口里写一段最小 HTML, 嵌入 sandbox iframe (不含 allow-same-origin,
+      //    保证内层 iframe 拿不到 parent.localStorage / cookies).
+      const safeWrapper = `<!doctype html><html><head><meta charset="utf-8"><title>影子账户报告</title>
+<style>html,body{margin:0;padding:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif;background:#f7f8fa}
+.toolbar{position:fixed;top:0;left:0;right:0;height:40px;background:#fff;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;gap:8px;padding:0 12px;z-index:10;font-size:12px}
+.toolbar a{color:#2563eb;text-decoration:none;padding:4px 10px;border-radius:4px;border:1px solid #e5e7eb}
+.toolbar a:hover{background:#f3f4f6}
+.frame-host{position:absolute;top:40px;left:0;right:0;bottom:0;border:0}
+iframe{width:100%;height:100%;border:0}
+</style>
+</head><body>
+<div class="toolbar">
+  <span>🔒 隔离沙箱内渲染的报告(不可访问上层存储)</span>
+  <a href="${result.report_html}" target="_self">在新窗口打开原始链接</a>
+  <a href="${blobUrl}" target="_self" download="shadow-report-${result.shadow_id}.html">下载 HTML</a>
+  <a href="${result.report_pdf || '#'}" target="_blank">下载 PDF</a>
+</div>
+<iframe class="frame-host" sandbox="allow-scripts" src="${blobUrl}"></iframe>
+</body></html>`
+      w.document.open()
+      w.document.write(safeWrapper)
+      w.document.close()
+      // blob URL 在父进程保留期间一直有效, 用户关闭子窗口后回收.
+      w.addEventListener?.('beforeunload', () => {
+        try { URL.revokeObjectURL(blobUrl) } catch (e) { /* ignore */ }
+      })
+    } catch {
+      // 最终 fallback: 浏览器原生打开原始 URL(走 cookie / Authorization 头时已失效,
+      // 用户需自行登录后查看 — 与原行为一致).
+      window.open(result.report_html, '_blank')
+    }
   }
 
   const downloadPdf = async () => {
@@ -186,7 +228,13 @@ export default function ShadowAccountPage() {
               <StatCard
                 icon={Target}
                 label="胜率"
-                value={myProfile.total_roundtrips ? `${((myProfile.profitable_roundtrips / myProfile.total_roundtrips) * 100).toFixed(0)}%` : '--'}
+                value={(() => {
+                  // 修复(M-8, 2026-08-23): 三元保护防除零与字符串数字
+                  const total = Number(myProfile.total_roundtrips)
+                  const win = Number(myProfile.profitable_roundtrips)
+                  if (!Number.isFinite(total) || !Number.isFinite(win) || total === 0) return '--'
+                  return `${((win / total) * 100).toFixed(0)}%`
+                })()}
                 color="text-violet-500"
               />
               <StatCard
@@ -265,7 +313,12 @@ export default function ShadowAccountPage() {
               </h2>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <StatCard icon={Activity} label="总交易回合" value={fmt(result.profile.total_roundtrips)} color="text-blue-500" />
-                <StatCard icon={CheckCircle2} label="盈利回合" value={fmt(result.profile.profitable_roundtrips)} sub={result.profile.total_roundtrips ? `胜率 ${((result.profile.profitable_roundtrips / result.profile.total_roundtrips) * 100).toFixed(0)}%` : undefined} color="text-emerald-700 dark:text-emerald-500" />
+                <StatCard icon={CheckCircle2} label="盈利回合" value={fmt(result.profile.profitable_roundtrips)} sub={(() => {
+                  const total = Number(result.profile.total_roundtrips)
+                  const win = Number(result.profile.profitable_roundtrips)
+                  if (!Number.isFinite(total) || !Number.isFinite(win) || total === 0) return undefined
+                  return `胜率 ${((win / total) * 100).toFixed(0)}%`
+                })()} color="text-emerald-700 dark:text-emerald-500" />
                 <StatCard icon={Activity} label="平均持有时长" value={fmt(result.profile.typical_holding_days, '天')} color="text-violet-500" />
                 <StatCard icon={Target} label="偏好市场" value={(result.profile.preferred_markets || []).join(', ') || '--'} color="text-amber-500" />
               </div>

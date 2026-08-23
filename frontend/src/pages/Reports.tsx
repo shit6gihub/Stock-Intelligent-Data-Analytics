@@ -8,7 +8,9 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import ErrorBanner from '@/components/ErrorBanner'
 
-function formatBytes(n: number): string {
+// 修复(S-5, 2026-08-23): PG DECIMAL → 字符串后 .toFixed 抛 TypeError. 改 safe 包装.
+function formatBytes(n: unknown): string {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return '--'
   if (n < 1024) return `${n}B`
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`
   return `${(n / 1024 / 1024).toFixed(1)}MB`

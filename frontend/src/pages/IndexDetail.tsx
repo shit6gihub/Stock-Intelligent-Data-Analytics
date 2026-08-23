@@ -6,6 +6,7 @@ import { Button } from '@panwatch/base-ui/components/ui/button'
 import InteractiveKline from '@panwatch/biz-ui/components/InteractiveKline'
 import ErrorBanner from '@/components/ErrorBanner'
 import { describeApiError } from '@/lib/api-error'
+import { safeFixed, safeNum, safeNetInflow } from '@/lib/format'
 
 interface MarketFlow {
   total_main_flow?: number
@@ -131,17 +132,17 @@ export default function IndexDetailPage() {
           <div className="card p-4">
             <div className="flex items-end gap-4 flex-wrap">
               <div>
-                <div className="text-3xl font-num font-bold tabular-nums">{q?.current_price?.toFixed(2) ?? '--'}</div>
+                <div className="text-3xl font-num font-bold tabular-nums">{safeFixed(q?.current_price)}</div>
                 <div className={`text-sm font-num tabular-nums ${up ? 'text-red-600' : 'text-green-700'}`}>
-                  {q?.change_amount != null && q.change_amount > 0 ? '+' : ''}{q?.change_amount?.toFixed(2)} ({q?.change_pct?.toFixed(2)}%)
+                  {safeNum(q?.change_amount) !== null && Number(q?.change_amount) > 0 ? '+' : ''}{safeFixed(q?.change_amount)} ({safeFixed(q?.change_pct)}%)
                 </div>
               </div>
               <div className="flex gap-6 text-sm text-muted-foreground">
-                <div><span className="block text-[10px]">昨收</span><span className="font-mono text-foreground tabular-nums">{q?.prev_close?.toFixed(2) ?? '--'}</span></div>
-                <div><span className="block text-[10px]">今开</span><span className="font-mono text-foreground tabular-nums">{q?.open?.toFixed(2) ?? '--'}</span></div>
-                <div><span className="block text-[10px]">最高</span><span className="font-mono text-foreground tabular-nums">{q?.high?.toFixed(2) ?? '--'}</span></div>
-                <div><span className="block text-[10px]">最低</span><span className="font-mono text-foreground tabular-nums">{q?.low?.toFixed(2) ?? '--'}</span></div>
-                <div><span className="block text-[10px]">成交量</span><span className="font-mono text-foreground tabular-nums">{q?.volume != null ? (q.volume / 1e8).toFixed(2) + '亿' : '--'}</span></div>
+                <div><span className="block text-[10px]">昨收</span><span className="font-mono text-foreground tabular-nums">{safeFixed(q?.prev_close)}</span></div>
+                <div><span className="block text-[10px]">今开</span><span className="font-mono text-foreground tabular-nums">{safeFixed(q?.open)}</span></div>
+                <div><span className="block text-[10px]">最高</span><span className="font-mono text-foreground tabular-nums">{safeFixed(q?.high)}</span></div>
+                <div><span className="block text-[10px]">最低</span><span className="font-mono text-foreground tabular-nums">{safeFixed(q?.low)}</span></div>
+                <div><span className="block text-[10px]">成交量</span><span className="font-mono text-foreground tabular-nums">{q?.volume != null && Number.isFinite(Number(q.volume)) ? safeFixed(Number(q.volume) / 1e8) + '亿' : '--'}</span></div>
               </div>
             </div>
           </div>
@@ -168,14 +169,14 @@ export default function IndexDetailPage() {
                 <div className="flex items-center gap-4 text-[12px]">
                   <span className="text-muted-foreground">主力净流入
                     <b className={`font-mono ${(marketFlow.total_main_flow ?? 0) >= 0 ? 'text-red-600' : 'text-green-700'}`}>
-                      {(marketFlow.total_main_flow ?? 0) >= 0 ? '+' : ''}{(marketFlow.total_main_flow ?? 0).toFixed(1)}亿
+                      {safeNetInflow(marketFlow.total_main_flow)}
                     </b>
                   </span>
-                  <span className="text-muted-foreground">成交额 <b className="font-mono">{(marketFlow.total_amount ?? 0).toFixed(0)}亿</b></span>
+                  <span className="text-muted-foreground">成交额 <b className="font-mono">{safeNum(marketFlow.total_amount) !== null ? `${(marketFlow.total_amount!).toFixed(0)}亿` : '--'}</b></span>
                   <span className="text-muted-foreground">涨 <b className="text-red-600 font-mono">{marketFlow.up_count ?? '--'}</b>
                     <span className="mx-1">/</span>跌 <b className="text-green-700 font-mono">{marketFlow.down_count ?? '--'}</b></span>
-                  <span className="text-muted-foreground">沪 <b className="font-mono">{(marketFlow.sh_flow ?? 0).toFixed(1)}亿</b>
-                    <span className="mx-1">/</span>深 <b className="font-mono">{(marketFlow.sz_flow ?? 0).toFixed(1)}亿</b></span>
+                  <span className="text-muted-foreground">沪 <b className="font-mono">{safeNum(marketFlow.sh_flow) !== null ? `${(marketFlow.sh_flow!).toFixed(1)}亿` : '--'}</b>
+                    <span className="mx-1">/</span>深 <b className="font-mono">{safeNum(marketFlow.sz_flow) !== null ? `${(marketFlow.sz_flow!).toFixed(1)}亿` : '--'}</b></span>
                 </div>
               </div>
 
@@ -189,7 +190,7 @@ export default function IndexDetailPage() {
                         {marketFlow.inflow_boards.map(b => (
                           <div key={b.name} className="flex justify-between text-[11px]">
                             <span className="text-muted-foreground truncate">{b.name}</span>
-                            <span className="font-mono text-red-600">+{b.net_inflow.toFixed(1)}亿</span>
+                            <span className="font-mono text-red-600">{safeNum(b.net_inflow) !== null ? `+${Number(b.net_inflow).toFixed(1)}亿` : '--'}</span>
                           </div>
                         ))}
                       </div>
@@ -202,7 +203,7 @@ export default function IndexDetailPage() {
                         {marketFlow.outflow_boards.map(b => (
                           <div key={b.name} className="flex justify-between text-[11px]">
                             <span className="text-muted-foreground truncate">{b.name}</span>
-                            <span className="font-mono text-green-700">{b.net_inflow.toFixed(1)}亿</span>
+                            <span className="font-mono text-green-700">{safeNum(b.net_inflow) !== null ? `${Number(b.net_inflow).toFixed(1)}亿` : '--'}</span>
                           </div>
                         ))}
                       </div>

@@ -857,9 +857,19 @@ class IntradayMonitorAgent(BaseAgent):
         """构建盘中分析 Prompt"""
         system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
 
-        # 辅助函数：安全获取数值，None 转为默认值
+        # 辅助函数(2026-08-23 M6 升级): None/NaN/Inf/字符串/异常 → 返回 default,
+        # 非法值不再原样透传给后续 /1e4 等运算触发 TypeError。default 默认 0 与旧实现一致。
+        import math
         def safe_num(value, default=0):
-            return value if value is not None else default
+            if value is None:
+                return default
+            try:
+                f = float(value)
+            except (TypeError, ValueError):
+                return default
+            if math.isnan(f) or math.isinf(f):
+                return default
+            return f
 
         def format_num(value, precision=2):
             if value is None:
@@ -1356,7 +1366,7 @@ class IntradayMonitorAgent(BaseAgent):
                         net_dir = "净买入" if net > 0 else ("净卖出" if net < 0 else "平衡")
                         lines.append(
                             f"- 大单分档统计：{len(stats)}档，最大单(档1)单数{t1['count']}笔/金额{t1['amount_wan']:.0f}万({t1_dir})，"
-                            f"全档合计{net_dir}{abs(net) / 1e4:.0f}万股"
+                            f"全档合计{net_dir}{abs(net) / 1e4:.0f}万元"
                         )
                 except Exception as e:
                     logger.debug(f"盘口大单面板获取失败(不影响资金面): {e}")
@@ -1754,6 +1764,15 @@ class IntradayMonitorAgent(BaseAgent):
         if try_parse_action_json(raw_content) or self._try_parse_loose_json(raw_content):
             content = self._format_human_readable_content(stock, suggestion, raw_content)
 
+        # M3(2026-08-23): 提取触发用户 UUID 喂给建议池, 多账号各自决策互不干扰
+        _user_id = None
+        try:
+            _ctx_user = getattr(context, "user", None)
+            if _ctx_user is not None:
+                _user_id = getattr(_ctx_user, "id", None)
+        except Exception:
+            _user_id = None
+
         # 保存到建议池（包含 prompt 上下文）
         save_suggestion(
             stock_symbol=stock.symbol,
@@ -1768,6 +1787,7 @@ class IntradayMonitorAgent(BaseAgent):
             prompt_context=user_content,  # 保存 prompt 上下文
             ai_response=raw_content,  # 保存 AI 原始响应
             stock_market=stock.market.value,
+            user_id=_user_id,
             meta={
                 "quote": {
                     "current_price": stock.current_price,

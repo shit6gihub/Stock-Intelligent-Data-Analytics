@@ -81,11 +81,18 @@ class TestLLMAdapter(unittest.TestCase):
             )
 
     def test_inject_api_key_env(self):
-        """API key 注入到环境变量 — OPENAI_API_KEY 被设置"""
+        """API key 注入到环境变量 — 只注入当前 provider(OPENROUTER), 其余 vendor env 清空"""
         import os
+        # 预置污染值, 验证注入后会被正确清空
+        os.environ["OPENAI_API_KEY"] = "stale-openai"
+        os.environ["DEEPSEEK_API_KEY"] = "stale-deepseek"
         ai_client = MagicMock(api_key="sk-test-key")
         inject_api_key_env(ai_client)
-        self.assertEqual(os.environ.get("OPENAI_API_KEY"), "sk-test-key")
+        self.assertEqual(os.environ.get("OPENROUTER_API_KEY"), "sk-test-key")
+        self.assertIsNone(os.environ.get("OPENAI_API_KEY"))
+        self.assertIsNone(os.environ.get("DEEPSEEK_API_KEY"))
+        # 清空本测试注入的 key, 避免污染后续测试
+        os.environ.pop("OPENROUTER_API_KEY", None)
 
 
 # ============================================================================

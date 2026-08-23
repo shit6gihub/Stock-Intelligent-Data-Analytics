@@ -141,14 +141,44 @@ async def _fetch_batch_quotes(groups: dict[str, list[str]]) -> dict:
     return out
 
 
+async def _extract_ws_token(websocket) -> tuple[str, str]:
+    """从 Sec-WebSocket-Protocol 头或 ?token= query 提取 JWT。
+
+    P1-11 (2026-08-23 审计): 优先级 Sec-WebSocket-Protocol > ?token=。
+    返回 (token, swp_subprotocol_or_empty); swp 非空时需在 accept() 回声子协议。
+    """
+    # 1) Sec-WebSocket-Protocol 头(推荐, 不进 URL/access log)
+    swp = websocket.headers.get("sec-websocket-protocol", "")
+    if swp:
+        parts = [p.strip() for p in swp.split(",") if p.strip()]
+        for i, p in enumerate(parts):
+            if p == "panwatch.auth.bearer" and i + 1 < len(parts):
+                return parts[i + 1], ("panwatch.auth.bearer" if "panwatch.auth.bearer" in parts else parts[0])
+        # 没有标记 → 整串当 token
+        if parts:
+            return parts[-1], parts[0]
+    # 2) ?token= query(向后兼容桌面 App)
+    qtoken = websocket.query_params.get("token", "")
+    return qtoken, ""
+
+
 async def websocket_quote_handler(websocket):
     """WebSocket 端点实现: 连接后持续推送行情帧。
 
     2026-08-12 auth: 路由级 HTTPBearer 对 WS 握手 500, 这里从 query 取 token 自校验。
     前端连 ws://host/api/quotes/ws?token=<jwt>。
+
+    P1-11 (2026-08-23 审计): 保留 ?token= 向后兼容(桌面 App 依赖), 同时推荐
+    `Sec-WebSocket-Protocol: panwatch.auth.bearer, <jwt>` 方式携带 token
+    (避免 nginx/access log 记录 JWT)。优先级: Sec-WebSocket-Protocol > ?token=。
+    客户端示例:
+        new WebSocket(url, ["panwatch.auth.bearer", "<jwt>"])  // 推荐
+        new WebSocket(`${url}?token=${jwt}`)                    // 兼容旧客户端
     """
+    token = ""
+    swp_sub = ""
     try:
-        token = websocket.query_params.get("token", "")
+        token, swp_sub = await _extract_ws_token(websocket)
         from src.web.api.auth import decode_token
         if not token or not decode_token(token):
             await websocket.close(code=4401, reason="unauthorized")
@@ -159,6 +189,18 @@ async def websocket_quote_handler(websocket):
         except Exception:
             pass
         return
+
+    if swp_sub:
+        await websocket.accept(subprotocol=swp_sub)
+    else:
+        await websocket.accept()
+    sid, q = subscribe()
+    try:
+        while True:
+            payload = await q.get()
+            await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+    except Exception:
+        pass
 
     await websocket.accept()
     sid, q = subscribe()

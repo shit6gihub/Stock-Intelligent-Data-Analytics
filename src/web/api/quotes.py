@@ -172,8 +172,20 @@ async def get_company_info(symbol: str, market: str = "CN"):
             except Exception:
                 pass
         if not token:
+            # P0-2 (2026-08-23 审计): 删除硬编码 UUID fallback, 必须显式配置 ZHITU_TOKEN
+            # (池化/DB 都没拿到时)。startup_check 启动期会告警;此处不再 fallback 任何值。
             import os
-            token = os.environ.get("ZHITU_TOKEN", "E0E16C43-9272-4DAB-800C-178694F2D4B1")
+            token = os.environ.get("ZHITU_TOKEN", "")
+            if not token:
+                logger.warning(
+                    "ZHITU_TOKEN 未配置, 公司简介接口返回空数据。"
+                    "请设置环境变量 ZHITU_TOKEN 或在设置页/池化中配置 zhitu_token。"
+                )
+                return {
+                    "symbol": symbol, "market": market, "name": None, "industry": None,
+                    "area": None, "market_board": None, "list_status": None,
+                    "note": "ZHITU_TOKEN 未配置, 无法获取公司信息",
+                }
 
         url = f"https://api.zhituapi.com/hs/gs/gsjj/{symbol}?token={token}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})

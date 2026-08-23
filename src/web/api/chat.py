@@ -2569,8 +2569,11 @@ def suggested_questions(
 def create_conversation(
     body: CreateConversationBody | None = None,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
+    """S2(2026-08-23): 新建会话写入 user_id, 多账号各自只看到自己的会话。"""
     conv = ChatConversation(
+        user_id=user.id,
         stock_symbol=body.stock_symbol if body else None,
         stock_market=body.stock_market if body else None,
         initial_context=body.initial_context if body else None,
@@ -2592,9 +2595,12 @@ def create_conversation(
 def list_conversations(
     limit: int = Query(30, ge=1, le=100),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
+    """S2: 仅返回当前用户的会话; 缺失则返回空列表(空数据 ≠ 跨账号泄露)。"""
     rows = (
         db.query(ChatConversation)
+        .filter(ChatConversation.user_id == user.id)
         .order_by(ChatConversation.updated_at.desc())
         .limit(limit)
         .all()
@@ -2612,8 +2618,20 @@ def list_conversations(
 
 
 @router.get("/conversations/{conversation_id}")
-def get_conversation(conversation_id: int, db: Session = Depends(get_db)):
-    conv = db.query(ChatConversation).filter(ChatConversation.id == conversation_id).first()
+def get_conversation(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """S2: 仅返回当前用户的对话; 否则 404(防账号探测)。"""
+    conv = (
+        db.query(ChatConversation)
+        .filter(
+            ChatConversation.id == conversation_id,
+            ChatConversation.user_id == user.id,
+        )
+        .first()
+    )
     if not conv:
         raise HTTPException(404, "对话不存在")
     messages = (
@@ -2643,8 +2661,20 @@ def get_conversation(conversation_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/conversations/{conversation_id}")
-def delete_conversation(conversation_id: int, db: Session = Depends(get_db)):
-    conv = db.query(ChatConversation).filter(ChatConversation.id == conversation_id).first()
+def delete_conversation(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """S2: 仅当前用户可删除对话; 否则 404(防账号探测)。"""
+    conv = (
+        db.query(ChatConversation)
+        .filter(
+            ChatConversation.id == conversation_id,
+            ChatConversation.user_id == user.id,
+        )
+        .first()
+    )
     if not conv:
         raise HTTPException(404, "对话不存在")
     db.query(ChatMessage).filter(ChatMessage.conversation_id == conversation_id).delete()
@@ -2659,10 +2689,20 @@ async def send_message(
     body: SendMessageBody,
     user: User = Depends(get_current_user),
 ):
-    """发送消息并获取 AI 回复（非流式，向后兼容）。"""
+    """发送消息并获取 AI 回复（非流式，向后兼容）。
+
+    S2(2026-08-23): 仅允许当前用户向自己的对话发消息; 越权访问返回 404 防账号探测。
+    """
     db = SessionLocal()
     try:
-        conv = db.query(ChatConversation).filter(ChatConversation.id == conversation_id).first()
+        conv = (
+            db.query(ChatConversation)
+            .filter(
+                ChatConversation.id == conversation_id,
+                ChatConversation.user_id == user.id,
+            )
+            .first()
+        )
         if not conv:
             raise HTTPException(404, "对话不存在")
 
@@ -2745,7 +2785,14 @@ async def send_message_stream(
     async def gen():
         db = SessionLocal()
         try:
-            conv = db.query(ChatConversation).filter(ChatConversation.id == conversation_id).first()
+            conv = (
+                db.query(ChatConversation)
+                .filter(
+                    ChatConversation.id == conversation_id,
+                    ChatConversation.user_id == user.id,
+                )
+                .first()
+            )
             if not conv:
                 yield _sse_event("error", {"message": "对话不存在"})
                 return

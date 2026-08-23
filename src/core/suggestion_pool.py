@@ -58,7 +58,14 @@ def save_suggestion(
     ai_response: str = "",
     stock_market: str = "CN",
     meta: dict | None = None,
+    user_id: str | None = None,
 ) -> bool:
+    """
+    M2(2026-08-23): 增加 user_id 维度。
+    - 同一标的在不同账号下可分别存建议(不同账号决策互不干扰)
+    - dedupe key 加 user_id: (user_id, stock_symbol, stock_market, agent_name)
+    - 旧数据 user_id=NULL 与新建 user_id=某值 视为不同账号 → 不会触发误 dedupe
+    """
     """
     保存 Agent 建议到建议池
 
@@ -93,8 +100,7 @@ def save_suggestion(
         if not agent_label:
             agent_label = AGENT_LABELS.get(agent_name, agent_name)
 
-        # Dedupe: if the latest suggestion from the same agent is essentially the same,
-        # do not create a new row. This prevents "AI 建议反复" in the UI.
+        # Dedupe(2026-08-23 M2): key 加 user_id 维度, 不同账号互不吞建议。
         try:
             latest = (
                 db.query(StockSuggestion)
@@ -102,6 +108,10 @@ def save_suggestion(
                     StockSuggestion.stock_symbol == stock_symbol,
                     StockSuggestion.stock_market == market,
                     StockSuggestion.agent_name == agent_name,
+                    # user_id 维度过滤:None 与具体值严格区分(避免旧数据被新账号 dedupe 掉)
+                    StockSuggestion.user_id.is_(None)
+                    if user_id is None
+                    else StockSuggestion.user_id == user_id,
                 )
                 .order_by(StockSuggestion.created_at.desc(), StockSuggestion.id.desc())
                 .first()
@@ -121,8 +131,17 @@ def save_suggestion(
 
                 if same_key and (now - latest_created) <= window:
                     # Extend expiry (keep the first message to avoid churn).
-                    if not latest.expires_at or latest.expires_at < expires_at:
-                        latest.expires_at = expires_at
+                    # 注意(2026-08-23 bug fix): latest.expires_at 可能 naive(SQLite 默认无 tz),
+                    # expires_at 是 tz-aware(utc_now()), 直接比较抛 TypeError 被 except 吞掉,
+                    # 反而走到"创建新建议"路径导致 dedupe 失效。统一转为 naive UTC 再比较。
+                    cur_exp = latest.expires_at
+                    if cur_exp is not None and cur_exp.tzinfo is not None:
+                        cur_exp_naive = cur_exp.replace(tzinfo=None)
+                    else:
+                        cur_exp_naive = cur_exp
+                    new_exp_naive = expires_at.replace(tzinfo=None) if expires_at.tzinfo else expires_at
+                    if not cur_exp_naive or cur_exp_naive < new_exp_naive:
+                        latest.expires_at = new_exp_naive
                     if not (latest.stock_name or "") and stock_name:
                         latest.stock_name = stock_name
                     db.commit()
@@ -150,8 +169,14 @@ def save_suggestion(
                     )
                     if (now - latest_created) <= change_window and new_r < old_r:
                         # Keep the previous (more severe) action; extend expiry.
-                        if not latest.expires_at or latest.expires_at < expires_at:
-                            latest.expires_at = expires_at
+                        cur_exp = latest.expires_at
+                        if cur_exp is not None and cur_exp.tzinfo is not None:
+                            cur_exp_naive = cur_exp.replace(tzinfo=None)
+                        else:
+                            cur_exp_naive = cur_exp
+                        new_exp_naive = expires_at.replace(tzinfo=None) if expires_at.tzinfo else expires_at
+                        if not cur_exp_naive or cur_exp_naive < new_exp_naive:
+                            latest.expires_at = new_exp_naive
                         if not (latest.stock_name or "") and stock_name:
                             latest.stock_name = stock_name
                         db.commit()
@@ -167,6 +192,7 @@ def save_suggestion(
 
         # 创建新建议
         suggestion = StockSuggestion(
+            user_id=user_id,
             stock_symbol=stock_symbol,
             stock_market=market,
             stock_name=stock_name,

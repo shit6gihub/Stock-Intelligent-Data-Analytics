@@ -1813,6 +1813,233 @@ ON stocks (symbol, market) WHERE user_id IS NULL
         )
 
 
+def _resolve_earliest_owner_user_id(conn: Connection) -> str | None:
+    """查询最早创建的 owner 用户 id(UUID, String(36))。
+
+    用于把迁移前的存量行(没有 user_id 的)归属到管理员, 避免空指针查询。
+    返回 None 表示当前还没有 owner 用户(冷启动场景, 把存量行继续保留 NULL)。
+    """
+    if not _has_table(conn, "users"):
+        return None
+    if _dialect_is_pg(conn):
+        row = conn.execute(
+            text(
+                """
+SELECT id FROM users
+WHERE role = 'owner' AND is_active = TRUE
+ORDER BY created_at ASC, id ASC
+LIMIT 1
+"""
+            )
+        ).first()
+    else:
+        row = conn.execute(
+            text(
+                """
+SELECT id FROM users
+WHERE role = 'owner' AND is_active = 1
+ORDER BY created_at ASC, id ASC
+LIMIT 1
+"""
+            )
+        ).first()
+    if not row:
+        return None
+    try:
+        return str(row[0])
+    except Exception:
+        return None
+
+
+def _m122_user_id_columns_chat_notif_suggestion(conn: Connection) -> None:
+    """S1/S2/S4/M2: chat_conversations / notifications / stock_suggestions 加 user_id。
+
+    - 列类型: String(36), 索引, nullable=True
+    - 存量行(无 user_id)全部回填到最早的 owner 用户
+    - 幂等可重跑
+    """
+    owner_id = _resolve_earliest_owner_user_id(conn)
+    targets = [
+        ("chat_conversations", "ix_chat_conv_user", "created_at"),
+        ("notifications", "ix_notifications_user", "created_at"),
+        ("stock_suggestions", "ix_stock_suggestions_user", "created_at"),
+    ]
+    for table, idx_name, order_col in targets:
+        if not _has_table(conn, table):
+            continue
+        _add_column_if_missing(
+            conn,
+            table,
+            "user_id",
+            f"ALTER TABLE {table} ADD COLUMN user_id TEXT",
+        )
+        # 索引(可选加速按用户过滤的 list/detail/delete 端点)
+        _create_index_if_missing(
+            conn,
+            idx_name,
+            f"CREATE INDEX {idx_name} ON {table}(user_id, {order_col})",
+        )
+        # 存量行回填到最早 owner
+        if owner_id:
+            conn.execute(
+                text(f"UPDATE {table} SET user_id = :uid WHERE user_id IS NULL OR TRIM(user_id) = ''"),
+                {"uid": owner_id},
+            )
+    # analysis_history 已有 user_id 列(model 声明), 补一个复合索引加速按用户 + 列表查询
+    if _has_table(conn, "analysis_history"):
+        _create_index_if_missing(
+            conn,
+            "ix_analysis_history_user_date",
+            "CREATE INDEX ix_analysis_history_user_date ON analysis_history(user_id, analysis_date)",
+        )
+
+
+def _m123_user_id_on_price_alerts(conn: Connection) -> None:
+    """S3: price_alert_rules 加 user_id。
+
+    - 列类型: String(36), 索引, nullable=True
+    - 存量行(无 user_id)全部回填到最早的 owner 用户
+    - 幂等可重跑
+    """
+    owner_id = _resolve_earliest_owner_user_id(conn)
+    if not _has_table(conn, "price_alert_rules"):
+        return
+    _add_column_if_missing(
+        conn,
+        "price_alert_rules",
+        "user_id",
+        "ALTER TABLE price_alert_rules ADD COLUMN user_id TEXT",
+    )
+    _create_index_if_missing(
+        conn,
+        "ix_price_alert_user",
+        "CREATE INDEX ix_price_alert_user ON price_alert_rules(user_id, updated_at)",
+    )
+    if owner_id:
+        conn.execute(
+            text(
+                "UPDATE price_alert_rules SET user_id = :uid WHERE user_id IS NULL OR TRIM(user_id) = ''"
+            ),
+            {"uid": owner_id},
+        )
+
+
+def _m124_analysis_history_user_id_unique(conn: Connection) -> None:
+    """S1/M3(2026-08-23): 重建 analysis_history UNIQUE 约束, 加入 user_id 维度。
+
+    背景: 原 UniqueConstraint("agent_name", "stock_symbol", "analysis_date") 不含 user_id,
+    多账号并存下同一 (agent, stock, date) 只能存一条, 用户 B 的报告会触发 IntegrityError 失败。
+    新约束: (agent_name, stock_symbol, analysis_date, user_id) — 多账号各自独立存,
+    user_id=NULL 的旧数据/系统报告继续保留 NULL 共享语义(SQLite/PG 都允许 NULL 与 NULL 不比较)。
+
+    SQLite 限制: 不能 ALTER UNIQUE 约束, 只能重建表。本迁移:
+    1. 检测旧索引 uq_agent_stock_date 是否存在
+    2. 若不存在 (已是新约束或全新库), 跳过
+    3. 否则: 备份全表 → DROP → CREATE(新约束) → 恢复 → 重建索引
+    PG 限制: PG 支持 DROP CONSTRAINT IF EXISTS, 走 ALTER TABLE ... DROP CONSTRAINT,
+    不需要重建表。
+    """
+    if not _has_table(conn, "analysis_history"):
+        return
+
+    if _dialect_is_pg(conn):
+        # PG: 直接 DROP CONSTRAINT + ADD CONSTRAINT
+        conn.execute(
+            text(
+                "ALTER TABLE analysis_history DROP CONSTRAINT IF EXISTS uq_agent_stock_date"
+            )
+        )
+        conn.execute(
+            text(
+                """
+ALTER TABLE analysis_history
+ADD CONSTRAINT uq_agent_stock_date_user UNIQUE (agent_name, stock_symbol, analysis_date, user_id)
+"""
+            )
+        )
+        return
+
+    # SQLite: 检测表 schema 中是否包含旧 UNIQUE 约束
+    # SQLite 把 UNIQUE 约束存在表定义里, 自动建 sqlite_autoindex_* 索引,
+    # 所以查 sqlite_master 的 'index' type 找不到 uq_agent_stock_date 名字。
+    schema_row = conn.execute(
+        text(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='analysis_history'"
+        )
+    ).first()
+    schema_sql = str(schema_row[0]) if schema_row else ""
+    # 已是新约束则跳过(幂等)
+    if "uq_agent_stock_date_user" in schema_sql:
+        return
+    # 没有旧约束(全新库或已重建过)→ 只需建新约束? 简化: 直接退出
+    if "uq_agent_stock_date" not in schema_sql:
+        # 全新表场景: 由 create_all 处理, 不必手动加
+        return
+
+    # 重建 analysis_history 表
+    # 1. 重命名旧表
+    conn.execute(text("ALTER TABLE analysis_history RENAME TO _m124_analysis_history_old"))
+    # 2. 建新表(沿用 models.py 列定义, 新 UNIQUE)
+    conn.execute(
+        text(
+            """
+CREATE TABLE analysis_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id VARCHAR(36),
+    agent_name VARCHAR NOT NULL,
+    stock_symbol VARCHAR NOT NULL,
+    analysis_date VARCHAR NOT NULL,
+    title VARCHAR DEFAULT '',
+    content TEXT NOT NULL,
+    raw_data TEXT DEFAULT '{}',
+    agent_kind_snapshot VARCHAR DEFAULT 'workflow',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_agent_stock_date_user UNIQUE (agent_name, stock_symbol, analysis_date, user_id)
+)
+"""
+        )
+    )
+    # 3. 拷贝数据(JSON 列若是 TEXT, JSON 字符串原样复制)
+    conn.execute(
+        text(
+            """
+INSERT INTO analysis_history
+  (id, user_id, agent_name, stock_symbol, analysis_date, title, content, raw_data, agent_kind_snapshot, created_at, updated_at)
+SELECT
+  id, user_id, agent_name, stock_symbol, analysis_date,
+  COALESCE(title, ''), content,
+  COALESCE(raw_data, '{}'), COALESCE(agent_kind_snapshot, 'workflow'),
+  COALESCE(created_at, CURRENT_TIMESTAMP), COALESCE(updated_at, CURRENT_TIMESTAMP)
+FROM _m124_analysis_history_old
+"""
+        )
+    )
+    # 4. 删旧表
+    conn.execute(text("DROP TABLE _m124_analysis_history_old"))
+    # 5. 重建索引(v105/v122 创建的)
+    _create_index_if_missing(
+        conn,
+        "ix_analysis_history_kind_date",
+        "CREATE INDEX ix_analysis_history_kind_date ON analysis_history(agent_kind_snapshot, analysis_date)",
+    )
+    _create_index_if_missing(
+        conn,
+        "ix_analysis_history_agent_updated",
+        "CREATE INDEX ix_analysis_history_agent_updated ON analysis_history(agent_name, updated_at)",
+    )
+    _create_index_if_missing(
+        conn,
+        "ix_analysis_history_user",
+        "CREATE INDEX ix_analysis_history_user ON analysis_history(user_id)",
+    )
+    _create_index_if_missing(
+        conn,
+        "ix_analysis_history_user_date",
+        "CREATE INDEX ix_analysis_history_user_date ON analysis_history(user_id, analysis_date)",
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(101, "agent_config_kind_and_visibility", _m101_agent_config_kind),
     Migration(102, "backfill_agent_kind_data", _m102_backfill_agent_kind),
@@ -1835,6 +2062,17 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(119, "notifications_table", _m119_notifications_table),
     Migration(120, "notification_push_channels", _m120_notification_push_channels),
     Migration(121, "dedupe_stocks_unique", _m121_dedupe_stocks_unique),
+    Migration(
+        122,
+        "user_id_columns_chat_notif_suggestion",
+        _m122_user_id_columns_chat_notif_suggestion,
+    ),
+    Migration(123, "user_id_on_price_alerts", _m123_user_id_on_price_alerts),
+    Migration(
+        124,
+        "analysis_history_user_id_unique",
+        _m124_analysis_history_user_id_unique,
+    ),
 )
 
 

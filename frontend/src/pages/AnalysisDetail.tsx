@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
+import { safeFixed, safeNum } from '@/lib/format'
 import remarkGfm from 'remark-gfm'
 import {
   ArrowLeft,
@@ -59,9 +60,12 @@ function pctClass(v: number | null | undefined): string {
   return v > 0 ? 'text-rose-500' : v < 0 ? 'text-emerald-500' : 'text-muted-foreground'
 }
 
-function fmtPct(v: number | null | undefined): string {
-  if (v == null) return '-'
-  return `${v > 0 ? '+' : ''}${v.toFixed(2)}%`
+// 修复(S-5 / M-3~M-8, 2026-08-23): PG DECIMAL 变字符串后裸 .toFixed 抛 TypeError.
+// 此处仅替换为带 safeNum 三元, 仍走 format.ts 的 safe 函数模式保持一致。
+function fmtPct(v: unknown): string {
+  const n = safeNum(v)
+  if (n === null) return '-'
+  return `${n > 0 ? '+' : ''}${n.toFixed(2)}%`
 }
 
 /** 标题 → 锚点 slug(去掉 markdown 强调/井号/emoji,空白转连字符)。
@@ -307,10 +311,10 @@ export default function AnalysisDetailPage() {
                 {sug.action_label}
               </span>
               <span className="text-[13px] text-muted-foreground">
-                置信度 {sug.confidence?.toFixed(1) ?? '-'} / 10
+                置信度 {safeFixed(sug.confidence, 1, '-')} / 10
               </span>
               <span className="ml-auto text-[11px] text-muted-foreground">
-                成本 ${rawData.cost_usd?.toFixed(4) ?? '-'}
+                成本 ${safeFixed(rawData.cost_usd, 4, '-')}
               </span>
             </div>
           )}
@@ -368,15 +372,15 @@ export default function AnalysisDetailPage() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 text-[13px]">
                 <div className="rounded-lg bg-accent/30 p-3">
                   <div className="text-[11px] text-muted-foreground mb-1">总命中率</div>
-                  <div className="font-bold">{stats.overall_hit_rate != null ? `${(stats.overall_hit_rate * 100).toFixed(0)}%` : '-'}</div>
+                  <div className="font-bold">{safeNum(stats.overall_hit_rate) !== null ? `${(Number(stats.overall_hit_rate) * 100).toFixed(0)}%` : '-'}</div>
                 </div>
                 <div className="rounded-lg bg-accent/30 p-3">
                   <div className="text-[11px] text-muted-foreground mb-1">买入命中</div>
-                  <div className="font-bold">{stats.buy_hit_rate != null ? `${(stats.buy_hit_rate * 100).toFixed(0)}%` : '-'}</div>
+                  <div className="font-bold">{safeNum(stats.buy_hit_rate) !== null ? `${(Number(stats.buy_hit_rate) * 100).toFixed(0)}%` : '-'}</div>
                 </div>
                 <div className="rounded-lg bg-accent/30 p-3">
                   <div className="text-[11px] text-muted-foreground mb-1">卖出命中</div>
-                  <div className="font-bold">{stats.sell_hit_rate != null ? `${(stats.sell_hit_rate * 100).toFixed(0)}%` : '-'}</div>
+                  <div className="font-bold">{safeNum(stats.sell_hit_rate) !== null ? `${(Number(stats.sell_hit_rate) * 100).toFixed(0)}%` : '-'}</div>
                 </div>
                 <div className="rounded-lg bg-accent/30 p-3">
                   <div className="text-[11px] text-muted-foreground mb-1">平均 20 日收益</div>
@@ -402,7 +406,7 @@ export default function AnalysisDetailPage() {
                     {items.map((it, i) => (
                       <tr key={i} className="border-b border-border/50">
                         <td className="py-2 pr-3">{it.analysis_date}</td>
-                        <td className="py-2 px-2">{it.action_label}{it.confidence != null ? ` (${it.confidence.toFixed(1)})` : ''}</td>
+                        <td className="py-2 px-2">{it.action_label}{safeNum(it.confidence) !== null ? ` (${Number(it.confidence).toFixed(1)})` : ''}</td>
                         <td className="text-right py-2 px-2">{it.price_at_analysis ?? '-'}</td>
                         <td className={`text-right py-2 px-2 ${pctClass(it.return_1d_pct)}`}>{fmtPct(it.return_1d_pct)}</td>
                         <td className={`text-right py-2 px-2 ${pctClass(it.return_5d_pct)}`}>{fmtPct(it.return_5d_pct)}</td>
@@ -436,14 +440,14 @@ export default function AnalysisDetailPage() {
                     {sug.action_label}
                   </span>
                   <span className="text-[11px] text-muted-foreground shrink-0">
-                    ${rawData.cost_usd?.toFixed(4) ?? '-'}
+                    ${safeFixed(rawData.cost_usd, 4, '-')}
                   </span>
                 </div>
                 {sug.confidence != null && (
                   <div className="mt-2.5">
                     <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-1">
                       <span>置信度</span>
-                      <span className="font-medium text-foreground">{sug.confidence.toFixed(1)} / 10</span>
+                      <span className="font-medium text-foreground">{safeFixed(sug.confidence, 1, '-')} / 10</span>
                     </div>
                     <div className="h-1.5 rounded-full bg-muted overflow-hidden">
                       <div

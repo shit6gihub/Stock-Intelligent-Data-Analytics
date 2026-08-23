@@ -199,10 +199,15 @@ class EventsCollector:
                 factory = cls.COLLECTOR_MAP.get(ds.provider)
                 if not factory:
                     continue
+                # 修复(L-1, 2026-08-23): 配置错误(参数缺失/provider 不存在)原本被静默吞掉,
+                # 改为 logger.exception 至少记一条, 便于发现数据库里坏配置。
                 try:
                     collectors.append(factory(ds.config or {}))
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.exception(
+                        "events collector 工厂构造失败 ds_id=%s provider=%s: %s",
+                        getattr(ds, "id", "?"), getattr(ds, "provider", "?"), e,
+                    )
         finally:
             db.close()
 
@@ -224,7 +229,9 @@ class EventsCollector:
             try:
                 return await c.fetch_events(symbols=symbols, since=since)
             except Exception as e:
-                logger.warning(f"Events collector failed: {e}")
+                # 修复(L-1, 2026-08-23): 原仅 warning, 升级为 logger.exception 以保留完整堆栈,
+                # 排障 daily-report / entry-candidate 中的 events 调用方问题。
+                logger.exception("Events collector failed: %s", e)
                 return []
 
         results = await asyncio.gather(*[fetch_one(c) for c in self.collectors])

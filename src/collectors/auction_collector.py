@@ -10,11 +10,40 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+
+# 2026-08-23 修复(M-9): 这些函数(fetech_auction_*)既被 async 业务调用也被同步业务调用,
+# 内部用 requests / sqlite3 都是阻塞操作,异步路径下直接调会堵住 event loop 数秒甚至十几秒。
+# in_async_loop() + to_async() 帮调用方自动包裹到工作线程。
+def in_async_loop() -> bool:
+    """当前是否在 asyncio 事件循环中运行。"""
+    try:
+        asyncio.get_running_loop()
+        return True
+    except RuntimeError:
+        return False
+
+
+def to_async(func, *args, **kwargs):
+    """把同步函数封装, 同步上下文直接执行, 异步上下文走默认 executor。
+
+    返回值类型: 同步调用 → 返回实际值; 异步调用 → 返回 coroutine (需 await).
+
+    这是 aud-20260823-frontend-collectors.md M-9 修复要点。
+    """
+    if not in_async_loop():
+        return func(*args, **kwargs)
+
+    async def _runner():
+        return await asyncio.to_thread(func, *args, **kwargs)
+    return _runner()
+
 
 # 腾讯批量拉取的候选池(昨日强势/权重, 降级时从这些票里算竞价高开榜)
 AUCTION_FALLBACK_POOL = [
@@ -326,3 +355,33 @@ def fetch_auction_risk(limit: int = 10) -> str:
     except Exception as e:
         logger.debug(f"悟道被核风险失败: {e}")
         return f"被核风险获取失败: {e}"
+
+
+
+# ═══ 2026-08-23 修复(M-9): async 包装函数 ═══
+# 原 fetch_auction_* 系列函数体里包含 requests.post + sqlite3.read, 直接 await 会阻塞 event loop。
+# 在不破坏现有同步调用方(api 仍调用同步函数)的前提下,新增以下 async 版本供异步任务用。
+# 它们内部把全部阻塞 IO 推到 to_thread,让事件循环在数十 ms 内返回控制权。
+
+async def fetch_auction_overview_async(limit: int = 15) -> str:
+    return await to_async(fetch_auction_overview, limit)
+
+
+async def fetch_auction_strongest_async(limit: int = 10) -> str:
+    return await to_async(fetch_auction_strongest, limit)
+
+
+async def fetch_auction_theme_async(limit: int = 10) -> str:
+    return await to_async(fetch_auction_theme, limit)
+
+
+async def fetch_auction_weak_to_strong_async(limit: int = 15) -> str:
+    return await to_async(fetch_auction_weak_to_strong, limit)
+
+
+async def fetch_auction_risk_async(limit: int = 10) -> str:
+    return await to_async(fetch_auction_risk, limit)
+
+
+async def fetch_auction_raw_async() -> dict:
+    return await to_async(fetch_auction_raw)

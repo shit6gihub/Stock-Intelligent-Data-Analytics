@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from src.web.database import get_db
-from src.web.models import AnalysisHistory
+from src.web.models import AnalysisHistory, User
+from src.web.api.auth import get_current_user
 from src.config import Settings
 from src.core.agent_catalog import (
     AGENT_KIND_CAPABILITY,
@@ -77,9 +78,15 @@ def list_history(
     kind: str = Query(default=AGENT_KIND_WORKFLOW),
     limit: int = Query(default=30, le=100),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> list[HistoryResponse]:
-    """获取分析历史列表"""
-    query = db.query(AnalysisHistory)
+    """获取分析历史列表
+
+    S1(2026-08-23): 仅返回当前用户的历史; 历史遗留的 user_id=NULL 行也归当前用户可见
+    (迁移 v122 已把存量行归属给 owner, 跨账号 NULL 不会出现)。接口始终 404 而非 403,
+    防止账号探测。
+    """
+    query = db.query(AnalysisHistory).filter(AnalysisHistory.user_id == user.id)
 
     if agent_name:
         query = query.filter(AnalysisHistory.agent_name == agent_name)
@@ -149,10 +156,16 @@ def list_history(
 
 @router.get("/{history_id}")
 def get_history_detail(
-    history_id: int, db: Session = Depends(get_db)
+    history_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> HistoryResponse:
-    """获取单条分析详情"""
-    record = db.query(AnalysisHistory).filter(AnalysisHistory.id == history_id).first()
+    """获取单条分析详情(S1: 仅返回当前用户的记录, 否则 404 防账号探测)"""
+    record = (
+        db.query(AnalysisHistory)
+        .filter(AnalysisHistory.id == history_id, AnalysisHistory.user_id == user.id)
+        .first()
+    )
     if not record:
         from fastapi import HTTPException
 
@@ -192,9 +205,17 @@ def get_history_detail(
 
 
 @router.delete("/{history_id}")
-def delete_history(history_id: int, db: Session = Depends(get_db)):
-    """删除单条历史记录"""
-    record = db.query(AnalysisHistory).filter(AnalysisHistory.id == history_id).first()
+def delete_history(
+    history_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """删除单条历史记录(S1: 仅当前用户可删, 否则 404 防账号探测)"""
+    record = (
+        db.query(AnalysisHistory)
+        .filter(AnalysisHistory.id == history_id, AnalysisHistory.user_id == user.id)
+        .first()
+    )
     if not record:
         from fastapi import HTTPException
 

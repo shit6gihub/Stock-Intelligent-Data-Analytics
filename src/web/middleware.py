@@ -53,11 +53,32 @@ EXEMPT_PATHS = {
 
 
 def _get_client_ip(request: Request) -> str:
-    """获取客户端 IP (优先 X-Forwarded-For)"""
-    xff = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-    if xff:
-        return xff
-    return request.client.host if request.client else "unknown"
+    """获取客户端 IP。
+
+    P1-9 (2026-08-23 审计): 不再无条件信任 X-Forwarded-For 首段(攻击者可伪造
+    `X-Forwarded-For: 1.2.3.4` 绕过 IP 限流)。仅当直连 peer 是 loopback 或私网时
+    才认 XFF(等价 uvicorn --forwarded-allow-ips=127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+    的语义), 直连 peer 是公网(裸跑 / 非可信反代)时直接用 peer.host。
+    """
+    import ipaddress
+    peer = request.client.host if request.client else None
+    if not peer:
+        return "unknown"
+    try:
+        peer_ip = ipaddress.ip_address(peer)
+        # 直连 peer 是 loopback 或私网 → 可信反代, 取 XFF 首段
+        trusted = (
+            peer_ip.is_loopback
+            or peer_ip.is_private
+            or peer_ip.is_link_local
+        )
+    except ValueError:
+        trusted = False
+    if trusted:
+        xff = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        if xff:
+            return xff
+    return peer
 
 
 def _is_exempt(path: str) -> bool:

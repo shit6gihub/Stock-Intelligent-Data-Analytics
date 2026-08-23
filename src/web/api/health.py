@@ -90,14 +90,39 @@ def _init_metrics():
 def record_request_metrics(method: str, path: str, status: int, duration_ms: float) -> None:
     """HTTP 指标埋点(供 RequestLoggerMiddleware 调用)。
 
-    path 先做归一化(数字段→{id})避免高基数; 失败静默不影响请求。
+    path 归一化(避免高基数 label):
+    - 数字段 / {id} (老路径)
+    - 末段字母数字混合(形如 600519.SH / CN / BOARD_HS300) → {sym} (P1-10 2026-08-23 审计)
+    - 截断到 80 字符防爆炸
+
+    失败静默不影响请求。
     """
     try:
         if not _PROMETHEUS_AVAILABLE:
             return
         import re as _re
 
-        norm = _re.sub(r"/\d+", "/{id}", path)[:80]
+        # P1-10: 把形如 /api/quotes/600519.SH /api/board-capital-flow/CN 这种
+        # 字母数字混合的叶子段也归一, 否则每个 symbol 一条时序爆 Prometheus 内存。
+        # 规则: 第一段是 /api/*, 把所有"末尾叶子段(无 /)"按 [A-Za-z0-9._-] 长度 >=2 归一成 {sym}
+        norm = path[:80]
+        if norm.startswith("/api/"):
+            # P1-10 (2026-08-23 审计): 先归一末段 (高基数嫌疑: 含 "." 形如 600519.SH,
+            # 或 2..4 位全大写市场/板块代码 CN/SH/SZ/HK), 再归一中间数字段。
+            # 顺序很关键: 如果先归一数字, 会把 600519 → {id} 后, "{id}.SH" 含
+            # { 字符无法匹配 [A-Za-z0-9._-]+ 而漏归一 → 退化为每个 symbol 一条时序。
+            parts = norm.split("/")
+            if len(parts) >= 3:
+                leaf = parts[-1]
+                looks_like_symbol = (
+                    "." in leaf and _re.fullmatch(r"[A-Za-z0-9._-]+", leaf)
+                    or (2 <= len(leaf) <= 4 and leaf.isupper() and leaf.isalpha())
+                )
+                if looks_like_symbol:
+                    parts[-1] = "{sym}"
+                    norm = "/".join(parts)
+            # 数字段 (路径中段或末段纯数字)
+            norm = _re.sub(r"/\d+", "/{id}", norm)
         _init_metrics()
         if _metrics.REQUEST_COUNT is None:
             return

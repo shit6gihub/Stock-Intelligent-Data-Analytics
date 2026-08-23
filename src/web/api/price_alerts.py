@@ -8,8 +8,9 @@ from zoneinfo import ZoneInfo
 
 from src.config import Settings
 from src.core.price_alert_engine import ENGINE
+from src.web.api.auth import get_current_user
 from src.web.database import get_db
-from src.web.models import PriceAlertHit, PriceAlertRule, Stock
+from src.web.models import PriceAlertHit, PriceAlertRule, Stock, User
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -113,10 +114,15 @@ def _to_response(rule: PriceAlertRule) -> dict:
 
 
 @router.get("")
-def list_alert_rules(db: Session = Depends(get_db)):
+def list_alert_rules(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """S3(2026-08-23): 仅返回当前用户的提醒规则。"""
     rows = (
         db.query(PriceAlertRule)
         .join(Stock)
+        .filter(PriceAlertRule.user_id == user.id)
         .order_by(PriceAlertRule.updated_at.desc(), PriceAlertRule.id.desc())
         .all()
     )
@@ -124,7 +130,12 @@ def list_alert_rules(db: Session = Depends(get_db)):
 
 
 @router.post("")
-def create_alert_rule(body: PriceAlertCreate, db: Session = Depends(get_db)):
+def create_alert_rule(
+    body: PriceAlertCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """S3(2026-08-23): 新建规则写入 user_id。"""
     stock = db.query(Stock).filter(Stock.id == body.stock_id).first()
     if not stock:
         raise HTTPException(404, "股票不存在")
@@ -138,6 +149,7 @@ def create_alert_rule(body: PriceAlertCreate, db: Session = Depends(get_db)):
             raise HTTPException(400, "expire_at 格式错误")
 
     row = PriceAlertRule(
+        user_id=user.id,
         stock_id=body.stock_id,
         name=(body.name or "").strip() or f"{stock.name} 提醒",
         enabled=bool(body.enabled),
@@ -156,8 +168,18 @@ def create_alert_rule(body: PriceAlertCreate, db: Session = Depends(get_db)):
 
 
 @router.put("/{rule_id}")
-def update_alert_rule(rule_id: int, body: PriceAlertUpdate, db: Session = Depends(get_db)):
-    row = db.query(PriceAlertRule).filter(PriceAlertRule.id == rule_id).first()
+def update_alert_rule(
+    rule_id: int,
+    body: PriceAlertUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """S3(2026-08-23): 仅允许当前用户修改自己的规则; 否则 404 防账号探测。"""
+    row = (
+        db.query(PriceAlertRule)
+        .filter(PriceAlertRule.id == rule_id, PriceAlertRule.user_id == user.id)
+        .first()
+    )
     if not row:
         raise HTTPException(404, "规则不存在")
 
@@ -192,8 +214,18 @@ def update_alert_rule(rule_id: int, body: PriceAlertUpdate, db: Session = Depend
 
 
 @router.post("/{rule_id}/toggle")
-def toggle_alert_rule(rule_id: int, body: ToggleBody, db: Session = Depends(get_db)):
-    row = db.query(PriceAlertRule).filter(PriceAlertRule.id == rule_id).first()
+def toggle_alert_rule(
+    rule_id: int,
+    body: ToggleBody,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """S3(2026-08-23): 仅允许当前用户 toggle 自己的规则; 否则 404 防账号探测。"""
+    row = (
+        db.query(PriceAlertRule)
+        .filter(PriceAlertRule.id == rule_id, PriceAlertRule.user_id == user.id)
+        .first()
+    )
     if not row:
         raise HTTPException(404, "规则不存在")
     row.enabled = bool(body.enabled)
@@ -203,8 +235,17 @@ def toggle_alert_rule(rule_id: int, body: ToggleBody, db: Session = Depends(get_
 
 
 @router.delete("/{rule_id}")
-def delete_alert_rule(rule_id: int, db: Session = Depends(get_db)):
-    row = db.query(PriceAlertRule).filter(PriceAlertRule.id == rule_id).first()
+def delete_alert_rule(
+    rule_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """S3(2026-08-23): 仅允许当前用户删除自己的规则; 否则 404 防账号探测。"""
+    row = (
+        db.query(PriceAlertRule)
+        .filter(PriceAlertRule.id == rule_id, PriceAlertRule.user_id == user.id)
+        .first()
+    )
     if not row:
         raise HTTPException(404, "规则不存在")
     db.delete(row)
@@ -254,8 +295,20 @@ def list_today_hits(limit: int = 50, db: Session = Depends(get_db)):
 
 
 @router.get("/{rule_id}/hits")
-def list_alert_hits(rule_id: int, limit: int = 50, db: Session = Depends(get_db)):
-    _ = db.query(PriceAlertRule).filter(PriceAlertRule.id == rule_id).first()
+def list_alert_hits(
+    rule_id: int,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """S3(2026-08-23): 仅允许查看自己的规则触发记录; 否则 404 防账号探测。"""
+    _ = (
+        db.query(PriceAlertRule)
+        .filter(PriceAlertRule.id == rule_id, PriceAlertRule.user_id == user.id)
+        .first()
+    )
+    if not _:
+        raise HTTPException(404, "规则不存在")
     rows = (
         db.query(PriceAlertHit)
         .filter(PriceAlertHit.rule_id == rule_id)
@@ -278,7 +331,19 @@ def list_alert_hits(rule_id: int, limit: int = 50, db: Session = Depends(get_db)
 
 
 @router.post("/{rule_id}/test")
-async def test_alert_rule(rule_id: int):
+async def test_alert_rule(
+    rule_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """S3(2026-08-23): 仅允许当前用户测试自己的规则; 否则 404 防账号探测。"""
+    row = (
+        db.query(PriceAlertRule)
+        .filter(PriceAlertRule.id == rule_id, PriceAlertRule.user_id == user.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(404, "规则不存在")
     result = await ENGINE.scan_once(
         only_rule_id=rule_id, dry_run=True, bypass_market_hours=True
     )

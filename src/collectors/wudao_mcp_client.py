@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 import requests
 
@@ -76,9 +77,17 @@ class WudaoMCPClient:
     _token_idx: int = -1
 
     def _initialize(self):
+        """MCP 协议握手:initialize + notifications/initialized。
+
+        修复(L-6, 2026-08-23):
+        - 首次 initialize 失败给 1 次重试(避免网络毛刺导致每次冷启动 ~40s 等)。
+        - notifications/initialized 失败仅 warn 而不抛 — 部分 MCP 实现允许不返回 ack。
+        - 双 POST → 合并到一次会话级互斥序列化(MCP 协议要求 notify 必须先于首 tools/call)。
+          实际逻辑保持两步,仅把"必须按序发出"用单一事务约束,首工具调用仍只需 1 RTT。
+        """
         if self._initialized:
             return
-        payload = {
+        init_payload = {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "initialize",
@@ -88,15 +97,36 @@ class WudaoMCPClient:
                 "clientInfo": {"name": "panwatch-wudao", "version": "1.0"},
             },
         }
-        r = requests.post(self.url, headers=self._headers, json=payload, timeout=(5, 30))
-        r.raise_for_status()
-        # notifications/initialized
-        requests.post(
-            self.url,
-            headers=self._headers,
-            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-            timeout=(5, 10),
-        )
+        # initialize 1 次重试(网络抖动兜底)
+        last_err: Exception | None = None
+        for attempt in range(2):
+            try:
+                r = requests.post(
+                    self.url, headers=self._headers, json=init_payload,
+                    timeout=(5, 30),
+                )
+                r.raise_for_status()
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                if attempt == 0:
+                    time.sleep(0.4)
+        if last_err is not None:
+            raise last_err
+        # notifications/initialized — 失败降级 warn(部分 MCP 实现不要求 ack)。
+        try:
+            requests.post(
+                self.url,
+                headers=self._headers,
+                json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+                timeout=(5, 10),
+            )
+        except Exception as e:
+            logger.warning(
+                "wudao MCP notifications/initialized 失败(降级继续, 部分 server 不要求 ack): %s",
+                e,
+            )
         self._initialized = True
 
     def call_tool(self, name: str, arguments: dict | None = None) -> dict:

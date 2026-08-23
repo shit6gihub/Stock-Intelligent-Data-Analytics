@@ -64,22 +64,38 @@ const desktopNavGroups = [
 const MOBILE_PRIMARY_TO = ['/', '/portfolio', '/opportunities', '/forecast', '/alerts']
 
 // ═══ demo 账号只读模式(2026-08-15): 从 JWT payload 解出 username/role, 按角色控制导航 ═══
-const getJwtUsername = (): string | null => {
+// 修复(M-2, 2026-08-23): atob 解 JWT payload 必须容错:
+// - token 不是合法 base64(空 token / 第三方篡改) → JSON.parse 抛 → catch 返回 null
+// - token 仅有两段(去除签名/头为空) → split('.')[1] 拿到 undefined → atob 抛
+// - payload 是数组/其它非对象类型(JSON.parse 合法但结构异常) → null 安全返回
+// 仅用于 UI 展示用途的 claims 解析, 不参与授权判断(权限最终看后端).
+function _safeJwtPayload(token: string): Record<string, unknown> | null {
   try {
-    const t = localStorage.getItem('token') || ''
-    if (!t) return null
-    const payload = JSON.parse(atob(t.split('.')[1]))
-    return payload.username || null
-  } catch { return null }
+    if (!token) return null
+    const parts = token.split('.')
+    if (parts.length < 2) return null
+    // base64url → base64: '-' '_' 替换成 '+' '/', 补 '='
+    let s = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    while (s.length % 4) s += '='
+    const decoded = atob(s)
+    const obj = JSON.parse(decoded)
+    return obj && typeof obj === 'object' && !Array.isArray(obj) ? (obj as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
+}
+const getJwtUsername = (): string | null => {
+  const t = localStorage.getItem('token') || ''
+  const p = _safeJwtPayload(t)
+  const u = p?.username
+  return typeof u === 'string' ? u : null
 }
 // 2026-08-15: 从 JWT payload 取 role(owner|member|guest); demo 账号兼容按 username==demo 判定
 const getJwtRole = (): string | null => {
-  try {
-    const t = localStorage.getItem('token') || ''
-    if (!t) return null
-    const payload = JSON.parse(atob(t.split('.')[1]))
-    return payload.role || null
-  } catch { return null }
+  const t = localStorage.getItem('token') || ''
+  const p = _safeJwtPayload(t)
+  const r = p?.role
+  return typeof r === 'string' ? r : null
 }
 const isDemoUser = (): boolean => getJwtUsername() === 'demo'
 // 是否 guest 角色: role==guest 或 demo 账号(后端口径: username=="demo" || role=="guest")

@@ -6,6 +6,14 @@ from datetime import datetime
 from pathlib import Path
 
 from src.agents.base import BaseAgent, AgentContext, AnalysisResult, apply_scene_binding
+
+
+def _resolve_user_id(context: AgentContext) -> str | None:
+    """M3(2026-08-23): 提取 Agent 触发用户 UUID, 系统调度/批量任务返回 None。"""
+    user = getattr(context, "user", None)
+    if user is None:
+        return None
+    return getattr(user, "id", None)
 from src.collectors.news_collector import NewsCollector, NewsItem
 from src.core.analysis_history import save_analysis
 from src.core.cn_symbol import get_cn_prefix
@@ -523,6 +531,7 @@ class NewsDigestAgent(BaseAgent):
                 prompt_context=user_content,
                 ai_response=result.content,
                 stock_market=stock.market.value,
+                user_id=_resolve_user_id(context),
                 meta={
                     "source": "news_digest",
                     "since_hours_used": data.get("since_hours_used", self.since_hours),
@@ -566,6 +575,7 @@ class NewsDigestAgent(BaseAgent):
             stock_symbol="*",
             content=result.content,
             title=result.title,
+            user_id=_resolve_user_id(context),
             raw_data={
                 "timestamp": data.get("timestamp"),
                 "since_hours": self.since_hours,

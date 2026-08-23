@@ -87,6 +87,7 @@ def push_notification(
     db = SessionLocal()
     try:
         n = Notification(
+            user_id=user_id,
             category=category,
             level=level,
             title=title[:200],

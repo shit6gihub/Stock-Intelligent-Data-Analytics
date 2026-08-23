@@ -77,6 +77,28 @@
 (9 失败 stash 对照确认预存); pnpm build 通过; 浏览器实测筛选弹层/草稿
 语义/徽章/四 tab/共振降级路径
 
+### 全面代码审计修复(Codex 三路并行审计, 后端安全19项/业务15项/前端采集层23项)
+
+三路只读审计全部修复并补测试。本地回归 995 passed。
+
+### update — 后端安全硬化(P0×3 / P1×11 / P2×5)
+
+- P0: 删除智兔 token 硬编码 fallback(改必读 env + startup_check 告警); llm_adapter 只注入当前 provider env(不再同时挂 OPENAI/DEEPSEEK 三套 key); Dockerfile 非 root 运行
+- P1: grafana 密码改 env 引用; redis 端口绑 127.0.0.1; forecast_server 默认绑 127.0.0.1 + 可选 FORECAST_API_KEY; scrypt 提参 n=2^15 + 旧哈希登录透明升级; XFF 仅信任直连私网 peer; WS token 支持 Sec-WebSocket-Protocol; Prometheus 高基数 label 归一; 中间件顺序修正
+- P2: JWT TTL 改 env 可配置(默认不变, 保桌面 App 静态 token); 默认 owner 密码改确定性非弱密码(非 admin123); 启动提示去 /docs 诱导
+
+### fix — 多用户隔离(事故级)+ 业务口径
+
+- S1-S4: history/chat/price_alerts/notifications 四端点按 user_id 过滤(404 防账号探测); 相关表加 user_id 列 + 幂等迁移(SQLite/PG 双方言, 存量回填最早 owner)
+- S5: stock_attribution 主力意图证据 get_capital_flow → get_main_intent(逐笔口径, 对齐其他 Agent)
+- S6: 交易日判定加 2025-2027 法定节假日+调休静态表(预测命中率统计口径)
+- M: suggestion_pool/save_analysis 补 user_id; 万元/万股单位标注修正; safe_num 挡 NaN/Inf
+
+### update — 前端+采集层健壮性
+
+- 前端: 报告窗口 document.write → sandbox iframe; index.html 加 CSP; 抽 lib/format.ts 统一 safeFixed 替换各页裸 toFixed; 401 单飞 logout
+- 采集层: screenshot_collector try/finally + 批量超时; auction_collector 移出事件循环; klines_ingestor 失败聚合告警; market_http 重试总耗时封顶; capital_flow 开盘全 0 识别为"数据未生成"
+
 ### fix — 哨兵推送正文中文化(人话可读, 不用猜英文标识)
 
 - 标题: 数据质量哨兵[FAIL] → 数据质量哨兵: 发现异常

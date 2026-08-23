@@ -12,20 +12,44 @@ export function getToken(): string | null {
   return localStorage.getItem('token')
 }
 
+// 修复(M-1 + L-5, 2026-08-23): 多并发 401 同时触发 logout() 会重复跳转,
+// 用 _logoutInProgress 标志位保证单飞(single-flight):
+//   - 第一个 401 拿到锁, 构造 returnUrl 后跳转 login
+//   - 后续 401 直接 no-op, 不再产生重复 window.location.href 赋值
+// 服务端目前没有 refresh 机制, 401 只能强制登出; 等后续加上 /auth/refresh 后,
+// 此函数仍可继续兼容(只是极少数情况下被触发).
+let _logoutInProgress = false
 export function logout() {
+  if (_logoutInProgress) return
+  _logoutInProgress = true
   localStorage.removeItem('token')
   localStorage.removeItem('token_expires')
+  // 修复(M-1, 2026-08-23): 在 login 后 returnUrl 回跳, 避免被踢后失去当前页面.
+  // 仅在已登录页(非 /login)时记录, 避免自己跳自己时把 returnUrl 写成 /login.
+  try {
+    const here = window.location.pathname + window.location.search + window.location.hash
+    if (here && !here.startsWith('/login')) {
+      sessionStorage.setItem('postLoginReturnUrl', here)
+    }
+  } catch { /* sessionStorage 不可用就略过 */ }
   window.location.href = '/login'
 }
 
+// 修复(L-4, 2026-08-23): 原 `new Date(string) < new Date()` 受本地时区影响(后端 UTC / 前端 CST
+// 会差几小时, 影响过期判断). 改用 Date.parse 严格 ISO 8601 解析:
+// - 解析失败返回 NaN, NaN < Date.now() → true → 视为已过期, fail-closed
+// - 后端应继续保证 expires_at 是 ISO 8601(如 '2026-08-23T12:00:00Z')
 export function isAuthenticated(): boolean {
   const token = getToken()
   if (!token) return false
 
   const expires = localStorage.getItem('token_expires')
-  if (expires && new Date(expires) < new Date()) {
-    logout()
-    return false
+  if (expires) {
+    const ts = Date.parse(expires)
+    if (Number.isNaN(ts) || ts < Date.now()) {
+      logout()
+      return false
+    }
   }
   return true
 }

@@ -22,7 +22,7 @@ def client():
 
 @pytest.fixture()
 def token(client):
-    r = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+    r = client.post("/api/auth/login", json={"username": "admin", "password": "xz.170530"})
     assert r.status_code == 200, r.text
     return r.json()["data"]["token"]
 

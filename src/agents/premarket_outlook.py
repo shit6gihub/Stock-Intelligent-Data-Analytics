@@ -8,6 +8,14 @@ from datetime import datetime, date, timedelta
 from pathlib import Path
 
 from src.agents.base import BaseAgent, AgentContext, AnalysisResult, apply_scene_binding
+
+
+def _resolve_user_id(context: AgentContext) -> str | None:
+    """M3(2026-08-23): 提取 Agent 触发用户 UUID, 系统调度/批量任务返回 None。"""
+    user = getattr(context, "user", None)
+    if user is None:
+        return None
+    return getattr(user, "id", None)
 from src.core.signals import SignalPackBuilder
 from src.core.analysis_history import save_analysis, get_latest_analysis
 from src.core.cn_symbol import get_cn_prefix
@@ -351,9 +359,18 @@ class PremarketOutlookAgent(BaseAgent):
         """构建盘前分析 Prompt"""
         system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
 
-        # 辅助函数：安全获取数值，None 转为默认值
+        # 辅助函数(2026-08-23 M6 升级): None/NaN/Inf/字符串/异常 → 返回 default
+        import math
         def safe_num(value, default=0):
-            return value if value is not None else default
+            if value is None:
+                return default
+            try:
+                f = float(value)
+            except (TypeError, ValueError):
+                return default
+            if math.isnan(f) or math.isinf(f):
+                return default
+            return f
 
         def fmt_pct(value) -> str:
             if value is None:
@@ -1016,6 +1033,7 @@ class PremarketOutlookAgent(BaseAgent):
                     prompt_context=user_content,
                     ai_response=result.content,
                     stock_market=stock.market.value,
+                    user_id=_resolve_user_id(context),
                     meta={
                         "analysis_date": analysis_date,
                         "source": "premarket_outlook",
@@ -1162,6 +1180,7 @@ class PremarketOutlookAgent(BaseAgent):
             stock_symbol="*",
             content=result.content,
             title=result.title,
+            user_id=_resolve_user_id(context),
             raw_data={
                 "us_indices": data.get("us_indices"),
                 "timestamp": data.get("timestamp"),

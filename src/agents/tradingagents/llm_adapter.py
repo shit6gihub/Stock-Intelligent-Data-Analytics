@@ -102,7 +102,11 @@ def inject_api_key_env(ai_client: AIClient) -> None:
     if not ai_client.api_key:
         logger.warning("[TA] AIClient 没有 api_key,TradingAgents LLM 调用大概率失败")
         return
-    # 覆盖多个候选 env var,让 TA 不管走哪条 provider 分支都能取到 key
+    # P0-3 (2026-08-23 审计): 只注入当前 TA 实际走的那条 SDK env var
+    # (build_ta_llm_config 把 llm_provider 锁死成 "openrouter", 走 chat completions)。
+    # 之前同时挂 OPENAI/DEEPSEEK 三套 env 会让 key 在子进程 / probe / 异常堆栈
+    # 中泄漏给三家厂商(互相可见的 stderr / Litellm 多 key 探测等)。
+    # 其它 provider env 显式清空, 防止历史值残留被 TA 误读。
     os.environ["OPENROUTER_API_KEY"] = ai_client.api_key
-    os.environ["OPENAI_API_KEY"] = ai_client.api_key
-    os.environ["DEEPSEEK_API_KEY"] = ai_client.api_key
+    for _vendor_env in ("OPENAI_API_KEY", "DEEPSEEK_API_KEY"):
+        os.environ.pop(_vendor_env, None)

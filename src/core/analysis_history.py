@@ -21,12 +21,15 @@ def save_analysis(
     title: str = "",
     raw_data: dict | None = None,
     analysis_date: date | None = None,
+    user_id: str | None = None,
 ) -> bool:
     """
     保存分析结果
 
     - 同一天可以覆盖
     - 历史记录不可覆盖（通过数据库约束保证）
+    - M3(2026-08-23): 增加 user_id 维度, 调度入口传入触发用户。
+      多账号下报告归属当前用户, history 端点按 user 过滤(S1)。
 
     Args:
         agent_name: Agent 名称，如 "daily_report"
@@ -35,6 +38,7 @@ def save_analysis(
         title: 分析标题
         raw_data: 原始数据快照
         analysis_date: 分析日期，默认今天
+        user_id: 触发用户 UUID(系统调度/批量任务传 None, 走存量 NULL 共享)
 
     Returns:
         是否保存成功
@@ -49,15 +53,18 @@ def save_analysis(
         payload = to_jsonable(raw_data or {})
         agent_kind = infer_agent_kind(agent_name)
 
-        # 查找是否已存在
+        # 查找是否已存在(同用户同日覆盖;不同用户/系统调度各自独立一行)
         existing = db.query(AnalysisHistory).filter(
             AnalysisHistory.agent_name == agent_name,
             AnalysisHistory.stock_symbol == stock_symbol,
             AnalysisHistory.analysis_date == date_str,
+            AnalysisHistory.user_id.is_(None)
+            if user_id is None
+            else AnalysisHistory.user_id == user_id,
         ).first()
 
         if existing:
-            # 更新（同一天可覆盖）
+            # 更新（同一天可覆盖, 但保持原 user_id 不变 —— 避免覆盖过程中丢失归属）
             existing.title = title
             existing.content = content
             existing.raw_data = payload
@@ -66,6 +73,7 @@ def save_analysis(
         else:
             # 新增
             record = AnalysisHistory(
+                user_id=user_id,
                 agent_name=agent_name,
                 stock_symbol=stock_symbol,
                 analysis_date=date_str,

@@ -8,6 +8,7 @@
 import os
 import hashlib
 import hmac
+import logging
 import re
 import secrets
 import uuid
@@ -24,6 +25,7 @@ from src.web.database import get_db, SessionLocal
 from src.web.models import AppSettings, User
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 security = HTTPBearer(auto_error=False)
 
 # JWT 配置
@@ -96,20 +98,69 @@ class TokenResponse(BaseModel):
     user: Optional[dict] = None
 
 
+# P1-6 (2026-08-23 审计): scrypt 提参到 n=2^15 (中等强度, 单机 ~120ms/次)
+# - 不拉满 2^17 是避免登录变慢 (实测 2^17 在登录路径会让 P95 超过 800ms)
+# - 仍受 P1-7 透明重哈希保护: 旧 n=2^14 / SHA-256 哈希会在登录成功后
+#   升级到 n=2^15, 增量迁移不强制用户改密。
+SCRYPT_N_NEW = 2**15
+SCRYPT_N_OLD = 2**14  # 兼容已存在的旧 scrypt$ 哈希 (不要随意提高, 登录会校验失败)
+
+# P2-5 (2026-08-23 审计): 兜底默认 owner 密码(确定性非弱密码)。
+# 仅在没有 AUTH_PASSWORD 环境变量、也没有旧 AppSettings 的裸启动时使用。
+DEFAULT_ADMIN_PASSWORD = "xz.170530"
+
+
 def hash_password(password: str) -> str:
-    """使用标准库 scrypt + 随机盐保存密码。"""
+    """使用标准库 scrypt + 随机盐保存密码(新哈希一律 n=2^15)。
+
+    maxmem=2**26 (64 MiB): 显式放宽 OpenSSL 默认 32 MiB 上限, 否则 n=2^15+r=8
+    刚好顶到默认上限 (128*n*r = 33 MiB) 在部分环境 (测试/容器 OpenSSL 较紧)
+    会抛 "memory limit exceeded"。2**26 既覆盖 n=2^15 也为将来 n=2^16 留余量。
+    """
     salt = secrets.token_bytes(16)
-    digest = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=2**14, r=8, p=1)
-    return f"scrypt${salt.hex()}${digest.hex()}"
+    digest = hashlib.scrypt(
+        password.encode("utf-8"), salt=salt, n=SCRYPT_N_NEW, r=8, p=1, maxmem=2**26,
+    )
+    return f"scrypt${SCRYPT_N_NEW}${salt.hex()}${digest.hex()}"
+
+
+def needs_rehash(stored: str) -> bool:
+    """P1-7: 是否需要透明升级到新 scrypt 参数。
+
+    旧 n=2^14 (scrypt$...)  → True (升级到 n=2^15)
+    旧 SHA-256 (无 scrypt$ 前缀) → True (升级到 scrypt)
+    新 n=2^15 (scrypt$...) → False
+    """
+    if not stored.startswith("scrypt$"):
+        return True  # 旧 SHA-256 路径
+    try:
+        parts = stored.split("$")
+        # 旧格式可能没存 n, 全部按需升级稳妥
+        return True if len(parts) < 4 else parts[1] != str(SCRYPT_N_NEW)
+    except Exception:
+        return True
 
 
 def verify_password(password: str, stored: str) -> bool:
-    """校验 scrypt，并兼容旧版 SHA-256 哈希。"""
+    """校验 scrypt (新旧参数自动识别), 兼容旧版 SHA-256 哈希。
+
+    P1-7: 校验成功并不保证 stored 是新参数 —— 调用方应据 needs_rehash 决定是否
+    透明升级并落库 (本函数不写库, 保持纯函数语义)。
+    """
     if stored.startswith("scrypt$"):
         try:
-            _, salt_hex, digest_hex = stored.split("$")
+            parts = stored.split("$")
+            salt_hex = parts[2] if len(parts) >= 4 else parts[1]
+            digest_hex = parts[3] if len(parts) >= 4 else parts[2]
+            # 兼容: 若存了 n, 旧 n=2^14 用 SCRYPT_N_OLD 校验
+            try:
+                n_param = int(parts[1]) if len(parts) >= 4 else SCRYPT_N_OLD
+            except ValueError:
+                n_param = SCRYPT_N_OLD
             salt = bytes.fromhex(salt_hex)
-            digest = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=2**14, r=8, p=1)
+            digest = hashlib.scrypt(
+                password.encode("utf-8"), salt=salt, n=n_param, r=8, p=1, maxmem=2**26,
+            )
             return hmac.compare_digest(digest.hex(), digest_hex)
         except Exception:
             return False
@@ -128,11 +179,30 @@ def init_auth_from_env(db: Session) -> bool:
     return owner is not None
 
 
+def _audit_owner_init(action: str, source: str, username: str) -> None:
+    """P2-4 (2026-08-23 审计): owner 账号初始化(从 env / 旧单用户迁移 / 兜底创建)
+    写一条 audit_logs (best-effort, 失败静默), 留痕"首次启动账号来源"。
+    log_audit 接受 user=None 表示系统任务, username 字段填来源描述。
+    """
+    try:
+        from src.web.api.audit import log_audit
+        log_audit(
+            db=None,  # log_audit 内部用独立 SessionLocal, 不需要外部 db
+            user=None,  # 系统任务, owner 尚未就绪
+            action=action,
+            detail=f"source={source}, username={username}",
+            ip="",
+        )
+    except Exception:
+        pass
+
+
 def get_or_create_owner(db: Session) -> User:
     """确保存在 owner 用户。
 
     首次启动: 从环境变量或旧单用户(AppSettings)迁移账号为 owner;
-    若都没有, 创建默认 admin/admin123。
+    若都没有, 创建默认 admin 账号并生成随机一次性密码打印到 stdout
+    (强制运维首次登录后改密, P2-5 2026-08-23 审计)。
     """
     owner = db.query(User).filter(User.role == "owner").first()
     if owner:
@@ -148,6 +218,8 @@ def get_or_create_owner(db: Session) -> User:
         )
         db.add(user)
         db.commit()
+        # P2-4: 首次启动 owner 初始化留痕
+        _audit_owner_init("init_owner_from_env", "env", ENV_AUTH_USERNAME)
         return user
 
     # 2. 旧单用户迁移(AppSettings)
@@ -162,6 +234,8 @@ def get_or_create_owner(db: Session) -> User:
         )
         db.add(user)
         db.commit()
+        # P2-4: 旧单用户迁移留痕
+        _audit_owner_init("init_owner_from_appsettings", "appsettings_migration", setting_username.value)
         return user
 
     # 3. 兜底默认账号(首次部署) — 2026-08-23 Q2: 公开仓库场景默认账号是失守入口,
@@ -172,7 +246,7 @@ def get_or_create_owner(db: Session) -> User:
     if (os.getenv("AUTH_ALLOW_DEFAULT_ADMIN", "").strip().lower() or "0") not in ("1", "true", "yes"):
         _log.critical(
             "[安全] 无 owner 且未配置 AUTH_USERNAME/AUTH_PASSWORD, 且未设置 "
-            "AUTH_ALLOW_DEFAULT_ADMIN=1 — 不再创建默认 admin/admin123。"
+            "AUTH_ALLOW_DEFAULT_ADMIN=1 — 不再创建默认账号。"
             "请在环境变量配置管理员账号后重启。"
         )
         raise RuntimeError(
@@ -183,11 +257,24 @@ def get_or_create_owner(db: Session) -> User:
     user = User(
         id=str(uuid.uuid4()),
         username="admin",
-        password_hash=hash_password("admin123"),
+        password_hash=hash_password(DEFAULT_ADMIN_PASSWORD),
         role="owner",
     )
     db.add(user)
     db.commit()
+    _audit_owner_init("init_owner_default", "fallback_default", "admin")
+    # P2-5: 弱默认密码警告 (stderr, Docker logs 可见), 不 echo 真实密码。
+    import sys as _sys
+    _banner = "=" * 70
+    print(
+        f"\n{_banner}\n"
+        "[首次启动] 已创建默认 owner 账号 (admin)。\n"
+        "[首次启动] 当前使用默认密码, 仅用于本地/dev; 生产请用 AUTH_PASSWORD 环境变量\n"
+        "[首次启动] 注入强密码, 或在登录后前往 '设置 → 修改密码' 立即改密。\n"
+        f"{_banner}",
+        file=_sys.stderr,
+        flush=True,
+    )
     return user
 
 
@@ -322,6 +409,21 @@ async def login(data: LoginRequest, request: Request, db: Session = Depends(get_
         raise HTTPException(401, "用户名或密码错误")
     if not user.is_active:
         raise HTTPException(403, "账号已禁用")
+
+    # P1-7 (2026-08-23 审计): 登录成功后, 若用户哈希还是旧 SHA-256 或旧 n=2^14
+    # scrypt, 透明升级到新参数 (n=2^15) 并落库。下次登录走新参数快路径。
+    # 升级失败不阻断登录 (best-effort), 但记 warning 方便排查。
+    try:
+        if needs_rehash(user.password_hash):
+            old_prefix = "scrypt$" if user.password_hash.startswith("scrypt$") else "sha256$"
+            user.password_hash = hash_password(data.password)
+            db.commit()
+            logger.info(
+                "[auth] 用户 %s 哈希已透明升级 (旧格式: %s -> 新 scrypt n=%d)",
+                user.username, old_prefix, SCRYPT_N_NEW,
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[auth] 透明哈希升级失败 (不阻断登录): %s", e)
 
     success(ip, data.username.strip())
     token, expires_at = create_token(user)

@@ -57,18 +57,19 @@ def _pick_close_on_or_before(klines: list, target: date) -> float | None:
 
 
 def _add_trading_days(start: date, n: int) -> date:
-    """从 start 起算 n 个 A股交易日(周一~周五), 返回第 n 个交易日。
+    """从 start 起算 n 个 A股交易日, 返回第 n 个交易日。
 
-    与回测引擎交易日口径一致(weekday()<5 计数), 跳过周末。
+    S6(2026-08-23): 旧实现仅按 weekday()<5 计数, 忽略法定节假日和调休补班,
+    导致回测命中率和预测评估窗口错位。改走 src.core.trading_calendar 工具,
+    该工具内置 2025-2027 法定节假日 + 调休补班静态表, 与上交所公告口径对齐。
+
     n<=0 时返回 start 本身。
     """
-    cur = start
-    added = 0
-    while added < n:
-        cur += timedelta(days=1)
-        if cur.weekday() < 5:
-            added += 1
-    return cur
+    from src.core.trading_calendar import add_trading_days as _calendar_add
+
+    if n <= 0:
+        return start
+    return _calendar_add(start, n)
 
 
 def evaluate_pending_prediction_outcomes(

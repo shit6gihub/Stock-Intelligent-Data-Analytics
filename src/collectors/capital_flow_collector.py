@@ -53,21 +53,47 @@ _CN_GATEWAY_DISABLED = _os.getenv("CN_GATEWAY_DISABLE") == "1"  # 测试用
 
 # 直连东财 push2delay(大陆网络直通; 海外会被断连)
 _DIRECT_FLOW_URL = "https://push2delay.eastmoney.com/api/qt/ulist.np/get"
+# 修复(L-3, 2026-08-23): 冷启动 5s 超时易挂 — 提到 8s, 允许 1 次内部重试(网络抖动兜底)。
+# 原 5s 是大陆本地部署的乐观估计, 海外/容器环境下命中概率偏低, 现走 requests Session 重试。
+_DIRECT_FLOW_TIMEOUT_S = 8.0
+_DIRECT_FLOW_MAX_RETRY = 1  # 共 2 次尝试
 
 
 def _fetch_direct_flow(symbol: str) -> CapitalFlow | None:
-    """直连东财 push2delay 取今日实时资金流(大陆部署, 不依赖网关)。"""
+    """直连东财 push2delay 取今日实时资金流(大陆部署, 不依赖网关)。
+
+    修复(L-3 + M-4, 2026-08-23):
+    - L-3: timeout 5s → 8s + 1 次内部重试(手动, 不依赖 Session, 兼容测试 monkeypatch).
+    - M-4: 开盘初期 f62/f184/f66/f72 全 0 识别为"数据未生成"(区分于"无数据"),
+           信息级别而非原来的 warn, 上层据此跳过 fallback 视为 "开盘数据未就绪"。
+    """
+    import requests as _req
+
+    code = symbol.strip()
+    secid = f"1.{code}" if code.startswith(("6", "5", "9")) else f"0.{code}"
+    fields = "f2,f3,f12,f14,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87"
+    url = f"{_DIRECT_FLOW_URL}?secids={secid}&fields={fields}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://data.eastmoney.com/",
+    }
+
     try:
-        import requests
-        code = symbol.strip()
-        secid = f"1.{code}" if code.startswith(("6", "5", "9")) else f"0.{code}"
-        fields = "f2,f3,f12,f14,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87"
-        r = requests.get(
-            f"{_DIRECT_FLOW_URL}?secids={secid}&fields={fields}",
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                     "Referer": "https://data.eastmoney.com/"},
-            timeout=5,
-        )
+        last_err: Exception | None = None
+        r = None
+        for attempt in range(_DIRECT_FLOW_MAX_RETRY + 1):
+            try:
+                r = _req.get(url, headers=headers, timeout=_DIRECT_FLOW_TIMEOUT_S)
+                break
+            except Exception as e:
+                last_err = e
+                if attempt < _DIRECT_FLOW_MAX_RETRY:
+                    import time as _t
+                    _t.sleep(0.3)
+                    continue
+        if r is None:
+            logger.debug("东财直连资金流最终失败 %s: %s", symbol, last_err)
+            return None
         if r.status_code != 200:
             return None
         d = r.json()
@@ -77,14 +103,18 @@ def _fetch_direct_flow(symbol: str) -> CapitalFlow | None:
         it = diff[0]
         if it.get("f62") is None:
             return None
-        # 开盘初期防 0 值误判: 东财接口刚开盘时 f62/f184/分项尚未初始化全为 0,
-        # 0 不是"主力资金平衡", 而是"数据未就绪"。全 0 → 视为失败, 回退其他源。
+        # 修复(M-4, 2026-08-23): 开盘初期防 0 值误判。
+        # f62/f184/f66/f72 全 0 ⇒ 数据尚未初始化(而非"主力资金平衡")。返回 None + 信息级日志,
+        # 让上层 fallback 拿腾讯 / Engine 源补, UI 端可标"开盘数据未生成,请稍后"。
         f62 = it.get("f62")
         f184 = it.get("f184")
         f66 = it.get("f66")
         f72 = it.get("f72")
         if f62 == 0 and f184 == 0 and f66 == 0 and f72 == 0:
-            logger.info(f"东财资金流字段未初始化(全0, 开盘初期?), 回退其他源: {symbol}")
+            logger.info(
+                "东财资金流字段未初始化(全0, 开盘初期/午后重启?), 回退其他源: %s",
+                symbol,
+            )
             return None
         return CapitalFlow(
             symbol=symbol,
@@ -96,9 +126,10 @@ def _fetch_direct_flow(symbol: str) -> CapitalFlow | None:
             mid_net_inflow=float(it.get("f78") or 0),
             small_net_inflow=float(it.get("f84") or 0),
             main_net_5d=None,
-            date=_today_cn(),  # 今日实时
+            date=_today_cn(),  # L-1: 统一 YYYY-MM-DD 口径, 与 _today_cn() 同
         )
-    except Exception:
+    except Exception as e:
+        logger.debug("东财直连资金流异常 %s: %s", symbol, e)
         return None
 
 
@@ -200,7 +231,8 @@ class CapitalFlowCollector:
                             mid_net_inflow=tcf.mid_net_inflow,
                             small_net_inflow=tcf.small_net_inflow,
                             main_net_5d=tcf.main_net_5d,
-                            date="",
+                            # L-1 修复: date 统一 YYYY-MM-DD 口径, 不用空串
+                            date=_today_cn(),
                         )
                         _FLOW_CACHE.set(cache_key, capital_flow)
                         logger.debug(f"腾讯实时资金流命中: {symbol} 主力={tcf.main_net_inflow}")

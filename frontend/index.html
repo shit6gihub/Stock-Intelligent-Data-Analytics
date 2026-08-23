@@ -17,6 +17,34 @@
     <meta name="description" content="AI 驱动的股票监控助手，实时行情、智能分析、异动提醒" />
     <meta name="mobile-web-app-capable" content="yes" />
 
+    <!--
+      修复(S-1, 2026-08-23) — JWT 仍存 localStorage, 加严格 CSP meta 缓解 XSS→token 抽取:
+      - default-src 'self'                  : 只允许同源资源
+      - script-src 'self' + 两 CDN(白名单) + 内联 bootstrap 入口
+      - style-src 'self' 'unsafe-inline'    : Tailwind/inline style 仍需 unsafe-inline (tradoff)
+      - connect-src 'self' + 4 个数据/WP源  : 后端代理/WS 通过 self, 业务域名单列
+      - img-src 'self' data:                : 头像 data: URL 兼容
+      - frame-src 'self' blob:              : 影子账户报告 iframe sandbox 渲染(S-2)
+      - object-src 'none' / base-uri 'self' / form-action 'self'
+      TODO(后续迁移, 不在本次范围): 同步把 token 迁到 HttpOnly+Secure+SameSite=Lax cookie,
+           后端 server.py 改 /auth/login 设 cookie + 删 localStorage 写入, refresh token 旋转机制.
+    -->
+    <meta http-equiv="Content-Security-Policy" content="
+      default-src 'self';
+      script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net;
+      style-src 'self' 'unsafe-inline';
+      img-src 'self' data: blob: https:;
+      font-src 'self' data: https://unpkg.com https://cdn.jsdelivr.net;
+      connect-src 'self' ws: wss: http://127.0.0.1:8000 http://localhost:8000 https://stock.quicktiny.cn https://np-cnotice-stock.eastmoney.com https://push2.eastmoney.com https://push2delay.eastmoney.com https://push2ex.eastmoney.com https://qt.gtimg.cn;
+      worker-src 'self' blob:;
+      frame-src 'self' blob:;
+      object-src 'none';
+      base-uri 'self';
+      form-action 'self';
+    " />
+    <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+    <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin" />
+
     <!-- Lightweight Charts (CDN) -->
     <script defer src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"
       onerror="(function(){var s=document.createElement('script');s.defer=true;s.src='https://cdn.jsdelivr.net/npm/lightweight-charts/dist/lightweight-charts.standalone.production.js';document.head.appendChild(s);}())"></script>

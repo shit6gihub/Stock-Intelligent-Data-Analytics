@@ -148,6 +148,56 @@ def _check_data_dir_writable() -> CheckResult:
         )
 
 
+def _check_zhitu_token() -> CheckResult:
+    """检查 8: ZHITU_TOKEN 配置(P0-2, 2026-08-23 审计)。
+
+    之前 quotes.py 公司简介接口硬编码 fallback UUID, 导致任何 fork 仓库的部署
+    都会用同一个公开 token 调智兔 API。改为必须显式配置; 缺失时启动告警。
+    """
+    # 池化/DB 优先 (与 quotes.py 同等优先级)
+    token_pool = ""
+    try:
+        from marketdata.vendors.zhitu import pick_zhitu_token
+        token_pool = pick_zhitu_token() or ""
+    except Exception:
+        pass
+    if token_pool:
+        return CheckResult(
+            "zhitu_token",
+            "ok",
+            "ZHITU_TOKEN 池化已配置(多 key)。",
+        )
+    try:
+        from src.web.database import SessionLocal
+        from src.web.models import AppSettings
+        db = SessionLocal()
+        row = db.query(AppSettings).filter(AppSettings.key == "zhitu_token").first()
+        db.close()
+        if row and row.value and row.value != "********":
+            return CheckResult(
+                "zhitu_token",
+                "ok",
+                "ZHITU_TOKEN 已从数据库 AppSettings 配置。",
+            )
+    except Exception:
+        pass
+
+    env_token = os.environ.get("ZHITU_TOKEN", "")
+    if env_token:
+        return CheckResult(
+            "zhitu_token",
+            "ok",
+            "ZHITU_TOKEN 已通过环境变量配置。",
+        )
+    return CheckResult(
+        "zhitu_token",
+        "warning",
+        "⚠️ ZHITU_TOKEN 未配置(也无池化/DB 设置), 公司简介接口将返回空。"
+        "请设置环境变量 ZHITU_TOKEN 或在设置页/zhitu 池化中配置。"
+        "P0-2 (2026-08-23 审计): 之前源码硬编码的 UUID fallback 已删除, 必须显式配置。",
+    )
+
+
 def _check_notify_channels() -> CheckResult:
     """检查 7: 通知渠道。notify_channels enabled 数量为 0 → warning。"""
     from src.web.database import SessionLocal
@@ -179,6 +229,7 @@ _CHECKS: list[tuple[str, Callable[[], CheckResult]]] = [
     ("thsdk", _check_thsdk),
     ("jwt_secret", _check_jwt_secret),
     ("data_dir", _check_data_dir_writable),
+    ("zhitu_token", _check_zhitu_token),
     ("notify_channels", _check_notify_channels),
 ]
 

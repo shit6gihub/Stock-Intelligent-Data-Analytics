@@ -79,8 +79,15 @@ async def ingest_symbol(
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    for src, klines in zip(rows_by_source.keys(), results):
+    # 2026-08-23 修复(M-11): 收集失败明细, 便于上游聚合日志。
+    fail_details: list[dict] = []
+    for src_name, klines in zip(rows_by_source.keys(), results):
+        if isinstance(klines, Exception):
+            # asyncio.gather(return_exceptions=True) 抛出的异常
+            fail_details.append({"source": src_name, "error": f"{type(klines).__name__}: {klines}"})
+            continue
         if not isinstance(klines, list) or not klines:
+            fail_details.append({"source": src_name, "error": "empty/no klines"})
             continue
         for k in klines:
             # KlineData.date 是 'YYYY-MM-DD', 转为 ts (带时区)
@@ -88,7 +95,7 @@ async def ingest_symbol(
                 ts = datetime.fromisoformat(str(k.date)).replace(tzinfo=timezone.utc)
             except Exception:
                 ts = datetime.now(timezone.utc)
-            rows_by_source[src].append(_to_db_row(symbol, market.value, period, src, k, ts))
+            rows_by_source[src_name].append(_to_db_row(symbol, market.value, period, src_name, k, ts))
 
     # 入库
     total = 0
@@ -110,7 +117,14 @@ async def ingest_symbol(
                     row,
                 )
                 total += result.rowcount
-    return {"symbol": symbol, "ingested": total, "by_source": {s: len(r) for s, r in rows_by_source.items()}}
+    return {
+        "symbol": symbol,
+        "market": market.value,
+        "period": period,
+        "ingested": total,
+        "by_source": {s: len(r) for s, r in rows_by_source.items()},
+        "fail_details": fail_details,
+    }
 
 
 async def ingest_batch(
@@ -132,17 +146,53 @@ async def ingest_batch(
             return await ingest_symbol(db_engine, sym, mkt, period, days)
 
     tasks = [one(s, m) for s, m in symbols]
-    results = await asyncio.gather(*tasks)
+    # 2026-08-23 修复(M-11): 三源失败的 symbol 之前静默 warn 即丢失,
+    # 改为聚合统计 + ERROR 级, 让人/值班系统能第一时间发现数据源异常。
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
     total_ingested = 0
+    success_symbols: list[str] = []
+    fail_symbols: list[dict] = []
     for r in results:
-        if r:
-            total_ingested += r["ingested"]
-            logger.info(
-                f"  {r['symbol']}.{period}: "
-                f"ingested={r['ingested']}, "
-                f"by_source={r['by_source']}"
-            )
-    return {"total_ingested": total_ingested}
+        if isinstance(r, Exception):
+            # gather 自身抛了任务创建异常
+            fail_symbols.append({"symbol": "?", "reason": f"{type(r).__name__}: {r}"})
+            continue
+        if not r:
+            continue
+        total_ingested += r["ingested"]
+        fd = r.get("fail_details") or []
+        if not r["ingested"] and fd:
+            fail_symbols.append({
+                "symbol": r["symbol"],
+                "market": r.get("market", ""),
+                "period": r.get("period", period),
+                "reasons": fd,
+            })
+        else:
+            success_symbols.append(r["symbol"])
+        logger.info(
+            f"  {r['symbol']}.{period}: "
+            f"ingested={r['ingested']}, "
+            f"by_source={r['by_source']}"
+        )
+
+    # 2026-08-23 修复(M-11): 整体聚合日志。三源全空就升级到 ERROR(无人值守时易漏掉)。
+    summary = {
+        "total_symbols": len(symbols),
+        "success": len(success_symbols),
+        "fail": len(fail_symbols),
+        "total_ingested": total_ingested,
+    }
+    if fail_symbols:
+        logger.error(
+            "klines_ingestor 聚合: %s | 失败明细样本(前5): %s",
+            summary,
+            fail_symbols[:5],
+        )
+    else:
+        logger.info("klines_ingestor 聚合: %s | 全部成功", summary)
+    return {"total_ingested": total_ingested, **summary, "fail_symbols": fail_symbols}
 
 
 def get_default_symbols() -> list[tuple[str, str]]:
@@ -180,10 +230,16 @@ async def main_async(args):
     result = await ingest_batch(db_engine, symbols, period=args.period, days=args.days)
     elapsed = time.time() - start
 
+    fail_n = result.get("fail", 0)
     logger.info(
         f"\n✅ 完成: {result['total_ingested']} 行入库 / {elapsed:.1f}s / "
-        f"{result['total_ingested']/elapsed:.0f} 行/秒"
+        f"{result['total_ingested']/elapsed:.0f} 行/秒 | "
+        f"成功 {result.get('success',0)} 失败 {fail_n}/{result.get('total_symbols',0)}"
     )
+    if fail_n:
+        logger.error(
+            "klines_ingestor 主任务检测到失败, 请检查数据源链路 / 网络 / 鉴权"
+        )
     db_engine.dispose()
 
 

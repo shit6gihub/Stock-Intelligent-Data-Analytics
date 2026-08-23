@@ -157,8 +157,12 @@ RUN VERSION_VAL="${VERSION}"; \
 # 从前端构建阶段复制静态文件
 COPY --from=frontend-builder /app/frontend/dist ./static/
 
-# 创建数据目录
-RUN mkdir -p /app/data
+# P0-1 (2026-08-23 审计): 以非 root 用户运行容器, 防容器逃逸 + bind 卷被 root 覆盖。
+# 创建非特权用户(app, UID 10001), 并将 /app 及数据目录 chown 给它。
+RUN groupadd -r -g 10001 app && useradd -r -u 10001 -g app -d /app -s /sbin/nologin app
+
+# 创建数据目录(非 root 可写) + chown 让命名卷挂载后 app 用户可写
+RUN mkdir -p /app/data && chown -R app:app /app
 
 # 瘦身: 清理镜像内 __pycache__ 与 pip 本体(运行时不需要 pip 安装)
 RUN find /usr/local/lib/python3.11/site-packages /app -name "__pycache__" -type d -prune -exec rm -rf {} + 2>/dev/null || true; \
@@ -180,6 +184,9 @@ EXPOSE 8000
 # 健康检查（使用 Python）
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
+
+# 切换到非 root 用户(必须放在 ENTRYPOINT/CMD 之前)
+USER app
 
 # 启动命令
 CMD ["python", "server.py"]

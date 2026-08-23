@@ -1289,4 +1289,31 @@ def _render_card(data: dict) -> io.BytesIO:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8010)
+    # P1-4 (2026-08-23 审计): 默认绑 127.0.0.1; compose 网络内由 8000 经
+    # FORECAST_ENGINE_URL=http://forecast:8010 访问, 不需要主机网卡直接可达。
+    # 主机裸跑想暴露可显式 FORECAST_HOST=0.0.0.0。
+    _host = os.environ.get("FORECAST_HOST", "127.0.0.1")
+    # 可选鉴权: 设了 FORECAST_API_KEY 后所有非 /health 请求需要 bearer 等于该值
+    # (内部服务默认放过避免打断 systemd 静态 token / curl probe)。
+    _api_key = os.environ.get("FORECAST_API_KEY", "").strip()
+    if _api_key:
+        # 全局中间件: 除 /health 外校验 Authorization: Bearer <key>
+        from starlette.middleware.base import BaseHTTPMiddleware
+        from starlette.requests import Request as _Req
+
+        class _ForecastBearerGuard(BaseHTTPMiddleware):
+            async def dispatch(self, _request: _Req, call_next):
+                if _request.url.path == "/health":
+                    return await call_next(_request)
+                auth = _request.headers.get("authorization", "")
+                if not auth.lower().startswith("bearer ") or auth[7:].strip() != _api_key:
+                    from starlette.responses import JSONResponse
+                    return JSONResponse(
+                        status_code=401,
+                        content={"detail": "unauthorized"},
+                    )
+                return await call_next(_request)
+
+        app.add_middleware(_ForecastBearerGuard)
+        print("[forecast] FORECAST_API_KEY 已设置, 非 /health 请求需 bearer 鉴权", file=sys.stderr)
+    uvicorn.run(app, host=_host, port=8010)

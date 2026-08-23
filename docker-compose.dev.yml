@@ -33,8 +33,10 @@ services:
       args:
         PYTHON_IMAGE: public.ecr.aws/docker/library/python:3.11-slim
     image: panwatch-forecast:dev-0.2.0
-    ports:
-      - "8010:8010"
+    # P1-5 (2026-08-23 审计): dev overlay 也用 expose, 不绑主机网卡;
+    # 误用 dev 部署生产也不会把 8010 公开到主机网络。
+    expose:
+      - "8010"
     volumes:
       - ./forecast_server.py:/app/forecast_server.py
       - ./forecast_lib:/app/forecast_lib
