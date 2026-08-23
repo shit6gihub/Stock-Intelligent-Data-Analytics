@@ -147,7 +147,11 @@ def _evaluate_strategy(cfg: dict, q: dict, strategy_id: str, symbol: str, market
     def check(name, actual, op, threshold):
         nonlocal passed
         if actual is None:
+            # 2026-08-23 P3 修复: 字段缺失 = 无法验证 = 不通过(保守语义)。
+            # 此前"跳过该条件"会让放量策略在无量能数据时裸筛全市场。
             missing_fields.append(name)
+            passed = False
+            failed_filters.append({"field": name, "actual": None, "required": op, "threshold": threshold})
             return
         ok = (
             (op == "min" and actual >= threshold)
@@ -157,22 +161,23 @@ def _evaluate_strategy(cfg: dict, q: dict, strategy_id: str, symbol: str, market
             passed = False
             failed_filters.append({"field": name, "actual": actual, "required": op, "threshold": threshold})
 
-    # 实时字段
-    if "price_min" in filter_cfg and current_price is not None:
+    # 实时字段(2026-08-23 P3: 字段缺失时也进 check → missing 标注 + 不通过,
+    # 此前的 "is not None" 守卫会让缺数据的票静默通过全部过滤)
+    if "price_min" in filter_cfg:
         check("current_price", current_price, "min", filter_cfg["price_min"])
-    if "price_max" in filter_cfg and current_price is not None:
+    if "price_max" in filter_cfg:
         check("current_price", current_price, "max", filter_cfg["price_max"])
-    if "change_pct_min" in filter_cfg and change_pct is not None:
+    if "change_pct_min" in filter_cfg:
         check("change_pct", change_pct, "min", filter_cfg["change_pct_min"])
-    if "change_pct_max" in filter_cfg and change_pct is not None:
+    if "change_pct_max" in filter_cfg:
         check("change_pct", change_pct, "max", filter_cfg["change_pct_max"])
-    if "volume_ratio_min" in filter_cfg and volume_ratio is not None:
+    if "volume_ratio_min" in filter_cfg:
         check("volume_ratio", volume_ratio, "min", filter_cfg["volume_ratio_min"])
-    if "volume_ratio_max" in filter_cfg and volume_ratio is not None:
+    if "volume_ratio_max" in filter_cfg:
         check("volume_ratio", volume_ratio, "max", filter_cfg["volume_ratio_max"])
-    if "turnover_rate_min" in filter_cfg and turnover_rate is not None:
+    if "turnover_rate_min" in filter_cfg:
         check("turnover_rate", turnover_rate, "min", filter_cfg["turnover_rate_min"])
-    if "turnover_rate_max" in filter_cfg and turnover_rate is not None:
+    if "turnover_rate_max" in filter_cfg:
         check("turnover_rate", turnover_rate, "max", filter_cfg["turnover_rate_max"])
     # 盘后字段(pe_ttm/pb/market_cap) — 既可能在 filter 里也可能在 cfg 顶层
     for prefix in ("pe_ttm", "pb", "market_cap"):
@@ -187,6 +192,8 @@ def _evaluate_strategy(cfg: dict, q: dict, strategy_id: str, symbol: str, market
             actual = getf(actual_field)
             if actual is None:
                 missing_fields.append(actual_field)
+                passed = False  # 2026-08-23 P3: 缺失 = 无法验证 = 不通过
+                failed_filters.append({"field": actual_field, "actual": None, "required": suffix.lstrip("_"), "threshold": threshold})
             elif suffix == "_min" and actual < threshold:
                 passed = False
                 failed_filters.append({"field": actual_field, "actual": actual, "required": "min", "threshold": threshold})
@@ -200,6 +207,9 @@ def _evaluate_strategy(cfg: dict, q: dict, strategy_id: str, symbol: str, market
     if "low_pe" in ranking and pe_ttm is not None and pe_ttm > 0:
         # PE 越低分越高(PE=0 得 100, PE=30 得 0)
         s = max(0, min(100, 100 - pe_ttm * 3.3))
+        # 2026-08-23 P3 修复: PE<3 多为一次性收益/ST 脱帽等异常, 封顶防价值陷阱排第一
+        if pe_ttm < 3:
+            s = min(s, 55.0)
         score += (s - 50) * ranking["low_pe"]
         score_breakdown.append({"factor": "low_pe", "raw": pe_ttm, "score": round(s, 1), "weight": ranking["low_pe"]})
     if "low_pb" in ranking and pb_ratio is not None and pb_ratio > 0:
@@ -238,8 +248,9 @@ def _evaluate_strategy(cfg: dict, q: dict, strategy_id: str, symbol: str, market
         score += (s - 50) * ranking["oversold"]
         score_breakdown.append({"factor": "oversold", "raw": change_pct, "score": round(s, 1), "weight": rounding_safe(ranking["oversold"])})
     if "reversal" in ranking and change_pct is not None:
-        # 反转信号: 跌得多 + 今日企稳
-        s = 50 if change_pct >= 0 else max(0, 50 + change_pct * 10)
+        # 反转信号: 企稳度打分 — 涨/平(企稳)=满分, 继续跌按跌幅衰减(-5% → 50, -10% → 0)
+        # 2026-08-23 P3 修复: 此前方向写反(涨 0 分跌加分, 与"企稳"语义相反)
+        s = 100 if change_pct >= 0 else max(0, 100 + change_pct * 10)
         score += (s - 50) * ranking["reversal"]
         score_breakdown.append({"factor": "reversal", "raw": change_pct, "score": round(s, 1), "weight": rounding_safe(ranking["reversal"])})
 

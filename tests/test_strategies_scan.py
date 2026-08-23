@@ -80,12 +80,16 @@ class TestEvaluateStrategy:
         assert r["passed"] is False
         assert any(f["field"] == "pe_ttm" for f in r["failed_filters"])
 
-    def test_missing_eod_fields_marked_not_fatal(self):
-        """盘后字段缺失时应标注 missing 而不是让整单失败。"""
+    def test_missing_eod_fields_marked_and_fail(self):
+        """盘后字段缺失 = 无法验证 = 不通过(2026-08-23 P3 保守语义反转)。
+
+        旧语义"缺失仅标注不致命"会让双低策略在无估值数据时变成裸筛,
+        已在判断准确性大修中反转; 缺失项仍标注在 missing_fields。
+        """
         cfg = self.strategies["dual_low"]
         q = _quote_dict("000002", "万科A", 10.0, 1.0, 1.1, 0.9,
                         3e8, None, None, None)
         r = _evaluate_strategy(cfg, q, "dual_low", "000002", "CN")
-        # 实时条件满足 → passed 仍为 True, 估值字段缺失被标注
-        assert r["passed"] is True
+        # 估值字段缺失 → 不通过 + missing 标注
+        assert r["passed"] is False
         assert "pe_ttm" in r["missing_fields"] or "pb_ratio" in r["missing_fields"]
