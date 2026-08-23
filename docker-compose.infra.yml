@@ -37,6 +37,7 @@ services:
       - "127.0.0.1:9090:9090"   # 只本机,经 SSH 访问
     volumes:
       - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus-rules.yml:/etc/prometheus/prometheus-rules.yml:ro
       - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"

@@ -7,6 +7,10 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# 2026-08-23 Q4: 告警规则(补齐"指标采了没人叫"缺口)
+rule_files:
+  - "/etc/prometheus/prometheus-rules.yml"
+
 scrape_configs:
   # 主后端 SIDA
   - job_name: 'sida-panwatch'
