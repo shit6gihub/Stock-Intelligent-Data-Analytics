@@ -17,6 +17,9 @@ import time
 from contextlib import redirect_stderr
 
 import pytest
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # 触发 src.web.models 在 Base.metadata 上注册全表
 import src.web.models  # noqa: F401
@@ -28,7 +31,7 @@ import src.web.models  # noqa: F401
 
 def test_p0_1_dockerfile_user_directive_present():
     """Dockerfile 末尾必须有 USER app 指令, 防容器 root 逃逸。"""
-    df = open("/home/ubuntu/sida-src/Dockerfile").read()
+    df = open(str(PROJECT_ROOT / "Dockerfile")).read()
     # 必须在 ENTRYPOINT/CMD 之前(否则无效)
     cmd_idx = df.find('CMD ["python", "server.py"]')
     user_idx = df.rfind("USER app")
@@ -45,7 +48,7 @@ def test_p0_1_dockerfile_user_directive_present():
 
 def test_p0_2_quotes_no_hardcoded_token():
     """quotes.py 不再含硬编码 UUID fallback。"""
-    src = open("/home/ubuntu/sida-src/src/web/api/quotes.py").read()
+    src = open(str(PROJECT_ROOT / "src/web/api/quotes.py")).read()
     # 旧的硬编码 token 必须不再出现 (除注释里说明"已删除"的描述)
     assert "E0E16C43-9272-4DAB-800C-178694F2D4B1" not in src or \
         "已删除" in src or "必须显式配置" in src, \
@@ -98,7 +101,7 @@ def test_p0_2_startup_check_zhitu_token(monkeypatch, tmp_path):
 
 def test_p0_2_env_example_has_zhitu_token():
     """.env.example 必须有 ZHITU_TOKEN 条目 (供新部署参考)。"""
-    env = open("/home/ubuntu/sida-src/.env.example").read()
+    env = open(str(PROJECT_ROOT / ".env.example")).read()
     assert "ZHITU_TOKEN=" in env
     # 必须有引导说明
     assert "智兔" in env or "ZHITU_TOKEN" in env
@@ -136,7 +139,7 @@ def test_p0_3_llm_adapter_only_openrouter_env(monkeypatch):
 def test_p1_1_server_host_default_127(monkeypatch):
     """server.py 默认 host 应读 WEB_HOST 环境变量, 缺省 127.0.0.1 (不再硬编码 0.0.0.0)。"""
     monkeypatch.delenv("WEB_HOST", raising=False)
-    src = open("/home/ubuntu/sida-src/server.py").read()
+    src = open(str(PROJECT_ROOT / "server.py")).read()
     # 必须用环境变量驱动, 不再硬编码 0.0.0.0
     assert 'os.environ.get("WEB_HOST"' in src
     # 默认值必须是 127.0.0.1
@@ -149,7 +152,7 @@ def test_p1_1_server_host_default_127(monkeypatch):
 
 def test_p1_1_forecast_host_default_127():
     """forecast_server.py 默认 host 应读 FORECAST_HOST 环境变量, 缺省 127.0.0.1。"""
-    src = open("/home/ubuntu/sida-src/forecast_server.py").read()
+    src = open(str(PROJECT_ROOT / "forecast_server.py")).read()
     assert 'os.environ.get("FORECAST_HOST"' in src
     assert 'FORECAST_HOST", "127.0.0.1"' in src
     # uvicorn.run 的 host 不能硬编码 0.0.0.0
@@ -164,7 +167,7 @@ def test_p1_1_forecast_host_default_127():
 
 def test_p1_2_grafana_password_env_required():
     """docker-compose.yml GF_SECURITY_ADMIN_PASSWORD 必须用 ${VAR:?err} 必读, 不允许硬编码。"""
-    dc = open("/home/ubuntu/sida-src/docker-compose.yml").read()
+    dc = open(str(PROJECT_ROOT / "docker-compose.yml")).read()
     # 不允许硬编码
     assert "xz.170530" not in dc, "原硬编码密码必须删除"
     # 必须用 compose env 必读语法
@@ -173,7 +176,7 @@ def test_p1_2_grafana_password_env_required():
 
 
 def test_p1_2_env_example_has_grafana_password():
-    env = open("/home/ubuntu/sida-src/.env.example").read()
+    env = open(str(PROJECT_ROOT / ".env.example")).read()
     assert "GF_SECURITY_ADMIN_PASSWORD=" in env
 
 
@@ -183,7 +186,7 @@ def test_p1_2_env_example_has_grafana_password():
 
 def test_p1_3_redis_bind_loopback_only():
     """docker-compose.yml redis ports 必须绑 127.0.0.1, 防公网未授权访问。"""
-    dc = open("/home/ubuntu/sida-src/docker-compose.yml").read()
+    dc = open(str(PROJECT_ROOT / "docker-compose.yml")).read()
     # 不允许裸 "6379:6379"
     assert '"6379:6379"' not in dc, "Redis 端口映射不允许裸 0.0.0.0 暴露"
     # 必须带 loopback 限定
@@ -196,7 +199,7 @@ def test_p1_3_redis_bind_loopback_only():
 
 def test_p1_4_forecast_optional_api_key():
     """forecast_server.py 实现可选 FORECAST_API_KEY bearer 鉴权, 默认不强制。"""
-    src = open("/home/ubuntu/sida-src/forecast_server.py").read()
+    src = open(str(PROJECT_ROOT / "forecast_server.py")).read()
     assert 'os.environ.get("FORECAST_API_KEY"' in src
     # 设了 key 才挂 bearer guard
     assert "Bearer" in src or "bearer" in src
@@ -210,7 +213,7 @@ def test_p1_4_forecast_optional_api_key():
 
 def test_p1_5_dev_compose_forecast_use_expose():
     """docker-compose.dev.yml forecast 不能 ports: 绑主机, 必须 expose:。"""
-    dc = open("/home/ubuntu/sida-src/docker-compose.dev.yml").read()
+    dc = open(str(PROJECT_ROOT / "docker-compose.dev.yml")).read()
     # 找到 forecast service 顶层定义 (前面是换行 + 2 空格缩进的 "  forecast:")
     import re as _re
     m = _re.search(r"^  forecast:\n(.*?)(?=^  \w|^volumes:)", dc, _re.MULTILINE | _re.DOTALL)
@@ -343,7 +346,7 @@ def test_p1_7_login_transparently_rehashes_legacy(monkeypatch, tmp_path):
 
 def test_p1_8_middleware_order_cors_outermost():
     """app.py 中 CORSMiddleware 必须最后 add (Starlette 后加最外层语义)。"""
-    src = open("/home/ubuntu/sida-src/src/web/app.py").read()
+    src = open(str(PROJECT_ROOT / "src/web/app.py")).read()
     # 找到 4 个业务中间件 + CORS 的 add 顺序
     cors_idx = src.find("add_middleware(CORSMiddleware")
     audit_idx = src.find("add_middleware(AuditMiddleware")
@@ -519,7 +522,7 @@ def test_p1_11_ws_token_extraction_priority():
 
 def test_p2_1_no_misleading_docs_url_print():
     """server.py 启动 print 不再诱导用户访问 /docs (已关闭)。"""
-    src = open("/home/ubuntu/sida-src/server.py").read()
+    src = open(str(PROJECT_ROOT / "server.py")).read()
     # 不允许硬编码 http://127.0.0.1:8000/docs (诱导运维以为 API 文档开放)
     assert "http://127.0.0.1:8000/docs" not in src, \
         "API 文档已关闭, 不应打印诱导链接"
@@ -533,7 +536,7 @@ def test_p2_1_no_misleading_docs_url_print():
 
 def test_p2_2_reload_dirs_no_root():
     """reload_dirs 不应包含 ".", 防根目录文件变更误触发重启。"""
-    src = open("/home/ubuntu/sida-src/server.py").read()
+    src = open(str(PROJECT_ROOT / "server.py")).read()
     # 必须不含 ["src", "."] 这种带根目录的
     assert 'reload_dirs=["src", "."]' not in src
     assert 'reload_dirs=["src"]' in src
@@ -549,7 +552,7 @@ def test_p2_3_jwt_expire_hours_env_keeps_12h_default():
     # 默认 12h
     assert auth_mod.JWT_EXPIRE_HOURS == 12, f"默认 TTL 必须是 12h, 实际 {auth_mod.JWT_EXPIRE_HOURS}"
     # 必须从 env 读取
-    src = open("/home/ubuntu/sida-src/src/web/api/auth.py").read()
+    src = open(str(PROJECT_ROOT / "src/web/api/auth.py")).read()
     m = re.search(r'JWT_EXPIRE_HOURS\s*=\s*int\(os\.getenv\(\s*"JWT_EXPIRE_HOURS"\s*,\s*"12"\s*\)\)', src)
     assert m, "JWT_EXPIRE_HOURS 必须 env 驱动且默认 12h"
 
@@ -635,14 +638,14 @@ def test_p2_5_default_owner_uses_non_admin123_password():
     assert new_hash.startswith("scrypt$32768$")
     assert new_hash != _h.sha256(b"admin123").hexdigest()
     # 源代码里不得再硬编码 hash_password("admin123")
-    src = open("/home/ubuntu/sida-src/src/web/api/auth.py").read()
+    src = open(str(PROJECT_ROOT / "src/web/api/auth.py")).read()
     assert 'hash_password("admin123")' not in src, \
         "auth.py 不应再用 hash_password('admin123') 作为默认密码"
 
 
 def test_p2_5_default_owner_prints_warning_to_stderr():
     """P2-5: 默认 owner 创建时打印改密警告到 stderr (Docker logs 可见), 但不回显真实密码。"""
-    src = open("/home/ubuntu/sida-src/src/web/api/auth.py").read()
+    src = open(str(PROJECT_ROOT / "src/web/api/auth.py")).read()
     # 必须 print 到 stderr
     assert "file=_sys.stderr" in src
     # 提示文本含"默认密码"或"改密"警告
@@ -676,7 +679,7 @@ def test_p2_5_audit_log_for_default_owner(monkeypatch):
 
 def test_env_example_has_all_new_keys():
     """.env.example 必须包含所有新加的安全配置项。"""
-    env = open("/home/ubuntu/sida-src/.env.example").read()
+    env = open(str(PROJECT_ROOT / ".env.example")).read()
     required = [
         "ZHITU_TOKEN=",
         "WEB_HOST=",
