@@ -65,8 +65,6 @@ def test_p0_2_startup_check_zhitu_token(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     # 清掉所有来源
     monkeypatch.delenv("ZHITU_TOKEN", raising=False)
-    monkeypatch.setattr(sc, "_check_hengsheng",
-                        lambda: sc.CheckResult("hengsheng", "info", "mock"))
     monkeypatch.setattr(sc, "_check_notify_channels",
                         lambda: sc.CheckResult("notify_channels", "ok", "mock"))
     monkeypatch.setattr(sc, "_check_jwt_secret",

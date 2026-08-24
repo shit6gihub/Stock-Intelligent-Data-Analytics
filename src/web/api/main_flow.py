@@ -1,7 +1,7 @@
-"""主力意图三源对比 API(腾讯逐笔 vs thsdk L2 vs 恒生 DDE, v0.4.0)。
+"""主力意图双源对比 API(腾讯逐笔 vs thsdk L2, v0.5.0)。
 
-GET /api/main-flow/compare/{symbol}  → 三源主力净额 + 一致性(0-100) + delta_pct
-  + hengsheng 字段(DDE 口径) + notes(各路可用性)
+GET /api/main-flow/compare/{symbol}  → 双源主力净额 + 一致性(0-100) + delta_pct
+  + notes(各路可用性)
 GET /api/main-flow/cache/clear       → 清空进程内缓存(运维/手动刷新)
 
 prefix /api/main-flow 已确认不与现有路由冲突。
@@ -28,15 +28,12 @@ def _validate_symbol(raw: str) -> str:
 
 @router.get("/compare/{symbol}")
 def compare(symbol: str) -> dict:
-    """主力意图三源对比(腾讯逐笔 vs thsdk L2 vs 恒生 DDE)。symbol 为 6 位 A 股代码。
+    """主力意图双源对比(腾讯逐笔 vs thsdk L2)。symbol 为 6 位 A 股代码。
 
     响应结构:
       {
         "symbol", "tencent", "thsdk",
-        "hengsheng": {available, main_net, big_net_dde, dde_ratio,
-                      rising_up_days, super_large_net, large_net,
-                      medium_net, small_net, latest_date},
-        "consistency", "delta_pct", "dde_ratio", "rising_up_days",
+        "consistency", "delta_pct",
         "note", "notes"
       }
     任一源失败 -> 该源 None + notes 说明, 至少一路成功就返回。
@@ -49,4 +46,4 @@ def compare(symbol: str) -> dict:
 def clear() -> dict:
     """清空 main_flow_compare 进程内缓存(运维用)。"""
     clear_cache()
-    return {"cleared": True, "sources": ["tencent", "thsdk", "hengsheng"]}
+    return {"cleared": True, "sources": ["tencent", "thsdk"]}

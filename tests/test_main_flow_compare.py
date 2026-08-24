@@ -44,21 +44,6 @@ def _thsdk_actually_importable() -> bool:
         return False
 
 
-@pytest.fixture(autouse=True)
-def _mock_hengsheng_unavailable(monkeypatch):
-    """恒生源默认不可用: 让既有双源用例专注(腾讯 vs thsdk)两源语义。
-
-    v0.4.0 起 compare_main_flow 会并发拉恒生 DDE。这些用例断言的是双源
-    一致性, 故把恒生 mock 成不可用, 使其退回两源(不改变原断言)。
-    """
-    monkeypatch.setattr(
-        "src.core.hengsheng_fund_flow.get_hs_fund_flow",
-        lambda symbol: {"available": False, "days": [],
-                        "latest_dde_ratio": None, "latest_rising_up_days": None,
-                        "source": "hengsheng", "note": "mock 恒生不可用"},
-    )
-
-
 @pytest.fixture
 def mock_thsdk_l2(monkeypatch):
     """注入 data_source.thsdk_l2 内存桩, 返回其 compute_main_flow mock。"""

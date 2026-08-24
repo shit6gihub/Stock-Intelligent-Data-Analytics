@@ -1,8 +1,7 @@
 """启动配置自检模块(2026-08-21)。
 
-背景: 生产环境(腾讯云 101.35.244.238, docker 容器 panwatch)近期暴露两类配置问题:
-- 部署时丢 SIDA_DB_URL 环境变量 → 静默回退 SQLite 跑了 4 天;
-- 恒生数据源 HENGSHENG_BASE_URL / HENGSHENG_API_KEY 未配置 → 静默走 mock 假数据。
+背景: 生产环境(腾讯云 101.35.244.238, docker 容器 panwatch)近期暴露配置问题:
+- 部署时丢 SIDA_DB_URL 环境变量 → 静默回退 SQLite 跑了 4 天。
 
 本模块在应用启动时(init_db 之后)对关键配置做一次显式自检:
 - level 为 warning/error 的结果打印醒目横幅(前后各一行 `=`)告警;
@@ -67,27 +66,8 @@ def _check_db_url_explicit() -> CheckResult:
     )
 
 
-def _check_hengsheng() -> CheckResult:
-    """检查 3: 恒生数据源。mode=='mock' → info 提示三源对比第三源非真实。"""
-    from src.core.hengsheng_client import get_default_client
-
-    mode = get_default_client().mode
-    if mode == "real":
-        return CheckResult(
-            "hengsheng",
-            "info",
-            "恒生DDE: 已配置真实数据源(HENGSHENG_BASE_URL / HENGSHENG_API_KEY)。",
-        )
-    return CheckResult(
-        "hengsheng",
-        "info",
-        "恒生DDE为mock样本数据, 三源对比第三源非真实。"
-        "生产请配置 HENGSHENG_BASE_URL / HENGSHENG_API_KEY。",
-    )
-
-
 def _check_thsdk() -> CheckResult:
-    """检查 4: thsdk 账户。无 THS_USERNAME → info 提示游客模式。"""
+    """检查 3: thsdk 账户。无 THS_USERNAME → info 提示游客模式。"""
     if os.environ.get("THS_USERNAME"):
         return CheckResult(
             "thsdk",
@@ -225,7 +205,6 @@ def _check_notify_channels() -> CheckResult:
 _CHECKS: list[tuple[str, Callable[[], CheckResult]]] = [
     ("database.dialect", _check_db_dialect),
     ("database.url", _check_db_url_explicit),
-    ("hengsheng", _check_hengsheng),
     ("thsdk", _check_thsdk),
     ("jwt_secret", _check_jwt_secret),
     ("data_dir", _check_data_dir_writable),

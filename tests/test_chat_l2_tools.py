@@ -37,29 +37,25 @@ def mock_db():
 # ──────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_main_flow_compare_success(mock_db):
-    """mock compare_main_flow 返回三源数据 → 验证文本含口径标注和一致性评分。"""
+    """mock compare_main_flow 返回双源数据 → 验证文本含口径标注和一致性评分。"""
     fake_result = {
         "symbol": "002361",
         "tencent": {"available": True, "main_net": 5000000},
         "thsdk": {"available": True, "main_net": 4800000},
-        "hengsheng": {"available": True, "main_net": 5100000, "dde_ratio": 0.15, "rising_up_days": 3},
         "consistency": 85.0,
         "delta_pct": 15.0,
-        "dde_ratio": 0.15,
-        "rising_up_days": 3,
-        "note": "三源一致性比对(腾讯逐笔 vs thsdk L2 vs 恒生 DDE)",
-        "notes": ["tencent: 可用", "thsdk: 可用", "hengsheng: 可用"],
+        "note": "双源一致性比对(腾讯逐笔 vs thsdk L2)",
+        "notes": ["tencent: 可用", "thsdk: 可用"],
     }
     # 函数内使用 from src.core.main_flow_compare import compare_main_flow → 在定义模块上 patch
     with patch("src.core.main_flow_compare.compare_main_flow", return_value=fake_result):
         text = await _execute_tool(mock_db, "get_main_flow_compare", {"symbol": "002361"})
 
-    assert "[数据源: 腾讯逐笔/同花顺L2/恒生DDE]" in text
+    assert "[数据源: 腾讯逐笔/同花顺L2]" in text
     assert "002361" in text
     assert "85.0" in text or "85/100" in text
     assert "腾讯逐笔" in text
     assert "同花顺L2" in text
-    assert "恒生DDE" in text
     assert "一致性" in text
 
 
@@ -72,18 +68,15 @@ async def test_main_flow_compare_market_not_cn(mock_db):
 
 @pytest.mark.asyncio
 async def test_main_flow_compare_all_fail(mock_db):
-    """三源全部失败 => 友好降级。"""
+    """双源全部失败 => 友好降级。"""
     fake_result = {
         "symbol": "002361",
         "tencent": None,
         "thsdk": None,
-        "hengsheng": None,
         "consistency": None,
         "delta_pct": None,
-        "dde_ratio": None,
-        "rising_up_days": None,
-        "note": "三源一致性比对; tencent 数据暂不可用; thsdk 数据暂不可用; hengsheng 数据暂不可用",
-        "notes": ["tencent: 数据暂不可用", "thsdk: 数据暂不可用", "hengsheng: 数据暂不可用"],
+        "note": "双源一致性比对; tencent 数据暂不可用; thsdk 数据暂不可用",
+        "notes": ["tencent: 数据暂不可用", "thsdk: 数据暂不可用"],
     }
     with patch("src.core.main_flow_compare.compare_main_flow", return_value=fake_result):
         text = await _execute_tool(mock_db, "get_main_flow_compare", {"symbol": "002361"})

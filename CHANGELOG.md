@@ -2,6 +2,18 @@
 
 ## 2026-08-24
 
+### update
+
+- **移除恒生聚源 DDE 第三数据源（主力意图收敛回双源对比）**: 主力意图一致性比对
+  从三源（腾讯逐笔 vs 同花顺 L2 vs 恒生 DDE）收敛回双源（腾讯逐笔 vs 同花顺 L2）。
+  删除 `src/core/hengsheng_client.py`、`src/core/hengsheng_fund_flow.py` 及相关测试；
+  `main_flow_compare.py` 三源 min-pairwise 一致性改回双源 `_consistency`，移除
+  hengsheng/dde_ratio/rising_up_days 字段；`chat.py` 的 `get_main_flow_compare` 工具、
+  `main_flow.py` API、`startup_check.py` 自检项同步移除恒生引用。前端零改动
+  （双源对比卡本就只渲染腾讯 + 同花顺两列）。
+
+## 2026-08-24
+
 ### doc
 
 - **README/仓库 meta 突出"缝合怪"定位 + meta 刷新**: 中英双语 README 在开头新增诚实定位

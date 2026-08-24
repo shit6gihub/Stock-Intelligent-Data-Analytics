@@ -96,7 +96,7 @@ _TOOL_STAGE_LABELS = {
     "get_thsdk_market_data_bond": "正在查询可转债行情...",
     "get_thsdk_market_data_fund": "正在查询基金/ETF行情...",
     "get_wencai_enhanced": "正在执行增强版问财检索...",
-    "get_main_flow_compare": "正在比对主力三源(腾讯逐笔/同花顺L2/恒生DDE)...",
+    "get_main_flow_compare": "正在比对主力双源(腾讯逐笔/同花顺L2)...",
     "get_delta_series": "正在计算秒级Delta序列(逐笔穿透)...",
     "get_orderbook": "正在采集盘口演变快照(THS L2 20档)...",
     "get_event_catalyst": "正在推理事件催化与预期差(公告→受益链)...",
@@ -454,7 +454,7 @@ CHAT_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_main_flow_compare",
-            "description": "比对三路主力资金数据源(腾讯逐笔/同花顺L2/恒生DDE)的一致性, 判断主力真实意图。仅限A股(CN)。入参 symbol=6位A股代码如002361。返回每路主力净额(元)及一致性评分(0-100)。用于回答「三路主力数据是否一致」「主力在吸筹还是派发」「各数据源口径对比」等问题。",
+            "description": "比对两路主力资金数据源(腾讯逐笔/同花顺L2)的一致性, 判断主力真实意图。仅限A股(CN)。入参 symbol=6位A股代码如002361。返回每路主力净额(元)及一致性评分(0-100)。用于回答「两路主力数据是否一致」「主力在吸筹还是派发」「各数据源口径对比」等问题。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1489,17 +1489,15 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
             symbol = args.get("symbol", "")
             market = args.get("market", "CN")
             if market != "CN":
-                return "主力三源对比仅支持 A 股(CN)。"
+                return "主力双源对比仅支持 A 股(CN)。"
             try:
                 from src.core.main_flow_compare import compare_main_flow
                 result = await asyncio.to_thread(compare_main_flow, symbol)
                 if not result or result.get("consistency") is None:
-                    return f"[数据源: 腾讯逐笔/同花顺L2/恒生DDE] {symbol} 主力三源数据均不可用, 无法比对。"
-                lines = [f"[数据源: 腾讯逐笔/同花顺L2/恒生DDE] {symbol} 主力三源对比:"]
+                    return f"[数据源: 腾讯逐笔/同花顺L2] {symbol} 主力双源数据均不可用, 无法比对。"
+                lines = [f"[数据源: 腾讯逐笔/同花顺L2] {symbol} 主力双源对比:"]
                 lines.append(f"  一致性: {result['consistency']}/100  |  发散幅度: {result['delta_pct']}%")
-                if result.get("dde_ratio") is not None:
-                    lines.append(f"  恒生DDE资金比: {result['dde_ratio']}%  |  连红天数: {result.get('rising_up_days', '-')}")
-                for src_name, src_key in [("腾讯逐笔", "tencent"), ("同花顺L2", "thsdk"), ("恒生DDE", "hengsheng")]:
+                for src_name, src_key in [("腾讯逐笔", "tencent"), ("同花顺L2", "thsdk")]:
                     src = result.get(src_key)
                     if src and src.get("available"):
                         mn = src.get("main_net")
@@ -1511,7 +1509,7 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
                 return "\n".join(lines)
             except Exception as e:
                 logger.warning(f"get_main_flow_compare 工具失败 [{symbol}]: {e}")
-                return f"主力三源对比失败: {str(e)[:100]}"
+                return f"主力双源对比失败: {str(e)[:100]}"
         elif name == "get_delta_series":
             symbol = args.get("symbol", "")
             market = args.get("market", "CN")

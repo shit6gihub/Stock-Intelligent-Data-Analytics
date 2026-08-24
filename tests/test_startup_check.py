@@ -56,11 +56,7 @@ def test_all_normal_has_no_warning(monkeypatch, tmp_path):
     monkeypatch.setenv("THS_USERNAME", "ths_user")
     monkeypatch.setenv("JWT_SECRET", "test-secret")
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
-    # 恒生真实模式 + 通知渠道非零 —— 避免依赖真实 DB 状态
-    monkeypatch.setattr(
-        sc, "_check_hengsheng",
-        lambda: CheckResult("hengsheng", "info", "恒生DDE真实数据"),
-    )
+    # 通知渠道非零 —— 避免依赖真实 DB 状态
     monkeypatch.setattr(
         sc, "_check_notify_channels",
         lambda: CheckResult("notify_channels", "ok", "可用通知渠道: 1 个"),
@@ -78,7 +74,7 @@ def test_check_exception_does_not_crash(monkeypatch, tmp_path):
     def _boom():
         raise RuntimeError("检查内部故障")
 
-    monkeypatch.setattr(sc, "_check_hengsheng", _boom)
+    monkeypatch.setattr(sc, "_check_thsdk", _boom)
 
     # 不应抛出
     results = run_startup_checks()
@@ -86,7 +82,7 @@ def test_check_exception_does_not_crash(monkeypatch, tmp_path):
     assert all(isinstance(r, CheckResult) for r in results)
     # 其余检查仍执行完成
     names = {r.name for r in results}
-    assert "hengsheng" not in names  # 该检查被跳过
+    assert "thsdk" not in names  # 该检查被跳过
     assert "database.dialect" in names
 
 
