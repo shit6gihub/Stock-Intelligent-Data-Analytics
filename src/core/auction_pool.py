@@ -228,10 +228,20 @@ def fetch_auction_anomaly(market: str = "CN") -> list[dict]:
             df = get_auction_anomaly(m)
             for rec in _to_records(df):
                 sym = rec.get("symbol")
-                if sym and sym in seen_codes:
+                if not sym:
                     continue
-                if sym:
-                    seen_codes.add(sym)
+                if sym in seen_codes:
+                    # 同一股票多条异动时保留信息量更大的一条:
+                    # 撤单(有撤单率) > 涨跌停试盘(占位无信息) > 其他
+                    _RANK = {"撤单": 2, "试盘": 0}
+                    prev = next(r for r in all_records if r.get("symbol") == sym)
+                    def _rank(rec: dict) -> int:
+                        t = str(rec.get("anomaly_type") or "")
+                        return max((v for k, v in _RANK.items() if k in t), default=1)
+                    if _rank(rec) > _rank(prev):
+                        all_records[all_records.index(prev)] = rec
+                    continue
+                seen_codes.add(sym)
                 all_records.append(rec)
     except Exception as e:  # noqa: BLE001 - 数据源不可用统一降级
         logger.warning("[auction_pool] 竞价异动拉取失败 market=%r: %r", market, e)
