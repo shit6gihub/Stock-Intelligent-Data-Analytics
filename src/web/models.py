@@ -1373,3 +1373,29 @@ class AuctionAnomalyRecord(Base):
     volume_ratio = Column(Float, nullable=True)   # 量比
     note = Column(String(255), default="")
     created_at = Column(DateTime, server_default=func.now(), index=True)
+
+
+class MarketPhaseDaily(Base):
+    """市场情绪周期每日指标 + 阶段标签(2026-08-24, 6 阶段体系)。
+
+    - 原始指标由 src/core/market_phase.compute_daily_metrics 从
+      MarketSentimentCollector().get_limit_up_pool() 派生:
+        first_board, ge2/3/5_count, max_height, promo_rate, seal_rate
+    - 上证当日涨跌幅 sh_index_pct 用于弱档否决(正向阶段 → repair)
+    - phase 字段在 sync 时由 classify_phase_series 重算(EMA + 2 日确认),
+      取值见 src.core.market_phase.PHASE_* 常量
+    - 由 POST /api/market/phase/sync 写入, create_all 自动建表
+    """
+    __tablename__ = "market_phase_daily"
+
+    date = Column(Date, primary_key=True)  # YYYY-MM-DD
+    first_board = Column(Integer, default=0, nullable=False)
+    ge2_count = Column(Integer, default=0, nullable=False)
+    ge3_count = Column(Integer, default=0, nullable=False)
+    ge5_count = Column(Integer, default=0, nullable=False)
+    max_height = Column(Integer, default=0, nullable=False)
+    promo_rate = Column(Float, nullable=True)        # 晋级率, 池不足时 None
+    seal_rate = Column(Float, nullable=True)         # 封板率, 数据源不可得时 None
+    sh_index_pct = Column(Float, nullable=True)      # 上证当日涨跌幅 %
+    phase = Column(String(32), default="", nullable=False)  # ice/ignite/rally/climax/ebb/repair/accumulating
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

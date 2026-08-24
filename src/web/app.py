@@ -43,6 +43,8 @@ from src.web.api import (
     boards,
     main_flow,
     auction_pool,
+    abnormal_moves,
+    market_phase,
     chat_upload,
     my_ai_services,
     users,
@@ -50,6 +52,7 @@ from src.web.api import (
     profile,
     export as export_data,
     audit,
+    market_mainline,
 )
 from src.web.api import factors
 from src.web.api import notifications
@@ -297,6 +300,13 @@ app.include_router(tradingview_webhook.router, prefix="/api/webhooks", tags=["we
 
 # 需要登录的路由
 protected = [Depends(get_current_user)]
+# 市场主线识别(2026-08-24, v0.3.0): Top20 主线 + 成分股; 60s 进程内缓存; 需登录
+app.include_router(
+    market_mainline.router,
+    prefix="/api/market",
+    tags=["market-mainline"],
+    dependencies=protected,
+)
 app.include_router(
     stocks.router, prefix="/api/stocks", tags=["stocks"], dependencies=protected
 )
@@ -569,6 +579,21 @@ app.include_router(
     auction_pool.router,
     prefix="/api/auction",
     tags=["auction-pool"],
+    dependencies=protected,
+)
+# 异动接近度监控(任务 C, 2026-08-24): 交易所异常波动规则 60s 扫描
+app.include_router(
+    abnormal_moves.router,
+    prefix="/api/abnormal-moves",
+    tags=["abnormal-moves"],
+    dependencies=protected,
+)
+# 情绪周期 6 阶段(2026-08-24, 任务 A): 当前阶段 + 30 天序列 + 分布
+# prefix /api/market 与现有 market.router(indices)共存, market_phase 用 /phase 子路径
+app.include_router(
+    market_phase.router,
+    prefix="/api/market",
+    tags=["market-phase"],
     dependencies=protected,
 )
 

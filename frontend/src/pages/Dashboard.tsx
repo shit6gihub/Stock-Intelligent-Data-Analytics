@@ -34,6 +34,8 @@ import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Skeleton } from '@panwatch/base-ui/components/ui/skeleton'
 import { Onboarding } from '@panwatch/biz-ui/components/onboarding'
 import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
+import MarketPhaseCard from '@panwatch/biz-ui/components/MarketPhaseCard'
+import MarketMainlineCard from '@panwatch/biz-ui/components/MarketMainlineCard'
 import DiscoveryPanel from '@/components/DiscoveryPanel'
 import SkeletonRows from '@/components/SkeletonRows'
 import Sparkline from '@/components/Sparkline'
@@ -624,6 +626,16 @@ export default function DashboardPage() {
             )}
           </button>
         ))}
+      </div>
+
+      {/* 情绪周期6阶段 + 主线识别(TSP 口径) */}
+      <div className="mt-5 grid grid-cols-1 gap-x-6 gap-y-4 md:grid-cols-2">
+        <div className="border-t border-border/60 pt-2.5">
+          <MarketPhaseCard />
+        </div>
+        <div className="border-t border-border/60 pt-2.5">
+          <MarketMainlineCard />
+        </div>
       </div>
 
       {/* 大盘资金流(东财两市主力净流入, 对齐同花顺APP) */}

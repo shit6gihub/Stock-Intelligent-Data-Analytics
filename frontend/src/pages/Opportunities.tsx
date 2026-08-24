@@ -28,6 +28,7 @@ import FactorWeightsPanel from '@/components/FactorWeightsPanel'
 import SignalScoreShareCard from '@/components/SignalScoreShareCard'
 import WencaiPanel from '@panwatch/biz-ui/components/WencaiPanel'
 import AuctionAnomalyTab from '@panwatch/biz-ui/components/AuctionAnomalyTab'
+import AbnormalMovesCard from '@panwatch/biz-ui/components/AbnormalMovesCard'
 import StrategyLibraryDialog from '@/components/StrategyLibraryDialog'
 
 type SourceFilter = 'all' | 'market_scan' | 'watchlist' | 'mixed' | 'strategy' | 'auction' | 'tdx' | 'wencai'
@@ -345,7 +346,7 @@ export default function OpportunitiesPage() {
   const [snapshotDate, setSnapshotDate] = useState('')
 
   // 机会页 Tab: 候选池 / 竞价异动(2026-08-20, v0.3.0)
-  const [viewMode, setViewMode] = useLocalStorage<'candidates' | 'auction'>('panwatch_opportunities_viewmode_v1', 'candidates')
+  const [viewMode, setViewMode] = useLocalStorage<'candidates' | 'auction' | 'abnormal'>('panwatch_opportunities_viewmode_v2', 'candidates')
 
   // 统一筛选入口(2026-08-22): draft 模式 — Popover 内改草稿, 「应用」才写回持久化 state 并加载
   const [filterOpen, setFilterOpen] = useState(false)
@@ -1130,9 +1131,20 @@ export default function OpportunitiesPage() {
         >
           竞价异动
         </button>
+        <button
+          type="button"
+          onClick={() => setViewMode('abnormal')}
+          className={`rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors ${
+            viewMode === 'abnormal' ? 'bg-primary text-primary-foreground' : 'bg-accent/50 text-muted-foreground hover:bg-accent'
+          }`}
+        >
+          异动预警
+        </button>
       </div>
 
-      {viewMode === 'auction' ? (
+      {viewMode === 'abnormal' ? (
+        <AbnormalMovesCard />
+      ) : viewMode === 'auction' ? (
         <AuctionAnomalyTab market="CN" onOpenDetail={openAuctionDetail} />
       ) : (
       <>
