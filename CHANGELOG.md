@@ -2,6 +2,16 @@
 
 ## 2026-08-24
 
+### feature
+
+- **盘前分析接入亚太市场 + 美股股指期货**: 新增 `src/core/global_indices.py`(yahoo
+  finance 免费源,无 key,5min 进程内缓存),采集 日经225/韩国KOSPI/台湾加权/恒生指数 +
+  纳指100/道指/标普期货实时报价 + 美股三大指数。盘前 agent 的 prompt 新增
+  "亚太市场与隔夜衍生品"模块,并注明口径(日韩台早盘是 A 股情绪前导,期货反映隔夜消息面)。
+  实测 10/10 指数全部有数据。
+
+## 2026-08-24
+
 ### fix
 
 - **竞价异动池 gap_pct/withdraw_rate 推导口径二次修正**: 任务2实测再次确认 thsdk `call_auction_anomaly` 返回的「价格」列**不是价格**,而是异动幅度小数比例;「总金额」列恒为 2147483648 (int32 上限占位垃圾)。v0.3.1 旧版用 `(价格/昨收-1)*100` 反推 gap_pct 是错误假设。修正:删除 `_compute_gap_pct`/`_batch_prev_close` + klines 昨收依赖,改用「异动类型 + 价格列」直接推导 — 急速涨跌/大幅高低开 → `gap_pct = 价格×100`; 涨停/跌停试盘 → 价格=1.0 占位无信息 → `gap_pct=None`; 涨停/跌停撤单 → `withdraw_rate = 价格×100`(撤单率 0.5~0.9 区间);其他类型兜底 `|价格|<0.21` 按涨跌幅处理。`MISSING_FIELDS` 收紧到仅 `[volume_ratio]` (withdraw_rate 已部分填充,不再 always-missing)。前端 `AuctionAnomalyTab.tsx` 无大改(对 None 显 '—' 逻辑保留)。附 26 个新单测覆盖各类型推导 + 边界条件。

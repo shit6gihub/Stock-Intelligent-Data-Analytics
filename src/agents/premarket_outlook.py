@@ -95,10 +95,19 @@ class PremarketOutlookAgent(BaseAgent):
                         "current": item.get("current_price"),
                         "change_pct": item.get("change_pct"),
                     }
-                    )
+                )
         except Exception as e:
             logger.warning("[%s] 获取美股指数失败: %s", trace_id, e)
         logger.info("[%s] 隔夜指数采集完成: count=%s", trace_id, len(us_indices))
+
+        # 2b. 亚太市场 + 美股期货(yahoo, 免费无 key): 盘前情绪锚
+        global_indices: dict = {}
+        try:
+            from src.core.global_indices import fetch_global_indices
+
+            global_indices = fetch_global_indices()
+        except Exception as e:
+            logger.warning("[%s] 全球指数采集失败: %s", trace_id, e)
 
         # 3/4. SignalPack（技术面+持仓+新闻）
         builder = SignalPackBuilder()
@@ -342,6 +351,7 @@ class PremarketOutlookAgent(BaseAgent):
             if yesterday_analysis
             else None,
             "us_indices": us_indices,
+            "global_indices": global_indices,
             "signal_packs": packs,
             "symbol_contexts": symbol_contexts,
             "quality_overview": quality_overview,
@@ -421,6 +431,33 @@ class PremarketOutlookAgent(BaseAgent):
                 lines.append(
                     f"- {idx.get('name')}: {current:.2f} {direction} {chg:+.2f}%"
                 )
+            lines.append("")
+
+        # 亚太市场 + 美股期货(盘前情绪锚)
+        gi = data.get("global_indices") or {}
+        if gi:
+            lines.append("## 亚太市场与隔夜衍生品")
+            futures = ["纳指100期货", "道指期货", "标普期货"]
+            apac = ["日经225", "韩国KOSPI", "台湾加权", "恒生指数"]
+            for group, title in ((futures, "美股股指期货(实时,反映隔夜情绪延续)"), (apac, "亚太主要指数")):
+                rows = [(n, gi[n]) for n in group if n in gi]
+                if not rows:
+                    continue
+                lines.append(f"### {title}")
+                for n, v in rows:
+                    chg = v.get("change_pct")
+                    price = safe_num(v.get("price"), 0)
+                    if chg is None:
+                        lines.append(f"- {n}: {price:.2f}(涨跌幅无数据)")
+                    else:
+                        d = "↑" if chg > 0 else ("↓" if chg < 0 else "→")
+                        lines.append(f"- {n}: {price:.2f} {d} {chg:+.2f}%")
+                lines.append("")
+            lines.append(
+                "> 参考口径: 美股三大指数为上一交易日收盘;期货与亚太指数为最新报价。"
+                "日经/韩国/台湾开盘早于A股,其早盘表现是A股情绪的直接前导;"
+                "美股期货为盘后/盘中定价,反映隔夜消息面。"
+            )
             lines.append("")
 
         # 市场情绪(涨停池 + 连板梯队 + 指数)
@@ -1183,6 +1220,7 @@ class PremarketOutlookAgent(BaseAgent):
             user_id=_resolve_user_id(context),
             raw_data={
                 "us_indices": data.get("us_indices"),
+                "global_indices": data.get("global_indices"),
                 "timestamp": data.get("timestamp"),
                 "quality_overview": quality_overview,
                 "context_summary": compact_context,
