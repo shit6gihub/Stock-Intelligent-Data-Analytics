@@ -33,10 +33,10 @@ def _format_datetime(dt) -> str:
         tzinfo = timezone.utc
 
     # Deterministic rule:
-    # - naive datetime: treat as UTC
+    # - naive datetime: app 时区(北京)本地时间(2026-08-24 修复 +8 偏移)
     # - aware datetime: keep original timezone semantics
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=tzinfo)
 
     return dt.astimezone(tzinfo).isoformat(timespec="seconds")
 

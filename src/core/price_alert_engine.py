@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from src.collectors.kline_collector import KlineCollector, kline_source
 from src.core.notifier import NotifierManager
 from src.core.marketdata_client import md_quote_rows
+from src.core.timezone import to_utc
 from src.models.market import MarketCode, MARKETS
 from src.web.database import SessionLocal
 from src.web.models import NotifyChannel, PriceAlertHit, PriceAlertRule, Stock
@@ -228,9 +229,7 @@ class PriceAlertEngine:
             return False, "disabled"
 
         if rule.expire_at:
-            exp = rule.expire_at
-            if exp.tzinfo is None:
-                exp = exp.replace(tzinfo=timezone.utc)
+            exp = to_utc(rule.expire_at)
             if now > exp:
                 return False, "expired"
 
@@ -251,9 +250,7 @@ class PriceAlertEngine:
             return False, "once_triggered"
 
         if rule.last_trigger_at:
-            last = rule.last_trigger_at
-            if last.tzinfo is None:
-                last = last.replace(tzinfo=timezone.utc)
+            last = to_utc(rule.last_trigger_at)
             delta_sec = (now - last).total_seconds()
             cooldown = max(0, int(rule.cooldown_minutes or 0)) * 60
             if delta_sec < cooldown:

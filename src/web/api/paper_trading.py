@@ -40,7 +40,7 @@ def _format_dt(dt) -> str:
     except Exception:
         tzinfo = timezone.utc
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=tzinfo)
     return dt.astimezone(tzinfo).isoformat(timespec="seconds")
 
 
@@ -117,7 +117,7 @@ def _build_equity_curve(
             continue
         dt = t.closed_at
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=ZoneInfo(Settings().app_timezone or "UTC"))
         date_str = dt.strftime("%Y-%m-%d")
         by_date.setdefault(date_str, 0.0)
         by_date[date_str] += t.pnl
@@ -148,7 +148,7 @@ def _build_equity_curve(
         created = acc.created_at
         if created:
             if created.tzinfo is None:
-                created = created.replace(tzinfo=timezone.utc)
+                created = created.replace(tzinfo=ZoneInfo(Settings().app_timezone or "UTC"))
             start_str = created.strftime("%Y-%m-%d")
             if start_str != today_str:
                 curve.insert(0, {"date": start_str, "equity": round(base, 2)})

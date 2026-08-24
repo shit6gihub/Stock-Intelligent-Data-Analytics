@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-24
+
+### fix
+
+- **时区 +8 小时偏移（全站时间显示错误）**: SQLite→PG 迁移后，PG 的
+  `timestamp without time zone` 列 + func.now()（PG timezone=Asia/Shanghai）
+  存的是北京 naive 时间，但读取侧仍按旧 SQLite 口径 `replace(tzinfo=timezone.utc)`
+  把 naive 当 UTC 再转回北京 → 所有时间超前 8 小时（盘中监测 09:27 显示成 17:27）。
+  `timezone.py` 新增 `_db_naive_tz()` 按 DB 方言解读 naive（SQLite=UTC、PG=北京），
+  修 to_beijing/to_iso_with_tz/to_utc 并新增 `format_app_tz`；修 10+ 处序列化/比较点
+  （建议池、history/dashboard/agents/logs/context/price_alerts/paper_trading 的
+  _format_datetime，以及 price_alert_engine/paper_trading_engine/entry_candidates/
+  strategy_engine 的 naive 比较）；更新 test_timezone.py 覆盖 SQLite/PG 双方言断言。
+
 ## 2026-08-23
 
 ### 判断准确性大修(P1-P4)

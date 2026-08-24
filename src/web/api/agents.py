@@ -58,7 +58,8 @@ def _set_scan_cache(key: str, payload: dict) -> None:
 def _format_datetime(dt, tz: str | None = None) -> str:
     """格式化时间为当前时区的 ISO 格式。
 
-    说明：SQLite 存储的时间通常没有 tzinfo，按 UTC 解释后再转换到 app_timezone。
+    说明：PG 的 timestamp without time zone 列存的是 app 时区(北京)本地 naive
+    时间，按 app 时区解读后再转换到目标时区(2026-08-24 修复 +8 偏移)。
     """
 
     if not dt:
@@ -71,7 +72,7 @@ def _format_datetime(dt, tz: str | None = None) -> str:
         tzinfo = timezone.utc
 
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=ZoneInfo(Settings().app_timezone or "UTC"))
 
     return dt.astimezone(tzinfo).isoformat()
 
@@ -472,7 +473,7 @@ def find_running_for_stock(
     if status == "running":
         last_ts = latest_log.timestamp
         if last_ts and last_ts.tzinfo is None:
-            last_ts = last_ts.replace(tzinfo=timezone.utc)
+            last_ts = last_ts.replace(tzinfo=ZoneInfo(Settings().app_timezone or "UTC"))
         if last_ts:
             idle_sec = (datetime.now(timezone.utc) - last_ts).total_seconds()
             if idle_sec > 300:  # 5 分钟无新进度 → stale
@@ -520,7 +521,7 @@ def find_active_tradingagents_trace(db: Session, stock_symbol: str) -> str | Non
 
     last_ts = latest_log.timestamp
     if last_ts and last_ts.tzinfo is None:
-        last_ts = last_ts.replace(tzinfo=timezone.utc)
+        last_ts = last_ts.replace(tzinfo=ZoneInfo(Settings().app_timezone or "UTC"))
     if last_ts and (datetime.now(timezone.utc) - last_ts).total_seconds() > 300:
         return None  # stale → 视为不在跑
 
@@ -803,7 +804,7 @@ def get_run_progress(trace_id: str, db: Session = Depends(get_db)):
         last_ts = last_log.timestamp
         if last_ts is not None:
             if last_ts.tzinfo is None:
-                last_ts = last_ts.replace(tzinfo=timezone.utc)
+                last_ts = last_ts.replace(tzinfo=ZoneInfo(Settings().app_timezone or "UTC"))
             idle_sec = (datetime.now(timezone.utc) - last_ts).total_seconds()
             status = "stale" if idle_sec > STALE_THRESHOLD_SEC else "running"
         else:

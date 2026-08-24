@@ -3,12 +3,11 @@
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
-from datetime import timezone
 from sqlalchemy import and_, func, or_
 
 from src.web.database import SessionLocal
 from src.web.models import StockSuggestion
-from src.core.timezone import utc_now, to_iso_with_tz
+from src.core.timezone import utc_now, to_iso_with_tz, to_utc
 from src.core.json_safe import to_jsonable
 
 logger = logging.getLogger(__name__)
@@ -118,9 +117,7 @@ def save_suggestion(
             )
 
             if latest and latest.created_at:
-                latest_created = latest.created_at
-                if latest_created.tzinfo is None:
-                    latest_created = latest_created.replace(tzinfo=timezone.utc)
+                latest_created = to_utc(latest.created_at)
 
                 window = timedelta(minutes=_dedupe_window_minutes(agent_name))
                 same_key = (
@@ -349,32 +346,12 @@ def _to_dict(suggestion: StockSuggestion, now: Optional[datetime] = None) -> dic
 
     is_expired = False
     if suggestion.expires_at:
-        # 确保比较时都使用 UTC
-        expires_utc = suggestion.expires_at
-        if expires_utc.tzinfo is None:
-            from src.core.timezone import timezone
+        # naive 时间按 app 时区(北京)解读后再转 UTC 比较(2026-08-24 修复 +8 偏移)
+        is_expired = to_utc(suggestion.expires_at) < now
 
-            expires_utc = expires_utc.replace(tzinfo=timezone.utc)
-        is_expired = expires_utc < now
-
-    # 转换时间为带时区的 ISO 格式
-    created_at_str = None
-    if suggestion.created_at:
-        created_at = suggestion.created_at
-        if created_at.tzinfo is None:
-            from src.core.timezone import timezone
-
-            created_at = created_at.replace(tzinfo=timezone.utc)
-        created_at_str = to_iso_with_tz(created_at)
-
-    expires_at_str = None
-    if suggestion.expires_at:
-        expires_at = suggestion.expires_at
-        if expires_at.tzinfo is None:
-            from src.core.timezone import timezone
-
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        expires_at_str = to_iso_with_tz(expires_at)
+    # 转换时间为带时区的 ISO 格式(naive 按 app 时区解读, 见 timezone.to_iso_with_tz)
+    created_at_str = to_iso_with_tz(suggestion.created_at) if suggestion.created_at else None
+    expires_at_str = to_iso_with_tz(suggestion.expires_at) if suggestion.expires_at else None
 
     return {
         "id": suggestion.id,

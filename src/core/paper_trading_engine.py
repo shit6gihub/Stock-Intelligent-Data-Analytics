@@ -20,6 +20,7 @@ from src.web.models import (
     StrategySignalRun,
 )
 from src.core.backtest.cost_model import CostModel
+from src.core.timezone import to_utc
 
 logger = logging.getLogger(__name__)
 
@@ -440,9 +441,7 @@ class PaperTradingEngine:
 
         holding_days = 0
         if pos.opened_at:
-            opened = pos.opened_at
-            if opened.tzinfo is None:
-                opened = opened.replace(tzinfo=timezone.utc)
+            opened = to_utc(pos.opened_at)
             holding_days = max(0, (now - opened).days)
 
         trade = PaperTradingTrade(
@@ -582,9 +581,7 @@ class PaperTradingEngine:
                 if sig_hold and int(sig_hold) > 0:
                     max_days = int(sig_hold)
             if pos.opened_at:
-                opened_dt = pos.opened_at
-                if opened_dt.tzinfo is None:
-                    opened_dt = opened_dt.replace(tzinfo=timezone.utc)
+                opened_dt = to_utc(pos.opened_at)
                 if (_utc_now() - opened_dt).days >= max_days:
                     trade = self._close_position(db, account, pos, current_price, "time_stop")
                     exit_events.append((pos, trade))

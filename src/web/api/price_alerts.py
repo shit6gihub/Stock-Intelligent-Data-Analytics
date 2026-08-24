@@ -17,7 +17,7 @@ router = APIRouter()
 
 
 def _format_datetime(dt) -> str:
-    """格式化时间为当前时区的 ISO 格式（naive datetime 视为 UTC）。"""
+    """格式化时间为当前时区的 ISO 格式（naive datetime 视为 app 时区）。"""
     if not dt:
         return ""
     tz_name = Settings().app_timezone or "UTC"
@@ -26,7 +26,7 @@ def _format_datetime(dt) -> str:
     except Exception:
         tzinfo = timezone.utc
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=tzinfo)
     return dt.astimezone(tzinfo).isoformat(timespec="seconds")
 
 

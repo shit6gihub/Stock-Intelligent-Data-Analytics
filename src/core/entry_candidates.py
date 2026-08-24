@@ -12,7 +12,7 @@ from src.collectors.kline_collector import KlineCollector
 from src.core.json_safe import to_jsonable
 from src.core.marketdata_client import md_stock_data
 from src.core.notifier import get_global_proxy
-from src.core.timezone import to_iso_with_tz, utc_now
+from src.core.timezone import to_iso_with_tz, to_utc, utc_now
 from src.models.market import MarketCode
 from src.web.database import SessionLocal
 from src.web.models import (
@@ -481,9 +481,7 @@ def _score_suggestion(
     created_at = suggestion.created_at
     if created_at:
         try:
-            if created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=utc_now().tzinfo)
-            hours = (utc_now() - created_at).total_seconds() / 3600.0
+            hours = (utc_now() - to_utc(created_at)).total_seconds() / 3600.0
             if hours <= 6:
                 score += 3
                 evidence.append("建议新鲜度高(6h内)")
@@ -1470,8 +1468,6 @@ def _format_candidate_row(row: EntryCandidate) -> dict:
     def _fmt(dt):
         if not dt:
             return ""
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=utc_now().tzinfo)
         return to_iso_with_tz(dt)
 
     plan_data = row.plan if isinstance(row.plan, dict) else {}

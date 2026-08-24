@@ -38,7 +38,7 @@ def _format_datetime(dt) -> str:
     except Exception:
         tzinfo = timezone.utc
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=tzinfo)
     return dt.astimezone(tzinfo).isoformat(timespec="seconds")
 
 

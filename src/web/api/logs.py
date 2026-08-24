@@ -1,5 +1,5 @@
 """日志中心 API"""
-from datetime import datetime, timezone
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, or_
@@ -9,15 +9,12 @@ from sqlalchemy.orm import Session
 from src.web.database import get_db
 from src.web.models import LogEntry
 from src.web.log_handler import get_log_handler_stats
+from src.core.timezone import format_app_tz
 
 
 def _format_datetime(dt) -> str:
-    """格式化时间为带时区的 ISO 格式"""
-    if not dt:
-        return ""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.isoformat()
+    """格式化时间为带时区的 ISO 格式(naive 按 app 时区解读)。"""
+    return format_app_tz(dt)
 
 
 router = APIRouter()

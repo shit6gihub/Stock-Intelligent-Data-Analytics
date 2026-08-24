@@ -313,8 +313,6 @@ def _compute_rank_score(
 def _iso(dt) -> str:
     if not dt:
         return ""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=utc_now().tzinfo)
     return to_iso_with_tz(dt)
 
 
