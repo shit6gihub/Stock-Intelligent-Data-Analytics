@@ -15,6 +15,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine, text
 
@@ -195,29 +196,65 @@ async def ingest_batch(
     return {"total_ingested": total_ingested, **summary, "fail_symbols": fail_symbols}
 
 
+def _today_cst() -> str:
+    """返回 Asia/Shanghai 时区的"今天" YYYY-MM-DD。
+
+    2026-08-24: 候选池 snapshot_date 是 CST 日期串, 不能用 datetime.now() 拿 host 本地时间,
+    否则 server 在 UTC 会跨日拉错/漏拉。统一走 Asia/Shanghai。
+    """
+    return datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+
+
 def get_default_symbols() -> list[tuple[str, str]]:
-    """从 users.stocks 表读所有用户的自选股,按 (symbol, market) 去重后返回。
+    """从 users.stocks + entry_candidates 当日快照合并去重返回 (symbol, market)。
 
     2026-08-17 修复: 多用户场景下(每用户各自加自选), 同一 (symbol, market) 会出现多行。
     K线是全局数据(主键不含 user_id), 入库会去重 — 但 get_default_symbols 拉取前
     应该先去重, 避免每天 18:00 cron 重复拉同一股 14 次(网络浪费)。
+
+    2026-08-24 修复(K线覆盖候选池, 方案2):
+    候选池当日新进的票(多源共振计分入池的),不在 watchlist 中 → K线 cron 不会拉它们,
+    导致机会页 K线只显示当天 1 根。这里把 entry_candidates 当日 DISTINCT (symbol, market)
+    并入拉取列表,与 watchlist 按 (symbol, market) 去重,一并补 800 天历史。
+    market 缺省 CN(对齐 EntryCandidate.stock_market 列 default)。
     """
     from src.web.database import SessionLocal
-    from src.web.models import Stock
+    from src.web.models import EntryCandidate, Stock
+
+    today = _today_cst()
 
     with SessionLocal() as db:
-        rows = db.query(Stock.symbol, Stock.market).all()
-        # 用 (symbol, market) 集合去重 — 不同 user 各自加的同一股只算一次
+        # 1) watchlist 自选股(可能跨用户重复)
+        watch_rows = db.query(Stock.symbol, Stock.market).all()
+        # 2) 候选池当日 distinct 标的(snapshot_date = CST today)
+        cand_rows = (
+            db.query(EntryCandidate.stock_symbol, EntryCandidate.stock_market)
+            .filter(EntryCandidate.snapshot_date == today)
+            .distinct()
+            .all()
+        )
+
         seen: set[tuple[str, str]] = set()
         result: list[tuple[str, str]] = []
-        for r in rows:
-            sym = r.symbol
-            mkt = r.market.value if hasattr(r.market, "value") else str(r.market)
-            key = (sym, mkt)
+
+        def _add(sym: str, mkt: str) -> None:
+            if not sym:
+                return
+            m = (mkt or "CN").value if hasattr(mkt, "value") else (mkt or "CN")
+            # 兼容 enum / 空串 / None: 一律规范成大写字符串
+            m = str(m).upper() or "CN"
+            key = (sym, m)
             if key in seen:
-                continue
+                return
             seen.add(key)
             result.append(key)
+
+        # 先 watchlist(用户明确关注的优先),再候选池当日新增
+        for r in watch_rows:
+            _add(r.symbol, r.market)
+        for r in cand_rows:
+            _add(r.stock_symbol, r.stock_market)
+
         return result
 
 

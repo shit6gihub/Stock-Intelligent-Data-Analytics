@@ -1,21 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { RefreshCw, UserPlus, Eye } from 'lucide-react'
+import { RefreshCw, UserPlus, Eye, Info } from 'lucide-react'
 import { fetchAPI, stocksApi } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { useToast } from '@panwatch/base-ui/components/ui/toast'
 
 /**
- * 竞价异动池 Tab(2026-08-20, v0.3.0)
+ * 竞价异动池 Tab(2026-08-24, v0.3.1 修复字段口径)
  * 挂在机会页 Opportunities 的竞价异动 Tab 内。
  * 数据 GET /api/auction/anomaly?market=CN (fetchAPI 自动补 /api 前缀)。
  *
- * 口径:
- *   - gap_pct       竞价相对昨收涨幅%(thsdk 集合竞价快照)。
- *   - withdraw_rate 撤单率%(竞价撤单占委托比例)。
- *   - volume_ratio  竞价量比(竞价成交量相对近期均量)。
- *   - 数据为每日 09:25 集合竞价拍出的异动快照(后台 cron 落库), 顶部标注同步时间。
+ * 口径(2026-08-24):
+ *   - gap_pct       竞价相对昨收涨幅%(二次计算: (价格/昨收 - 1)*100, 昨收取
+ *                   PG klines hypertable 该 symbol ts<今天 的最近一条 close)。
+ *                   脏数据过滤: 涨停试盘/跌停试盘 且 价格<=1.01 且 |gap|>30% -> 置 None。
+ *   - withdraw_rate 撤单率%(数据源不提供, 固定 None, 表格显 '—')。
+ *   - volume_ratio  竞价量比(数据源不提供, 固定 None, 表格显 '—')。
+ * 响应带 missing_fields / note, 表头加 tooltip 注明数据源不含此字段。
+ *
  * 行色: 高开 ≥+3% 染红, 低开 ≤-3% 染绿(红=上涨, 绿=下跌, A股口径)。
- * 交互: 行点击“查看详情”(onOpenDetail 回调, 由宿主注入); "+自选" 调 stocksApi.create。
+ * 交互: 行点击"查看详情"(onOpenDetail 回调, 由宿主注入); "+自选" 调 stocksApi.create。
  * 30s 轮询刷新。
  */
 
@@ -35,18 +38,25 @@ export interface AuctionAnomalyResp {
   count: number
   records: AuctionAnomalyItem[]
   note?: string
+  /** 2026-08-24: 后端声明"本接口不提供"的字段,前端对应列显 '—' */
+  missing_fields?: string[]
 }
 
 interface AuctionAnomalyTabProps {
   market?: string
-  /** 点击行“查看详情”回调(宿主注入, 挂载 StockInsightModal) */
+  /** 点击行"查看详情"回调(宿主注入, 挂载 StockInsightModal) */
   onOpenDetail?: (symbol: string, market: string, name?: string) => void
 }
 
 function fmtPct(v: number | null | undefined, plus = true): string {
-  if (v == null || !Number.isFinite(v)) return '--'
+  if (v == null || !Number.isFinite(v)) return '—'
   const sign = plus ? (v > 0 ? '+' : '') : ''
   return `${sign}${v.toFixed(2)}%`
+}
+
+function fmtNum(v: number | null | undefined, suffix = ''): string {
+  if (v == null || !Number.isFinite(v)) return '—'
+  return `${v.toFixed(2)}${suffix}`
 }
 
 function gapRowClass(gap: number | null | undefined): string {
@@ -126,6 +136,12 @@ export default function AuctionAnomalyTab({ market = 'CN', onOpenDetail }: Aucti
     ? updatedAt.toLocaleTimeString('zh-CN', { hour12: false })
     : '--'
 
+  // 2026-08-24: 后端声明的 missing_fields 决定哪些列显 '—'(覆盖默认值)
+  const missingSet = new Set<string>(data?.missing_fields ?? [])
+  const withdrawMissing = missingSet.has('withdraw_rate')
+  const volumeMissing = missingSet.has('volume_ratio')
+  const headerNote = data?.note || 'thsdk 竞价异动池'
+
   return (
     <div className="card p-3 md:p-4">
       {/* 顶栏: 09:25 同步时间 + 总数 + 刷新 */}
@@ -157,8 +173,30 @@ export default function AuctionAnomalyTab({ market = 'CN', onOpenDetail }: Aucti
               <th className="text-left py-1.5 pr-2">代码</th>
               <th className="text-left py-1.5 pr-2">名称</th>
               <th className="text-right py-1.5 pr-2">竞价涨幅</th>
-              <th className="text-right py-1.5 pr-2">撤单率</th>
-              <th className="text-right py-1.5 pr-2">竞价量能</th>
+              <th
+                className="text-right py-1.5 pr-2"
+                title={withdrawMissing ? `${headerNote}: 数据源不提供撤单率` : '撤单率 %'}
+              >
+                撤单率
+                {withdrawMissing && (
+                  <Info
+                    className="inline w-3 h-3 ml-0.5 align-middle text-muted-foreground/70"
+                    aria-label="数据源不提供撤单率"
+                  />
+                )}
+              </th>
+              <th
+                className="text-right py-1.5 pr-2"
+                title={volumeMissing ? `${headerNote}: 数据源不提供量比` : '竞价量能'}
+              >
+                竞价量能
+                {volumeMissing && (
+                  <Info
+                    className="inline w-3 h-3 ml-0.5 align-middle text-muted-foreground/70"
+                    aria-label="数据源不提供量比"
+                  />
+                )}
+              </th>
               <th className="text-right py-1.5">操作</th>
             </tr>
           </thead>
@@ -191,8 +229,12 @@ export default function AuctionAnomalyTab({ market = 'CN', onOpenDetail }: Aucti
                     {name}
                   </td>
                   <td className={`py-1.5 pr-2 text-right font-mono tabular-nums ${gapColor(gap)}`}>{fmtPct(gap)}</td>
-                  <td className="py-1.5 pr-2 text-right font-mono tabular-nums text-muted-foreground">{withdraw != null && Number.isFinite(withdraw) ? `${withdraw.toFixed(1)}%` : '--'}</td>
-                  <td className="py-1.5 pr-2 text-right font-mono tabular-nums text-foreground">{vol != null && Number.isFinite(vol) ? `${vol.toFixed(2)}x` : '--'}</td>
+                  <td className="py-1.5 pr-2 text-right font-mono tabular-nums text-muted-foreground">
+                    {withdrawMissing || withdraw == null ? '—' : fmtNum(withdraw, '%')}
+                  </td>
+                  <td className="py-1.5 pr-2 text-right font-mono tabular-nums text-foreground">
+                    {volumeMissing || vol == null ? '—' : fmtNum(vol, 'x')}
+                  </td>
                   <td className="py-1.5 text-right">
                     {code ? (
                       <Button

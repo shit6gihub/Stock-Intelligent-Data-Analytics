@@ -1,4 +1,4 @@
-"""竞价异动池 API(v0.3.0)。
+"""竞价异动池 API(v0.3.1, 2026-08-24 修复缺失字段口径)。
 
 GET  /api/auction/anomaly?market=CN          → 最新竞价异动池(fetch_auction_anomaly)
 GET  /api/auction/anomaly/{symbol}/history?days=5 → 某股近 N 天竞价异动历史(DB)
@@ -6,6 +6,11 @@ POST /api/auction/sync                        → 触发热拉 + 落库(内部�
 
 ⚠️ 模块名用 auction_pool 而非 auction: src/web/api/auction.py 已被并行子任务占用
 (竞价快照 /api/auction-snapshot), 避免撞名。本模块路由注册在 /api/auction 前缀下。
+
+⚠️ 字段口径(2026-08-24 修复):
+- gap_pct 由本服务从 (价格/昨收 - 1)*100 二次计算, 昨收从 klines hypertable 批量查。
+- withdraw_rate / volume_ratio 数据源不提供, 响应 missing_fields 告知前端,
+  对应 record 字段固定 None, 前端表格显 '—'。
 """
 from __future__ import annotations
 
@@ -14,6 +19,8 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 
 from src.core.auction_pool import (
+    MISSING_FIELDS,
+    MISSING_NOTE,
     fetch_auction_anomaly,
     get_anomaly_history,
     sync_auction_to_db,
@@ -33,16 +40,28 @@ def _validate_symbol(raw: str) -> str:
 
 @router.get("/anomaly")
 def anomaly(market: str = Query("CN", description="CN/SH/SZ/BJ/ALL 或 thsdk 代码(USHA等)")):
-    """最新竞价异动池。数据源不可用时 available=false 且如实说明, 不伪造。"""
+    """最新竞价异动池。数据源不可用时 available=false 且如实说明, 不伪造。
+
+    2026-08-24: 响应固定带 missing_fields + note, 告知前端数据源不提供
+    撤单率/量比, 前端表格对应列显示 '—'。
+    """
     records = fetch_auction_anomaly(market)
     if not records:
         return {
             "available": False,
             "count": 0,
             "records": [],
-            "note": "thsdk 竞价异动数据暂不可用(数据源未接入/非交易时段/拉取失败)",
+            "missing_fields": list(MISSING_FIELDS),
+            "note": MISSING_NOTE
+            + " | thsdk 竞价异动数据暂不可用(数据源未接入/非交易时段/拉取失败)",
         }
-    return {"available": True, "count": len(records), "records": records, "note": ""}
+    return {
+        "available": True,
+        "count": len(records),
+        "records": records,
+        "missing_fields": list(MISSING_FIELDS),
+        "note": MISSING_NOTE,
+    }
 
 
 @router.get("/anomaly/{symbol}/history")
@@ -53,7 +72,14 @@ def history(
     """某股近 N 天竞价异动历史(DB 落库追踪)。"""
     code = _validate_symbol(symbol)
     rows = get_anomaly_history(code, days=days)
-    return {"symbol": code, "days": days, "count": len(rows), "records": rows}
+    return {
+        "symbol": code,
+        "days": days,
+        "count": len(rows),
+        "records": rows,
+        "missing_fields": list(MISSING_FIELDS),
+        "note": MISSING_NOTE,
+    }
 
 
 @router.post("/sync")
