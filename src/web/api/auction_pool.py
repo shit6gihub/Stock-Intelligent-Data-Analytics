@@ -1,16 +1,24 @@
-"""竞价异动池 API(v0.3.1, 2026-08-24 修复缺失字段口径)。
+"""竞价异动池 API(v0.3.2, 2026-08-24 字段口径二次修正)。
 
-GET  /api/auction/anomaly?market=CN          → 最新竞价异动池(fetch_auction_anomaly)
+GET  /api/auction/anomaly?market=CN              → 最新竞价异动池(fetch_auction_anomaly)
 GET  /api/auction/anomaly/{symbol}/history?days=5 → 某股近 N 天竞价异动历史(DB)
-POST /api/auction/sync                        → 触发热拉 + 落库(内部用, cron 也用)
+POST /api/auction/sync                            → 触发热拉 + 落库(内部用, cron 也用)
 
 ⚠️ 模块名用 auction_pool 而非 auction: src/web/api/auction.py 已被并行子任务占用
 (竞价快照 /api/auction-snapshot), 避免撞名。本模块路由注册在 /api/auction 前缀下。
 
-⚠️ 字段口径(2026-08-24 修复):
-- gap_pct 由本服务从 (价格/昨收 - 1)*100 二次计算, 昨收从 klines hypertable 批量查。
-- withdraw_rate / volume_ratio 数据源不提供, 响应 missing_fields 告知前端,
-  对应 record 字段固定 None, 前端表格显 '—'。
+⚠️ 字段口径(2026-08-24 v0.3.2 二次修正 — 推翻 v0.3.1 错误假设):
+- "价格" 列**不是价格**: 是异动幅度小数比例 / 撤单率 / 占位 1.0。
+- "总金额" 列恒为 2147483648 (int32 上限占位垃圾), 已 skip 不入 record。
+- gap_pct / withdraw_rate 由 src.core.auction_pool._to_records 基于
+  异动类型 + 价格列直接推导(无需 klines 昨收):
+  * 急速涨跌 / 大幅高低开 → gap_pct = 价格 × 100
+  * 涨停/跌停试盘       → gap_pct = None(价格=1.0 占位无信息)
+  * 涨停/跌停撤单       → withdraw_rate = 价格 × 100, gap_pct = None
+  * 其他类型             → |价格|<0.21 才按涨跌幅处理, 否则 None
+- volume_ratio 数据源不提供, 响应 missing_fields 仅声明该字段(2026-08-24 v0.3.2 收紧,
+  withdraw_rate 已部分填充不再 always-missing)。
+- 前端 AuctionAnomalyTab.tsx 对 None 字段显 "—", 无需大改。
 """
 from __future__ import annotations
 
@@ -42,8 +50,8 @@ def _validate_symbol(raw: str) -> str:
 def anomaly(market: str = Query("CN", description="CN/SH/SZ/BJ/ALL 或 thsdk 代码(USHA等)")):
     """最新竞价异动池。数据源不可用时 available=false 且如实说明, 不伪造。
 
-    2026-08-24: 响应固定带 missing_fields + note, 告知前端数据源不提供
-    撤单率/量比, 前端表格对应列显示 '—'。
+    2026-08-24 v0.3.2: 响应 fixed 字段 missing_fields + note, 告知前端
+    数据源不提供量比(撤单率已部分填充)。前端表格对应列显 "—"。
     """
     records = fetch_auction_anomaly(market)
     if not records:

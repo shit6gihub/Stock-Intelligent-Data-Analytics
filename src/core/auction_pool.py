@@ -1,4 +1,4 @@
-"""竞价异动池 v0.3.1 (2026-08-24, 修复 gap_pct/缺失字段)。
+"""竞价异动池 v0.3.2 (2026-08-24, 修正 gap_pct/withdraw_rate 计算口径)。
 
 - fetch_auction_anomaly(market): 拉同花顺集合竞价异动股(默认 CN→沪A), 转 list[dict]
 - sync_auction_to_db(records)   : 把异动股写入 DB 表 auction_anomaly_records(供历史追踪)
@@ -8,21 +8,23 @@
 
 进程内 30s 缓存(与 main_flow_compare 同思路, 避免每轮监控重复拉取)。
 
-⚠️ 字段口径(2026-08-24 修复):
-- 实测 thsdk get_auction_anomaly 返回约 6 列: 时间/价格/总金额/代码/名称/异动类型1。
-  - 价格 / 总金额 是占位脏数据(不可信,但仍可用于 (价格 / 昨收 - 1) 推导 gap_pct)。
-  - 数据源**不提供** 撤单率 / 量比, 字段固定 None, API 响应 missing_fields 告知前端。
-- gap_pct 在本模块内由 (价格 / 昨收 - 1)*100 二次计算, 昨收从 PG klines hypertable
-  批量查(一次 SQL IN 批查 ~461 只股, 避免逐只查打爆库)。
-  - 脏数据过滤: 异动类型含'涨停试盘/跌停试盘'且价格 <= 1.01 元时, 计算结果 |gap|>30%
-    视为脏(价/昨收 失衡), gap_pct 置 None(记录仍保留,前端表格显 '—')。
-  - 昨收缺失(库表无数据) -> gap_pct 保持 None。
+⚠️ 字段口径(2026-08-24 v0.3.2 二次修正 — 推翻 v0.3.1 错误假设):
+- 实测 thsdk call_auction_anomaly 返回 6 列: 时间 / 价格 / 总金额 / 代码 / 名称 / 异动类型1。
+  - "价格" 列**不是价格**, 而是异动幅度的小数比例 / 撤单率 / 占位 1.0。
+  - "总金额" 列恒为 2147483648 (int32 上限占位垃圾), 直接忽略。
+- gap_pct / withdraw_rate 由本模块**直接基于 异动类型 + 价格列**推导(无需 klines 昨收):
+  * 急速上涨 / 急速下跌 / 大幅高开 / 大幅低开: gap_pct       = 价格列 × 100(round 2)
+  * 涨停试盘 / 跌停试盘:                价格列恒为 1.0(占位无信息量) -> gap_pct = None
+  * 涨停撤单 / 跌停撤单:                价格列 = 撤单率(0.5~0.9 区间) -> withdraw_rate = 价格列 × 100
+  * 其他类型(兜底安全网):             若 |价格列| < 0.21 也按涨跌幅处理 -> gap_pct = 价格列 × 100
+                                       否则视为脏数据 -> None
+- volume_ratio 数据源不提供, 字段固定 None, API 响应 missing_fields 告知前端。
+- v0.3.1 旧版 (价格/昨收-1)*100 二次计算已废弃: 价格列不是价格, 公式不成立。
 """
 from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +42,10 @@ _MARKET_MAP = {
     "ALL": None,
 }
 
-# 2026-08-24: 数据源不提供的字段,在 API 响应 missing_fields 显式告知前端。
-MISSING_FIELDS: list[str] = ["withdraw_rate", "volume_ratio"]
-MISSING_NOTE: str = "thsdk 竞价异动数据源不提供撤单率/量比,字段固定为空"
-
-# 脏数据过滤阈值
-_DIRTY_PRICE_THRESHOLD = 1.01  # 元
-_DIRTY_GAP_THRESHOLD = 30.0    # %
+# 2026-08-24 v0.3.2: 仅 volume_ratio 数据源**完全不**提供。
+# withdraw_rate 已由"涨停撤单/跌停撤单"类型记录填入, 不再 always-missing。
+MISSING_FIELDS: list[str] = ["volume_ratio"]
+MISSING_NOTE: str = "thsdk 竞价异动数据源不提供量比,字段固定为空"
 
 _CACHE_TTL = 30.0
 _cache: dict[str, tuple[float, list[dict]]] = {}
@@ -57,19 +56,29 @@ def clear_cache() -> None:
     _cache.clear()
 
 
-def _to_records(df) -> list[dict]:
-    """DataFrame -> list[dict]。列名兼容映射 + 保留全量字段。
+# ── 异动类型分类(用于 gap_pct / withdraw_rate 推导) ────────────────────────
+# 4 类: 价格列 = 涨跌幅小数比例(直接 ×100 当 gap_pct)
+_GAP_RATIO_TYPES: tuple[str, ...] = ("急速上涨", "急速下跌", "大幅高开", "大幅低开")
+# 2 类: 价格列恒为 1.0 占位, 无信息量 -> gap_pct = None
+_LIMIT_PROBE_TYPES: tuple[str, ...] = ("涨停试盘", "跌停试盘")
+# 2 类: 价格列 = 撤单率小数(0.5~0.9) -> 填到 withdraw_rate
+_WITHDRAW_TYPES: tuple[str, ...] = ("涨停撤单", "跌停撤单")
+# 其他类型兜底安全网: |价格列| < 此值视为涨跌幅小数比例, 否则视为脏数据(None)
+_SAFE_RATIO_ABS: float = 0.21
 
-    2026-08-24 字段口径更新: 实测 thsdk get_auction_anomaly 只返回
-    时间 / 价格 / 总金额 / 代码 / 名称 / 异动类型1 共 6 列。
-    - 高开幅度 / 撤单率 / 量比 列已不存在 -> 直接置 None。
-    - 价格 / 异动类型1 仍抓出, 供 fetch_auction_anomaly 二次推导 gap_pct / 过滤脏数据。
+
+def _to_records(df) -> list[dict]:
+    """DataFrame -> list[dict]。列名兼容映射 + 按异动类型推导 gap_pct/withdraw_rate。
+
+    2026-08-24 v0.3.2 字段口径(基于 thsdk call_auction_anomaly 实测 6 列):
+    - "价格" 列**不是价格**: 是异动幅度小数比例(对急速/大幅异动)或撤单率(对撤单类型)
+      或占位 1.0(对试盘类型)。
+    - "总金额" 列恒为 2147483648 (int32 上限占位), 不读取。
+    - gap_pct / withdraw_rate 在本函数内基于 异动类型 + 价格列**直接推导**, 不依赖 klines。
     """
     if df is None or len(df) == 0:
         return []
 
-    cols = [str(c).strip() for c in df.columns]
-    # 保留原始列名 -> 规范化后列名(去空白, 小写), 便于统一取值
     norm = {c: c.strip().lower() for c in df.columns}
 
     def find(*keys: str) -> str | None:
@@ -101,11 +110,6 @@ def _to_records(df) -> list[dict]:
     to_price = find("价格", "price", "price_now")
     to_anomaly = find("异动类型1", "异动类型", "anomaly_type", "anomaly")
 
-    # 兼容旧的列(已被实测剔除,但仍保留抽取以防字段偶尔出现)
-    to_gap = find("高开幅度", "涨跌幅", "涨幅", "涨跌", "gap", "openprice")
-    to_withdraw = find("撤单率", "撤单", "withdraw")
-    to_vol = find("量比", "volume_ratio", "volratio", "换手")
-
     records: list[dict] = []
     for _, row in df.iterrows():
         code = val(row, to_code) if to_code else None
@@ -113,32 +117,45 @@ def _to_records(df) -> list[dict]:
 
         name = val(row, to_name) if to_name else None
         price_raw = num(row, to_price) if to_price else None
-        anomaly_type = str(val(row, to_anomaly)) if to_anomaly else None
+        anomaly_type = str(val(row, to_anomaly)) if to_anomaly else ""
+        atype = anomaly_type or ""
 
-        # 2026-08-24: withdraw_rate / volume_ratio 数据源不提供,固定 None。
-        # 旧的 to_gap/to_withdraw/to_vol 仅作兜底:列还在时仍可读,但实测已无此列。
-        gap_pct = num(row, to_gap) if to_gap else None
-        withdraw_rate = num(row, to_withdraw) if to_withdraw else None
-        volume_ratio = num(row, to_vol) if to_vol else None
+        # ── gap_pct / withdraw_rate 直接推导(2026-08-24 v0.3.2 真实口径) ─────
+        gap_pct: float | None = None
+        withdraw_rate: float | None = None
+
+        if any(kw in atype for kw in _GAP_RATIO_TYPES):
+            # 急速涨跌 / 大幅高低开: 价格列 = 涨跌幅小数比例
+            if price_raw is not None:
+                gap_pct = round(price_raw * 100.0, 2)
+        elif any(kw in atype for kw in _LIMIT_PROBE_TYPES):
+            # 涨停/跌停试盘: 价格列恒为 1.0 占位 -> gap_pct = None
+            gap_pct = None
+        elif any(kw in atype for kw in _WITHDRAW_TYPES):
+            # 涨停/跌停撤单: 价格列 = 撤单率小数 -> withdraw_rate
+            if price_raw is not None:
+                withdraw_rate = round(price_raw * 100.0, 2)
+        else:
+            # 其他类型(兜底安全网): |价格列| < 0.21 才按涨跌幅处理, 否则 None
+            if price_raw is not None and -_SAFE_RATIO_ABS < price_raw < _SAFE_RATIO_ABS:
+                gap_pct = round(price_raw * 100.0, 2)
 
         rec = {
             "code": code,
             "symbol": code,
             "name": str(name) if name is not None else "",
-            # gap_pct 占位:本函数内仅做兼容抽取;真实口径在 fetch_auction_anomaly
-            # 用 (价格/昨收 - 1)*100 二次计算并覆盖。
             "gap_pct": gap_pct,
             "withdraw_rate": withdraw_rate,
-            "volume_ratio": volume_ratio,
-            # 内部字段(供 fetch_auction_anomaly 二次计算用)
+            "volume_ratio": None,
+            # 内部字段(供调试 / 测试断言可见)
             "price_raw": price_raw,
-            "anomaly_type": anomaly_type or "",
+            "anomaly_type": atype,
         }
-        # 保留其余原始字段(去掉已提取的, 避免重复), 归一化列名以避免重复列冲突
+        # 保留其余原始字段(去掉已提取的, 避免重复), 归一化列名以避免重复列冲突。
+        # 总金额(int32 上限占位垃圾)也归入 skip_norm, 不进 record。
         seen = set()
         skip_norm = {
-            "代码", "名称", "高开幅度", "涨跌幅", "涨幅", "涨跌",
-            "撤单率", "量比", "价格", "price", "异动类型1", "异动类型",
+            "代码", "名称", "价格", "price", "异动类型1", "异动类型", "总金额",
         }
         for c in df.columns:
             k = norm.get(c, c).replace("_", "")
@@ -181,127 +198,13 @@ def _normalize_symbol(raw: str) -> str:
     return raw
 
 
-def _batch_prev_close(symbols: list[str]) -> dict[str, float]:
-    """批量获取 symbols 的昨收价 (klines hypertable, ts < 今天, period='1d')。
-
-    一次 SQL IN 批查, 避免 ~461 只股逐只查打爆 DB。
-    - PG: 走 DISTINCT ON 取每个 symbol 最新一条 ts<today 的 close。
-    - SQLite (测试/兜底): klines 表通常不存在, 直接返回 {}。
-    - 库表缺 / 查询失败 / 昨收 <= 0 / symbol 无数据: 对应 symbol 不进结果, 上层
-      gap_pct 保持 None。
-
-    Returns:
-        {symbol: prev_close} 仅包含查到的 symbol。查不到的 symbol 不在 dict 里。
-    """
-    if not symbols:
-        return {}
-
-    # 去重 + 过滤 6 位代码
-    syms = sorted({str(s).strip() for s in symbols if s and str(s).strip()})
-    if not syms:
-        return {}
-
-    try:
-        from sqlalchemy import bindparam, text
-
-        from src.web.database import IS_PG, engine
-
-        today = datetime.now(timezone.utc).date()
-
-        with engine.connect() as conn:
-            # 探针: klines 表是否存在(SQLite 默认环境无该表)
-            if IS_PG:
-                tbl = conn.execute(
-                    text(
-                        "SELECT 1 FROM information_schema.tables "
-                        "WHERE table_schema='public' AND table_name='klines' LIMIT 1"
-                    )
-                ).first()
-            else:
-                tbl = conn.execute(
-                    text(
-                        "SELECT name FROM sqlite_master "
-                        "WHERE type='table' AND name='klines' LIMIT 1"
-                    )
-                ).first()
-            if not tbl:
-                return {}
-
-            # 一次 SQL IN 批查;按 symbol, ts DESC 取每 symbol 最新一条 ts<today 的 close。
-            sql = text(
-                "SELECT symbol, close FROM klines "
-                "WHERE period = '1d' AND market = 'CN' "
-                "  AND symbol IN :symbols "
-                "  AND ts < :today "
-                "ORDER BY symbol ASC, ts DESC"
-            ).bindparams(bindparam("symbols", expanding=True))
-            rows = conn.execute(
-                sql, {"symbols": syms, "today": today}
-            ).fetchall()
-
-        result: dict[str, float] = {}
-        for sym, close in rows:
-            sym = str(sym)
-            # ORDER BY symbol, ts DESC: 每 symbol 段内第一条就是 ts 最新(即昨收)。
-            # 用 set 跳过同 symbol 的后续行。
-            if sym in result:
-                continue
-            try:
-                c = float(close) if close is not None else None
-            except (TypeError, ValueError):
-                c = None
-            if c is not None and c > 0:
-                result[sym] = c
-        return result
-    except Exception as e:  # noqa: BLE001 - DB 不可用统一降级,不阻塞主流程
-        logger.warning("[auction_pool] 昨收批量查询失败 (n=%d): %r", len(syms), e)
-        return {}
-
-
-def _compute_gap_pct(records: list[dict]) -> None:
-    """对 records 二次计算 gap_pct = (price_raw / prev_close - 1) * 100。
-
-    - prev_close 缺失 / <=0 / price_raw 缺失 -> 该 record gap_pct 置 None(原值不保留)。
-    - 脏数据过滤: 异动类型含'涨停试盘'或'跌停试盘' 且 价格 <= 1.01 元 且
-      计算结果 |gap_pct| > 30% 时, gap_pct 置 None(记录保留,前端表格显 '—')。
-    - 不属于以上情况的记录, 即使 gap 看似异常也保留(避免过度清洗)。
-
-    就地修改 records; 返回 None。
-    """
-    if not records:
-        return
-
-    syms = [r.get("symbol") or r.get("code") for r in records]
-    prev_closes = _batch_prev_close(syms)
-
-    for rec in records:
-        sym = rec.get("symbol") or rec.get("code")
-        prev = prev_closes.get(str(sym)) if sym else None
-        price = rec.get("price_raw")
-        if (
-            price is None
-            or prev is None
-            or prev <= 0
-        ):
-            rec["gap_pct"] = None
-            continue
-        gap = (float(price) / float(prev) - 1.0) * 100.0
-
-        atype = str(rec.get("anomaly_type") or "")
-        is_limit_probe = ("涨停试盘" in atype) or ("跌停试盘" in atype)
-        if is_limit_probe and float(price) <= _DIRTY_PRICE_THRESHOLD and abs(gap) > _DIRTY_GAP_THRESHOLD:
-            rec["gap_pct"] = None
-            continue
-        rec["gap_pct"] = round(gap, 2)
-
-
 def fetch_auction_anomaly(market: str = "CN") -> list[dict]:
     """拉取竞价异动池(30s 缓存)。market: CN/SH/SZ/BJ/ALL 或 thsdk 代码。
 
     数据源不可用(thsdk 未安装 / 调用异常)时返回 [] 并记日志, 不抛异常(供 cron/API 降级)。
 
-    2026-08-24 更新: 每条 record 的 gap_pct 二次计算 (价格/昨收 - 1)*100,
-    withdraw_rate / volume_ratio 固定 None(数据源不提供)。
+    2026-08-24 v0.3.2: gap_pct / withdraw_rate 在 _to_records 内基于 异动类型 + 价格列
+    直接推导(无需 klines 二次计算), volume_ratio 固定 None(数据源不提供)。
     """
     norm_market = (market or "CN").strip().upper()
     thsdk_market = _MARKET_MAP.get(norm_market, "USHA")
@@ -333,9 +236,6 @@ def fetch_auction_anomaly(market: str = "CN") -> list[dict]:
     except Exception as e:  # noqa: BLE001 - 数据源不可用统一降级
         logger.warning("[auction_pool] 竞价异动拉取失败 market=%r: %r", market, e)
         all_records = []
-
-    # 二次计算 gap_pct (就地修改 all_records, 不增字段)
-    _compute_gap_pct(all_records)
 
     _cache[cache_key] = (time.time(), all_records)
     return all_records

@@ -1,4 +1,4 @@
-"""竞价异动池测试(阶段1.2, v0.3.0; 2026-08-24 字段口径更新)。
+"""竞价异动池测试(2026-08-24 v0.3.2 字段口径二次修正)。
 
 覆盖:
 - fetch_auction_anomaly: 市场映射 CN->USHA / SZ->USZA, DataFrame 转 dict, 代码归一化
@@ -6,9 +6,12 @@
 - 数据源不可用(未安装/抛异常) -> [] 容错
 - sync_auction_to_db / get_anomaly_history: 用独立内存 SQLite 引擎验证 DB 读写
 - register_cron: 复用现有调度器(不新开), job 成功注册 / 传入 None 不崩
-- 字段口径(2026-08-24): 实测 thsdk 仅返回 6 列, withdraw_rate/volume_ratio 固定 None;
-  gap_pct 在 klines mock 缺失环境下也为 None(测试文件 tests/test_auction_gap.py 覆盖
-  klines mock 后 gap_pct 二次计算 + 脏数据过滤)
+- 字段口径(2026-08-24 v0.3.2):
+  * 实测 thsdk 仅返回 6 列, "价格" 列不是价格而是异动幅度小数比例。
+  * gap_pct / withdraw_rate 在 _to_records 内基于 异动类型 + 价格列 直接推导。
+  * volume_ratio 数据源不提供, 固定 None。
+  * 详细的"急速/大幅异动 → gap_pct / 涨停撤单 → withdraw_rate / 试盘 → None"
+    推导逻辑见 tests/test_auction_gap.py。
 """
 from __future__ import annotations
 
@@ -46,8 +49,12 @@ def mock_thsdk_l2(monkeypatch):
 def test_fetch_cn_maps_to_usha(mock_thsdk_l2):
     """默认 market=CN -> 映射 USHA, 且 DataFrame 正确转 list[dict]。
 
-    2026-08-24 口径: 实测 6 列 -> 撤单率/量比固定 None;
-    gap_pct 在 klines 缺失环境下保持 None(由 test_auction_gap.py 覆盖有 klines 场景)。
+    2026-08-24 v0.3.2 口径: fake_auction_df 用真实口径,
+      002361 大幅高开 + 价格=0.0335 -> gap_pct = 3.35
+      600000 大幅低开 + 价格=-0.0178 -> gap_pct = -1.78
+    withdraw_rate / volume_ratio 字段:
+      volume_ratio 固定 None(数据源不提供)
+      withdraw_rate 仅"涨停撤单/跌停撤单"类型填入(本 fixture 不含此类 -> None)
     """
     recs = auction_pool.fetch_auction_anomaly("CN")
     mock_thsdk_l2.get_auction_anomaly.assert_called_once_with("USHA")
@@ -56,13 +63,13 @@ def test_fetch_cn_maps_to_usha(mock_thsdk_l2):
     assert first["symbol"] == "002361"
     assert first["code"] == "002361"
     assert first["name"] == "神剑股份"
-    # 字段口径更新(2026-08-24)
-    assert first["gap_pct"] is None         # 无 klines mock, 无法二次计算
-    assert first["withdraw_rate"] is None   # 数据源不提供
-    assert first["volume_ratio"] is None    # 数据源不提供
-    # 内部字段(供 _compute_gap_pct 用)
-    assert first["price_raw"] == pytest.approx(8.32)
-    assert first["anomaly_type"] == "高开"
+    # 2026-08-24 v0.3.2: gap_pct 由异动类型 + 价格列直接推导, 无需 klines
+    assert first["gap_pct"] == pytest.approx(3.35, abs=0.01)
+    assert first["withdraw_rate"] is None
+    assert first["volume_ratio"] is None
+    # 内部字段(供调试 / 测试断言可见)
+    assert first["price_raw"] == pytest.approx(0.0335)
+    assert first["anomaly_type"] == "大幅高开"
 
 
 def test_fetch_sz_maps_to_usza(mock_thsdk_l2):
@@ -89,22 +96,6 @@ def test_fetch_symbol_normalize(mock_thsdk_l2):
     assert symbols == {"000001", "002361"}
 
 
-def test_fetch_legacy_cols_backcompat(mock_thsdk_l2):
-    """2026-08-24 兼容: 老格式(高开幅度/撤单率/量比 列)仍能解析抽出字段。
-
-    旧 thsdk 版本可能返回这 3 列, _to_records 用关键词模糊匹配仍能抓出;
-    但后续 _compute_gap_pct 会用 (价格/昨收 - 1)*100 覆盖 gap_pct(若 klines 缺失则 None)。
-    """
-    mock_thsdk_l2.get_auction_anomaly.return_value = mmf.fake_auction_df_with_legacy_cols()
-    recs = auction_pool.fetch_auction_anomaly("CN")
-    first = recs[0]
-    # 旧列兼容: 抽出后被二次计算覆盖(无 klines mock -> None)
-    assert first["gap_pct"] is None
-    # 旧 withdraw_rate/volume_ratio 不再由新数据源提供,但若 DataFrame 中残留旧列,仍可抽出
-    assert first["withdraw_rate"] == pytest.approx(0.243)
-    assert first["volume_ratio"] == pytest.approx(2.5)
-
-
 def test_fetch_cache_hit(mock_thsdk_l2):
     """30s 内二次调用命中缓存, get_auction_anomaly 只调一次。"""
     auction_pool.fetch_auction_anomaly("CN")
@@ -115,9 +106,9 @@ def test_fetch_cache_hit(mock_thsdk_l2):
 def test_fetch_cache_expired(mock_thsdk_l2, monkeypatch):
     """超过 30s TTL 后重新拉取。
 
-    2026-08-24: fetch_auction_anomaly 增加了 _compute_gap_pct -> _batch_prev_close ->
-    SQLAlchemy 内部多次调用 time.time()(连接池 starttime 计时)。fake_time 难以精准控制。
-    改为直接预置 _cache(写入一个"很旧的时间戳"), 第 2 次 fetch 时 now - cached[0] 必然 > 30s。
+    2026-08-24 v0.3.2: fetch_auction_anomaly 不再调 SQLAlchemy/连接池, fake_time 仍难精准控制。
+    改为直接预置 _cache(写入一个"很旧时间戳"), 第 2 次 fetch 时 now - cached[0] 必然 > 30s,
+    走刷新分支。
     """
     # 预置一个 100s 前的缓存(模拟"已经过期 30s 缓存")
     auction_pool._cache["CN"] = (time.time() - 100.0, [{"symbol": "000001", "name": "stale"}])

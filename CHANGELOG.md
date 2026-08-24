@@ -4,15 +4,17 @@
 
 ### fix
 
+- **竞价异动池 gap_pct/withdraw_rate 推导口径二次修正**: 任务2实测再次确认 thsdk `call_auction_anomaly` 返回的「价格」列**不是价格**,而是异动幅度小数比例;「总金额」列恒为 2147483648 (int32 上限占位垃圾)。v0.3.1 旧版用 `(价格/昨收-1)*100` 反推 gap_pct 是错误假设。修正:删除 `_compute_gap_pct`/`_batch_prev_close` + klines 昨收依赖,改用「异动类型 + 价格列」直接推导 — 急速涨跌/大幅高低开 → `gap_pct = 价格×100`; 涨停/跌停试盘 → 价格=1.0 占位无信息 → `gap_pct=None`; 涨停/跌停撤单 → `withdraw_rate = 价格×100`(撤单率 0.5~0.9 区间);其他类型兜底 `|价格|<0.21` 按涨跌幅处理。`MISSING_FIELDS` 收紧到仅 `[volume_ratio]` (withdraw_rate 已部分填充,不再 always-missing)。前端 `AuctionAnomalyTab.tsx` 无大改(对 None 显 '—' 逻辑保留)。附 26 个新单测覆盖各类型推导 + 边界条件。
 - **机会页候选股 K线只显示一天**: 18:00 K线增量 cron 的 `get_default_symbols()` 原来只读
   自选股,候选池(market_scan 等)入池的票无 800 天历史回填 → PG 缓存只有当天 1 根K线。
   现在 `get_default_symbols()` 并入 `entry_candidates` 当日(CST) distinct 股票,与自选股
   合并去重;新增 `_today_cst()` helper 防 UTC 时区跨日。附 8 个单测。
-- **竞价异动池 竞价涨幅/撤单率/量比 不显示**: thsdk 竞价异动源实际只返回 6 列(时间/价格/
-  总金额/代码/名称/异动类型),不含撤单率/量比,且 价格/总金额 为占位脏数据。修复:
-  ① gap_pct 改用 PG klines 昨收批量计算(一次 SQL IN 批查);② 撤单率/量比如实标注
-  `missing_fields`,前端对应列显示 "—" + 表头 tooltip 说明数据源不含此字段;
-  ③ 涨停/跌停试盘 + 价格≤1.01 + |gap|>30% 的脏数据 gap_pct 置 None。附 20+ 个新单测。
+- **竞价异动池 竞价涨幅/撤单率/量比 不显示**: 实测确认 thsdk `call_auction_anomaly` 的
+  "价格"列并非价格,而是随异动类型变化的幅度小数: 急速上涨/下跌、大幅高开/低开 = 涨跌幅
+  比例(0.0523=+5.23%)→ 直接 ×100 作为 gap_pct;涨停撤单/跌停撤单 = 撤单率(0.5~0.9)→
+  填入 withdraw_rate;涨停/跌停试盘恒为 1.0 占位 → gap_pct 置 None。"总金额"列恒为
+  int32 上限 2147483648,识别为占位垃圾跳过。volume_ratio 数据源确实不提供,API 响应
+  missing_fields 如实标注,前端显示 "—" + tooltip。附 26 个新单测(真实口径 mock)。
 
 ## 2026-08-24
 
