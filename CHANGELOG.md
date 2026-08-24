@@ -4,6 +4,17 @@
 
 ### doc
 
+- **README/仓库 meta 突出"缝合怪"定位 + meta 刷新**: 中英双语 README 在开头新增诚实定位
+  blockquote(缝合市面最强开源量化项目,整合本身就是产品);GitHub About 描述重写为
+  "stitches the best open-source quant projects into one pipeline";homepage 从镜像
+  仓库页改为在线演示站;topics 换入 multi-agent/llm/foundation-models/
+  time-series-forecasting/tradingagents/kronos/stock-prediction,移除 panwatch/cron/
+  capital-flow/wecom(20 上限精选)。
+
+## 2026-08-24
+
+### doc
+
 - **README 全面重写（中英双语同步）**: 新增「开源技术整合」板块(TradingAgents/Kronos/Chronos-Bolt/
   XGBoost/TA-Lib/TimescaleDB/Redis/Lightweight Charts/Grafana 全家桶等 13+ 项目,全部真实接入),
   突出多智能体分析、基础模型预测闭环、三引擎共振等亮点;截图区扩为 6 张(新增 K线主力意图/AI对话/
