@@ -118,7 +118,7 @@ def _resolve_group_name(item: dict) -> str:
     都可能为空。本函数优先 theme(题材粒度更细), 其次 sector。
     """
     theme = str(item.get("theme") or "").strip()
-    if theme:
+    if theme and theme != "无":  # wudao theme='无' 表示无题材归类, 回落 sector
         return theme
     sector = str(item.get("sector") or "").strip()
     if sector:
