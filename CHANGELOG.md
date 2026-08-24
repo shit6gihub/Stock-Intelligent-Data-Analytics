@@ -2,6 +2,17 @@
 
 ## 2026-08-24
 
+### doc
+
+- **README 全面重写（中英双语同步）**: 新增「开源技术整合」板块(TradingAgents/Kronos/Chronos-Bolt/
+  XGBoost/TA-Lib/TimescaleDB/Redis/Lightweight Charts/Grafana 全家桶等 13+ 项目,全部真实接入),
+  突出多智能体分析、基础模型预测闭环、三引擎共振等亮点;截图区扩为 6 张(新增 K线主力意图/AI对话/
+  模拟盘);修正过时技术栈(SQLite→PostgreSQL+TimescaleDB、ECharts→TradingView Lightweight Charts);
+  版本徽章 v0.2.41→v0.4.3;镜像 tag 同步 v0.4.3;新增功能总览表(8 大模块);架构图更新
+  (TradingAgents/验证闭环/基础设施栈)。
+
+## 2026-08-24
+
 ### fix
 
 - **时区 +8 小时偏移（全站时间显示错误）**: SQLite→PG 迁移后，PG 的
