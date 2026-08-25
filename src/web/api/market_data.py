@@ -703,45 +703,77 @@ def _classify_bucket(pct: float | None) -> str | None:
 
 
 def _fetch_breadth_change_pcts() -> list[float]:
-    """拉一次东财 push2 clist 全 A 股列表(沪深京A), 返回 f3 涨跌幅(%)数组。
+    """拉全 A 股涨跌幅(%)数组(v0.4.7.1: 新浪主源, 东财兜底)。
 
-    用 pz=5000 单页拉足够; 失败/超时抛异常(由调用方 fallback 到空数组)。
+    新浪 Market_Center.getHQNodeData 生产实测可达(东财 push2 clist 在生产云 IP 断连),
+    每页 80 只 × 分页拉满(~5400 只, 约 68 页, 每页间隔 60ms 防限流);
+    新浪失败回落东财 push2 clist 单页 pz=5000。失败/超时抛异常(由调用方兜底)。
     """
+    import time as _time
+
     import httpx
 
-    url = "https://push2.eastmoney.com/api/qt/clist/get"
-    params = {
-        "pn": "1",
-        "pz": "5000",
-        "po": "1",
-        "np": "1",
-        "ut": "bd1d9ddb04089700cf9c27f6f7426281",
-        "fltt": "2",
-        "invt": "2",
-        "fid": "f3",
-        "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81",
-        "fields": "f2,f3",
-    }
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        "Referer": "https://quote.eastmoney.com/",
-    }
-    # 同步短超时(8s), 失败立即抛 — 上层捕获后写 note 给前端
-    with httpx.Client(timeout=8.0, follow_redirects=True, headers=headers) as client:
-        resp = client.get(url, params=params)
-    data = resp.json()
-    diff = ((data or {}).get("data") or {}).get("diff") or []
-    out: list[float] = []
-    for item in diff:
-        # f3 单位是 %(东财惯例, 非小数), 直接拿来用
-        try:
-            v = item.get("f3")
-            if v is None:
+    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+
+    def _fetch_sina() -> list[float]:
+        out: list[float] = []
+        with httpx.Client(timeout=8.0, follow_redirects=True, headers=headers) as client:
+            for page in range(1, 80):  # 上限保护: 79页×80 ≈ 6300 > 全A
+                resp = client.get(
+                    "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+                    "Market_Center.getHQNodeData",
+                    params={
+                        "page": str(page), "num": "80", "sort": "changepercent",
+                        "asc": "0", "node": "hs_a",
+                    },
+                )
+                rows = resp.json()
+                if not rows:
+                    break
+                for it in rows:
+                    try:
+                        v = it.get("changepercent")
+                        if v is not None and v != "":
+                            out.append(float(v))
+                    except (TypeError, ValueError):
+                        continue
+                _time.sleep(0.06)
+        return out
+
+    def _fetch_eastmoney() -> list[float]:
+        url = "https://push2.eastmoney.com/api/qt/clist/get"
+        params = {
+            "pn": "1", "pz": "5000", "po": "1", "np": "1",
+            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+            "fltt": "2", "invt": "2", "fid": "f3",
+            "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81",
+            "fields": "f2,f3",
+        }
+        em_headers = {**headers, "Referer": "https://quote.eastmoney.com/"}
+        with httpx.Client(timeout=8.0, follow_redirects=True, headers=em_headers) as client:
+            resp = client.get(url, params=params)
+        data = resp.json()
+        diff = ((data or {}).get("data") or {}).get("diff") or []
+        out: list[float] = []
+        for item in diff:
+            # f3 单位是 %(东财惯例, 非小数), 直接拿来用
+            try:
+                v = item.get("f3")
+                if v is None:
+                    continue
+                out.append(float(v))
+            except (TypeError, ValueError):
                 continue
-            out.append(float(v))
-        except (TypeError, ValueError):
-            continue
-    return out
+        return out
+
+    # 新浪主源(生产可达); 空结果或失败 → 东财兜底; 都挂才抛
+    try:
+        sina = _fetch_sina()
+        if len(sina) >= 1000:  # 合理下限: 全A应>5000
+            return sina
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[breadth] 新浪拉取失败: {e!r}, 回落东财")
+    return _fetch_eastmoney()
 
 
 @router.get("/breadth-distribution")
