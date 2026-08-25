@@ -239,15 +239,18 @@ def get_klines(symbol: str, market: str = "CN", days: int = 60, interval: str = 
                 )
                 for r in rows
             ]
-            klines = _aggregate_klines(klines, interval)
-            return {
-                "symbol": symbol,
-                "market": market_code.value,
-                "days": days,
-                "interval": interval,
-                "klines": _serialize_klines(klines),
-                "source": "pg_klines_hypertable",
-            }
+            # v0.4.9.2: PG 命中但数据过薄(<30根)视为无效 — 新加股回填失败时只有
+            # 几天增量, 必须继续走联网源(含新浪兜底)拿完整历史
+            if len(klines) >= min(30, days):
+                klines = _aggregate_klines(klines, interval)
+                return {
+                    "symbol": symbol,
+                    "market": market_code.value,
+                    "days": days,
+                    "interval": interval,
+                    "klines": _serialize_klines(klines),
+                    "source": "pg_klines_hypertable",
+                }
     except Exception:
         # 库表可能不存在(SQLite/老库)或查询失败 → fallback 联网
         pass
