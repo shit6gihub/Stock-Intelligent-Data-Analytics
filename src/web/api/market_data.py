@@ -741,7 +741,9 @@ def _fetch_breadth_change_pcts() -> list[float]:
         return out
 
     def _fetch_eastmoney() -> list[float]:
-        url = "https://push2.eastmoney.com/api/qt/clist/get"
+        # v0.4.7.2: push2 对生产云 IP 断连 → push2delay(延迟行情域)实测可达;
+        # 涨跌分布是统计图, 15 分钟延迟无影响
+        url = "https://push2delay.eastmoney.com/api/qt/clist/get"
         params = {
             "pn": "1", "pz": "5000", "po": "1", "np": "1",
             "ut": "bd1d9ddb04089700cf9c27f6f7426281",
