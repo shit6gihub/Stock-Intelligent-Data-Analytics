@@ -40,7 +40,7 @@ _PHASE_CACHE_KEY = "market:phase:current"
 _PHASE_CACHE_TTL = 30  # 30s, 与前端轮询节奏一致
 
 # 30 天序列上限
-_RECENT_LIMIT = 30
+_RECENT_LIMIT = 120
 
 
 # ─────────────────────────── 内部辅助 ───────────────────────────
@@ -102,11 +102,11 @@ def get_phase() -> dict:
 
     db = SessionLocal()
     try:
-        # 取最近 60 天, 既能给近 30 天序列, 也能算稳定分布
+        # 取最近 260 天(v0.4.6: 时间线从30天扩到120天, 留分布统计余量)
         rows = (
             db.query(MarketPhaseDaily)
             .order_by(desc(MarketPhaseDaily.date))
-            .limit(60)
+            .limit(260)
             .all()
         )
         rows = list(reversed(rows))  # 升序, 便于前端时间线展示
@@ -133,6 +133,7 @@ def get_phase() -> dict:
             "available": True,
             "current": _row_to_dict(cur),
             "recent_30d": [_row_to_dict(r) for r in recent],
+            "recent_days": [_row_to_dict(r) for r in recent],
             "distribution": [
                 {"phase": k, "days": v, "label": lab}
                 for k, v, lab in dist_ordered
@@ -257,3 +258,40 @@ def sync_phase(date_str: str | None = None) -> dict:
         raise HTTPException(502, f"阶段同步失败: {e!r}")
     finally:
         db.close()
+
+
+# ─────────────────────────── register_cron (v0.4.6) ───────────────────────────
+def register_cron(scheduler) -> bool:
+    """把情绪周期每日同步 job 注册到传入的现有 APScheduler 实例。
+
+    工作日 15:10 (收盘后) 自动 sync 当日涨停池指标 → market_phase_daily。
+    模式对齐 src/core/auction_pool.register_cron: 复用现有 APScheduler,
+    不新开 scheduler; 调度器不可用返回 False 不崩。
+    """
+    if scheduler is None or not hasattr(scheduler, "add_job"):
+        return False
+
+    def _phase_sync_once():
+        try:
+            result = sync_phase()
+            logger.info("[market-phase] 每日阶段同步完成: %s", result.get("note", ""))
+        except Exception as e:  # noqa: BLE001
+            logger.error("[market-phase] 每日阶段同步异常: %r", e)
+
+    try:
+        scheduler.add_job(
+            _phase_sync_once,
+            "cron",
+            day_of_week="mon-fri",
+            hour=15,
+            minute=10,
+            id="market_phase_daily_sync",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+        )
+        logger.info("[market-phase] 每日阶段同步 cron 已注册: 工作日 15:10")
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.error("[market-phase] cron 注册失败: %r", e)
+        return False

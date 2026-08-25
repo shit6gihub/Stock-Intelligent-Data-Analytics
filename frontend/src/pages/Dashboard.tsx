@@ -34,6 +34,7 @@ import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Skeleton } from '@panwatch/base-ui/components/ui/skeleton'
 import { Onboarding } from '@panwatch/biz-ui/components/onboarding'
 import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
+import KpiBand, { usePhaseLabel, useMainlineTop1 } from '@panwatch/biz-ui/components/KpiBand'
 import MarketPhaseCard from '@panwatch/biz-ui/components/MarketPhaseCard'
 import MarketMainlineCard from '@panwatch/biz-ui/components/MarketMainlineCard'
 import DiscoveryPanel from '@/components/DiscoveryPanel'
@@ -502,6 +503,10 @@ export default function DashboardPage() {
     return Math.max(...attribution.map((a) => Math.abs(a.contribution_pct)), 0.01)
   }, [attribution])
 
+  // v0.4.6 KPI 带: 情绪阶段标签 + 主线 Top1(轻量拉取, 与下方完整卡错峰复用缓存)
+  const phaseKpi = usePhaseLabel()
+  const mainlineKpi = useMainlineTop1()
+
   const briefSummary = useMemo(() => {
     if (!brief?.content) return ''
     const stripped = stripMarkdown(brief.content)
@@ -543,56 +548,7 @@ export default function DashboardPage() {
       {/* 2026-08-17: 数据源失败显式标识 — ErrorBanner 组件,展示具体哪个源挂了 */}
       <ErrorBanner errors={sourceErrors} onDismiss={(id) => setSourceErrors(prev => prev.filter(e => e.id !== id))} retryAll={load} />
 
-      {/* 最新报告:Hermes cron 盘前/盘后报告速览(最近 4 条, 30s 随首页自动刷新, 点击进报告页) */}
-      <div className="card mb-3 p-4">
-        {/* 反AI模板 P2:段落头去图标惯性 — 报告区非高频扫描区, 用字号层级表达层级 */}
-        <div className="mb-1.5 flex items-baseline gap-2">
-          <h2 className="text-[13px] font-semibold">最新报告</h2>
-          <span className="text-[10px] text-muted-foreground">Hermes cron 盘前/盘后</span>
-          <button
-            type="button"
-            onClick={() => navigate('/reports')}
-            className="ml-auto shrink-0 text-[11px] text-muted-foreground transition-colors hover:text-primary"
-          >
-            查看全部 →
-          </button>
-        </div>
-        {reportsLoading && reports.length === 0 ? (
-          /* 首次加载骨架(后续 30s 刷新静默更新,不闪屏) */
-          <div className="space-y-2 py-1">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className="h-9 w-full" />
-            ))}
-          </div>
-        ) : reports.length === 0 ? (
-          <div className="py-4 text-center text-[12px] text-muted-foreground">
-            暂无报告,盘前/盘后报告生成后自动出现
-          </div>
-        ) : (
-          <div className="divide-y divide-border/40">
-            {reports.map((r) => (
-              <button
-                key={`${r.job_id}:${r.file}`}
-                type="button"
-                onClick={() => navigate('/reports')}
-                className="flex w-full items-center gap-2.5 py-1.5 text-left transition-colors hover:bg-accent/30"
-              >
-                <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13px] font-medium">{r.title_preview || r.file}</div>
-                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                    <span className="truncate">{r.job_name}</span>
-                    <span className="shrink-0">·</span>
-                    <span className="shrink-0">{formatReportTime(r.mtime_iso)}</span>
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* 指数走势 pills */}
+            {/* 指数走势 pills */}
       <div className="mb-3 grid grid-cols-2 gap-2.5 md:grid-cols-3 lg:grid-cols-5">
         {loading && indices.length === 0
           ? Array.from({ length: 5 }).map((_, i) => (
@@ -628,14 +584,22 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {/* 情绪周期6阶段 + 主线识别(TSP 口径) */}
-      <div className="mt-5 grid grid-cols-1 gap-x-6 gap-y-4 md:grid-cols-2">
-        <div className="border-t border-border/60 pt-2.5">
-          <MarketPhaseCard />
-        </div>
-        <div className="border-t border-border/60 pt-2.5">
-          <MarketMainlineCard />
-        </div>
+      {/* v0.4.6 KPI 带(借鉴 TSP): 数字优先 6 格, 一眼看全市场状态 */}
+      <KpiBand
+        upCount={marketFlow?.up_count ?? null}
+        downCount={marketFlow?.down_count ?? null}
+        mainFlowYi={marketFlow?.total_main_flow ?? null}
+        amountYi={marketFlow?.total_amount ?? null}
+        phaseLabel={phaseKpi.label}
+        phaseLoading={phaseKpi.loading}
+        mainlineTop1={mainlineKpi.top}
+        mainlineLoading={mainlineKpi.loading}
+      />
+
+      {/* 情绪周期6阶段 + 主线识别(TSP 口径): C 位主区 */}
+      <div id="market-phase-anchor" className="mt-2.5 grid grid-cols-1 gap-x-4 gap-y-3 md:grid-cols-2">
+        <MarketPhaseCard />
+        <MarketMainlineCard />
       </div>
 
       {/* 大盘资金流(东财两市主力净流入, 对齐同花顺APP) */}
@@ -1126,6 +1090,45 @@ export default function DashboardPage() {
                   </div>
                 )
               })}
+            </div>
+          )}
+        </div>
+
+{/* 最新报告(v0.4.6 降级): 右栏紧凑列表, 完整存档在报告页 */}
+        <div className="card p-4 lg:col-span-5 xl:col-span-3">
+          <div className="mb-1.5 flex items-baseline gap-2">
+            <h2 className="text-[13px] font-semibold">最新报告</h2>
+            <span className="text-[10px] text-muted-foreground">盘前/盘后</span>
+            <button
+              type="button"
+              onClick={() => navigate('/reports')}
+              className="ml-auto shrink-0 text-[11px] text-muted-foreground transition-colors hover:text-primary"
+            >
+              全部 →
+            </button>
+          </div>
+          {reportsLoading && reports.length === 0 ? (
+            <SkeletonRows rows={3} />
+          ) : reports.length === 0 ? (
+            <div className="py-4 text-center text-[12px] text-muted-foreground">
+              报告生成后自动出现
+            </div>
+          ) : (
+            <div className="divide-y divide-border/40">
+              {reports.slice(0, 4).map((r) => (
+                <button
+                  key={`${r.job_id}:${r.file}`}
+                  type="button"
+                  onClick={() => navigate('/reports')}
+                  className="flex w-full items-center gap-2 py-1.5 text-left transition-colors hover:bg-accent/30"
+                >
+                  <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[12px] font-medium">{r.title_preview || r.file}</div>
+                    <div className="truncate text-[10px] text-muted-foreground">{formatReportTime(r.mtime_iso)}</div>
+                  </div>
+                </button>
+              ))}
             </div>
           )}
         </div>

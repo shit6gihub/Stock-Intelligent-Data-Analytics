@@ -1829,6 +1829,17 @@ async def lifespan(app):
                 logger.warning("竞价异动 cron 注册未生效(调度器不可用), 09:25 同步将跳过")
         except Exception as e:
             logger.error(f"竞价异动 cron 注册失败: {e}")
+        # 情绪周期每日同步(v0.4.6): 工作日 15:10 收盘后自动 sync 涨停池指标落库
+        try:
+            from src.web.api.market_phase import register_cron as _phase_register_cron
+
+            _rs = locals().get("report_scheduler")
+            if _phase_register_cron(_rs.scheduler if _rs else None):
+                logger.info("情绪周期每日同步 cron 已注册 (工作日 15:10)")
+            else:
+                logger.warning("情绪周期 cron 注册未生效(调度器不可用), 阶段数据需手动 sync")
+        except Exception as e:
+            logger.error(f"情绪周期 cron 注册失败: {e}")
         # K线每日 backfill(收盘后 18:00, 周一至五, 拉最近 2 天)
         try:
             settings = Settings()

@@ -187,7 +187,7 @@ export default function MarketPhaseCard() {
   }
 
   const cur = data?.current ?? null
-  const recent = data?.recent_30d ?? []
+  const recent = (data as MarketPhaseResp & { recent_days?: MarketPhaseDay[] })?.recent_days ?? data?.recent_30d ?? []
   const dist = data?.distribution ?? []
   const totalDays = data?.total_days ?? 0
   const note = data?.note ?? ''
@@ -279,7 +279,7 @@ export default function MarketPhaseCard() {
       {/* 30 天阶段色块时间线 */}
       <div className="mt-2">
         <div className="flex items-center justify-between mb-1.5">
-          <span className="text-[10px] text-muted-foreground">近 {recent.length} 天阶段色块</span>
+          <span className="text-[10px] text-muted-foreground">近 {recent.length} 个交易日阶段色带</span>
           {note ? (
             <span className="text-[10px] text-muted-foreground/70 truncate max-w-[60%]" title={note}>
               {note}
