@@ -1840,6 +1840,18 @@ async def lifespan(app):
                 logger.warning("情绪周期 cron 注册未生效(调度器不可用), 阶段数据需手动 sync")
         except Exception as e:
             logger.error(f"情绪周期 cron 注册失败: {e}")
+        # K线盘前预缓存(v0.4.10): 工作日 09:20 主动增量入库自选+候选池,
+        # 开盘后消费者直接命中 PG 缓存, 对外请求数砍 ~80%
+        try:
+            from src.core.kline_precache import register_precache_cron
+
+            _rs2 = locals().get("report_scheduler")
+            if register_precache_cron(_rs2.scheduler if _rs2 else None):
+                logger.info("K线盘前预缓存 cron 已注册 (工作日 09:20)")
+            else:
+                logger.warning("K线盘前预缓存 cron 注册未生效")
+        except Exception as e:
+            logger.error(f"K线盘前预缓存 cron 注册失败: {e}")
         # K线每日 backfill(收盘后 18:00, 周一至五, 拉最近 2 天)
         try:
             settings = Settings()
