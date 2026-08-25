@@ -62,9 +62,9 @@ function Cell({
 }) {
   const toneCls =
     tone === 'bull'
-      ? 'text-red-600 dark:text-red-400'
+      ? 'text-stock-up'
       : tone === 'bear'
-        ? 'text-emerald-600 dark:text-emerald-400'
+        ? 'text-stock-down'
         : tone === 'accent'
           ? 'text-primary'
           : 'text-foreground'
@@ -116,9 +116,9 @@ export default function KpiBand({
         label="涨 / 跌"
         value={
           <>
-            <span className="text-red-600 dark:text-red-400">{upCount ?? '--'}</span>
+            <span className="text-stock-up">{upCount ?? '--'}</span>
             <span className="mx-0.5 text-muted-foreground">/</span>
-            <span className="text-emerald-600 dark:text-emerald-400">{downCount ?? '--'}</span>
+            <span className="text-stock-down">{downCount ?? '--'}</span>
           </>
         }
       />
@@ -166,9 +166,9 @@ export default function KpiBand({
         label="涨停 / 跌停"
         value={
           <>
-            <span className="text-red-600 dark:text-red-400">{limitUp ?? '--'}</span>
+            <span className="text-stock-up">{limitUp ?? '--'}</span>
             <span className="mx-0.5 text-muted-foreground">/</span>
-            <span className="text-emerald-600 dark:text-emerald-400">{limitDown ?? '--'}</span>
+            <span className="text-stock-down">{limitDown ?? '暂无'}</span>
           </>
         }
         sub={sealRate != null ? `封板率 ${(sealRate * 100).toFixed(0)}%` : undefined}

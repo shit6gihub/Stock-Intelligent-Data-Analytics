@@ -285,7 +285,7 @@ export default function DiscoveryPanel({ monitorStocks, onOpenStock }: Props) {
                   const rawPct = b.change_pct
                   const pct = typeof rawPct === 'number' ? rawPct : (rawPct == null ? 0 : Number(rawPct))
                   const safePct = isFinite(pct) ? pct : 0
-                  const color = safePct > 0 ? 'text-rose-500' : safePct < 0 ? 'text-emerald-500' : 'text-muted-foreground'
+                  const color = safePct > 0 ? 'text-stock-up' : safePct < 0 ? 'text-stock-down' : 'text-muted-foreground'
                   return (
                     <button
                       key={b.code}
@@ -313,7 +313,7 @@ export default function DiscoveryPanel({ monitorStocks, onOpenStock }: Props) {
                   const rawPct = s.change_pct
                   const pct = typeof rawPct === 'number' ? rawPct : (rawPct == null ? 0 : Number(rawPct))
                   const safePct = isFinite(pct) ? pct : 0
-                  const color = safePct > 0 ? 'text-rose-500' : safePct < 0 ? 'text-emerald-500' : 'text-muted-foreground'
+                  const color = safePct > 0 ? 'text-stock-up' : safePct < 0 ? 'text-stock-down' : 'text-muted-foreground'
                   const reasons = (s as HotStockItem & { _reasons?: string[] })._reasons
                   return (
                     <div
@@ -356,7 +356,7 @@ export default function DiscoveryPanel({ monitorStocks, onOpenStock }: Props) {
                 const rawPct = s.change_pct
                 const pct = typeof rawPct === 'number' ? rawPct : (rawPct == null ? 0 : Number(rawPct))
                 const safePct = isFinite(pct) ? pct : 0
-                const color = safePct > 0 ? 'text-rose-500' : safePct < 0 ? 'text-emerald-500' : 'text-muted-foreground'
+                const color = safePct > 0 ? 'text-stock-up' : safePct < 0 ? 'text-stock-down' : 'text-muted-foreground'
                 return (
                   <div
                     key={s.symbol}
