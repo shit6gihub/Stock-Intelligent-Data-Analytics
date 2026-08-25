@@ -741,31 +741,39 @@ def _fetch_breadth_change_pcts() -> list[float]:
         return out
 
     def _fetch_eastmoney() -> list[float]:
-        # v0.4.7.2: push2 对生产云 IP 断连 → push2delay(延迟行情域)实测可达;
-        # 涨跌分布是统计图, 15 分钟延迟无影响
+        # v0.4.7.3: push2delay 域每页上限 100 条 → 分页拉全A(total~12365 含京市,
+        # 上限 140 页保护); 涨跌分布是统计图, 15 分钟延迟无影响
         url = "https://push2delay.eastmoney.com/api/qt/clist/get"
-        params = {
-            "pn": "1", "pz": "5000", "po": "1", "np": "1",
-            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
-            "fltt": "2", "invt": "2", "fid": "f3",
-            "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81",
-            "fields": "f2,f3",
-        }
         em_headers = {**headers, "Referer": "https://quote.eastmoney.com/"}
-        with httpx.Client(timeout=8.0, follow_redirects=True, headers=em_headers) as client:
-            resp = client.get(url, params=params)
-        data = resp.json()
-        diff = ((data or {}).get("data") or {}).get("diff") or []
         out: list[float] = []
-        for item in diff:
-            # f3 单位是 %(东财惯例, 非小数), 直接拿来用
-            try:
-                v = item.get("f3")
-                if v is None:
+
+        def _parse(diff: list) -> None:
+            for item in diff:
+                # f3 单位是 %(东财惯例, 非小数), 直接拿来用
+                try:
+                    v = item.get("f3")
+                    if v is not None:
+                        out.append(float(v))
+                except (TypeError, ValueError):
                     continue
-                out.append(float(v))
-            except (TypeError, ValueError):
-                continue
+
+        with httpx.Client(timeout=8.0, follow_redirects=True, headers=em_headers) as client:
+            total = None
+            for page in range(1, 141):
+                resp = client.get(url, params={
+                    "pn": str(page), "pz": "100", "po": "1", "np": "1",
+                    "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+                    "fltt": "2", "invt": "2", "fid": "f3",
+                    "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81",
+                    "fields": "f2,f3",
+                })
+                data = (resp.json() or {}).get("data") or {}
+                if total is None:
+                    total = data.get("total") or 0
+                diff = data.get("diff") or []
+                _parse(diff)
+                if len(diff) < 100 or (total and page * 100 >= total):
+                    break
         return out
 
     # 新浪主源(生产可达); 空结果或失败 → 东财兜底; 都挂才抛
