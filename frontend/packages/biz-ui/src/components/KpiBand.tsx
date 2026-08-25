@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { Activity, Crown } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { fetchAPI } from '@panwatch/api'
 
 /**
@@ -17,6 +17,36 @@ export interface MainlineTop1 {
   limit_up_count: number
   max_boards: number
   leader_name?: string
+}
+
+
+/** v0.4.7: 数字滚动动画(300ms requestAnimationFrame 过渡) */
+function useCountUp(target: number | null, duration = 300): number | null {
+  const [display, setDisplay] = useState<number | null>(target)
+  const prevRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (target == null) {
+      setDisplay(null)
+      return
+    }
+    const from = prevRef.current ?? target
+    prevRef.current = target
+    if (from === target) {
+      setDisplay(target)
+      return
+    }
+    const start = performance.now()
+    let raf = 0
+    const tick = (now: number) => {
+      const p = Math.min(1, (now - start) / duration)
+      const eased = 1 - Math.pow(1 - p, 3)
+      setDisplay(+(from + (target - from) * eased).toFixed(2))
+      if (p < 1) raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [target, duration])
+  return display
 }
 
 function Cell({
@@ -58,6 +88,9 @@ export default function KpiBand({
   phaseLoading,
   mainlineTop1,
   mainlineLoading,
+  limitUp,
+  limitDown,
+  sealRate,
 }: {
   upCount: number | null
   downCount: number | null
@@ -67,9 +100,15 @@ export default function KpiBand({
   phaseLoading: boolean
   mainlineTop1: MainlineTop1 | null
   mainlineLoading: boolean
+  limitUp: number | null
+  limitDown: number | null
+  sealRate: number | null
 }) {
   const navigate = useNavigate()
   const flowTone = mainFlowYi == null ? null : mainFlowYi >= 0 ? 'bull' : 'bear'
+  // v0.4.7: 数字滚动动画
+  const flowAnim = useCountUp(mainFlowYi)
+  const amountAnim = useCountUp(amountYi)
 
   return (
     <div className="card grid grid-cols-3 divide-x divide-border/40 md:grid-cols-6">
@@ -85,10 +124,10 @@ export default function KpiBand({
       />
       <Cell
         label="主力净流入"
-        value={mainFlowYi == null ? '--' : `${mainFlowYi >= 0 ? '+' : ''}${mainFlowYi.toFixed(0)}亿`}
+        value={flowAnim == null ? '--' : `${mainFlowYi! >= 0 ? '+' : ''}${flowAnim.toFixed(0)}亿`}
         tone={flowTone as 'bull' | 'bear' | null}
       />
-      <Cell label="两市成交额" value={amountYi == null ? '--' : `${amountYi.toFixed(0)}亿`} />
+      <Cell label="两市成交额" value={amountAnim == null ? '--' : `${amountAnim.toFixed(0)}亿`} />
       <button
         type="button"
         className="cursor-pointer text-left transition-colors hover:bg-accent/20"
@@ -122,28 +161,52 @@ export default function KpiBand({
           tone="accent"
         />
       </button>
-      {/* 占位格: 与 phase 卡联动, 点击滚到情绪周期卡 */}
-      <button
-        type="button"
-        className="hidden cursor-pointer text-left transition-colors hover:bg-accent/20 md:block"
-        onClick={() => document.getElementById('market-phase-anchor')?.scrollIntoView({ behavior: 'smooth' })}
-      >
-        <Cell label="市场体检" value="↓" sub="查看下方环境详情" />
-      </button>
+      {/* v0.4.7: 涨停/跌停 + 封板率(数据来自 /market/phase) */}
+      <Cell
+        label="涨停 / 跌停"
+        value={
+          <>
+            <span className="text-red-600 dark:text-red-400">{limitUp ?? '--'}</span>
+            <span className="mx-0.5 text-muted-foreground">/</span>
+            <span className="text-emerald-600 dark:text-emerald-400">{limitDown ?? '--'}</span>
+          </>
+        }
+        sub={sealRate != null ? `封板率 ${(sealRate * 100).toFixed(0)}%` : undefined}
+      />
     </div>
   )
 }
 
 /** 轻量拉取 phase 当前阶段标签(KpiBand 用; 完整卡在 MarketPhaseCard) */
-export function usePhaseLabel(): { label: string | null; loading: boolean } {
+export interface PhaseKpi {
+  label: string | null
+  loading: boolean
+  limitUp: number | null
+  limitDown: number | null
+  sealRate: number | null
+}
+export function usePhaseLabel(): PhaseKpi {
   const [label, setLabel] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [limitUp, setLimitUp] = useState<number | null>(null)
+  const [limitDown] = useState<number | null>(null)
+  const [sealRate, setSealRate] = useState<number | null>(null)
   useEffect(() => {
     let alive = true
     void (async () => {
       try {
-        const res = await fetchAPI<{ available: boolean; current: { label: string } | null }>('/market/phase')
-        if (alive) setLabel(res?.current?.label ?? null)
+        const res = await fetchAPI<{
+          available: boolean
+          current: { label: string; ge2_count: number | null; first_board: number | null; seal_rate: number | null } | null
+        }>('/market/phase')
+        if (!alive) return
+        setLabel(res?.current?.label ?? null)
+        // 涨停≈首板+≥2板(当日入池口径), 跌停接口无 — 显式 null 不编造
+        const cur = res?.current
+        if (cur) {
+          setLimitUp((cur.first_board ?? 0) + (cur.ge2_count ?? 0))
+          setSealRate(cur.seal_rate)
+        }
       } catch {
         /* 静默 — KPI 格显示 -- */
       } finally {
@@ -154,7 +217,7 @@ export function usePhaseLabel(): { label: string | null; loading: boolean } {
       alive = false
     }
   }, [])
-  return { label, loading }
+  return { label, loading, limitUp, limitDown, sealRate }
 }
 
 

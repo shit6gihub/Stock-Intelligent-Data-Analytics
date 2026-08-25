@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 // 反AI模板 P2:精简图标导入 — 段落头去"每节一图标"惯性, 只保留要紧事/体检两个扫描区的图标
-import { RefreshCw, AlertTriangle, Activity, ShieldAlert, Share2, Plus, FileText } from 'lucide-react'
+import { RefreshCw, AlertTriangle, Activity, ShieldAlert, Share2, FileText } from 'lucide-react'
 import {
   dashboardApi,
   portfolioApi,
@@ -26,9 +26,8 @@ import {
   type CuratedItem,
   type AttributionItem,
   type PortfolioAiReview,
-  type DashboardBrief,
   type MarketAnomalyItem,
-  type MarketHotStockItem,
+  fetchAPI,
 } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import { Skeleton } from '@panwatch/base-ui/components/ui/skeleton'
@@ -37,6 +36,9 @@ import StockInsightModal from '@panwatch/biz-ui/components/stock-insight-modal'
 import KpiBand, { usePhaseLabel, useMainlineTop1 } from '@panwatch/biz-ui/components/KpiBand'
 import MarketPhaseCard from '@panwatch/biz-ui/components/MarketPhaseCard'
 import MarketMainlineCard from '@panwatch/biz-ui/components/MarketMainlineCard'
+import BreadthDistributionChart from '@panwatch/biz-ui/components/dashboard/BreadthDistributionChart'
+import SentimentGauge from '@panwatch/biz-ui/components/dashboard/SentimentGauge'
+import FlowHistoryChart from '@panwatch/biz-ui/components/dashboard/FlowHistoryChart'
 import DiscoveryPanel from '@/components/DiscoveryPanel'
 import SkeletonRows from '@/components/SkeletonRows'
 import Sparkline from '@/components/Sparkline'
@@ -94,21 +96,7 @@ function pickList<T>(v: unknown, key: string): T[] {
   }
   return []
 }
-/** 文本截断:超长加省略号(热榜 AI 归因摘要等场景)。 */
-function trunc(s: string, n: number): string {
-  if (!s) return ''
-  return s.length > n ? `${s.slice(0, n)}…` : s
-}
 /** 去掉常见 markdown 标记,供简报摘要行取纯文本用。 */
-function stripMarkdown(s: string): string {
-  return s
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/!\[.*?\]\(.*?\)/g, '')
-    .replace(/\[(.*?)\]\(.*?\)/g, '$1')
-    .replace(/[#*_>`~]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
 const WEEKDAY_LABEL = ['日', '一', '二', '三', '四', '五', '六']
 function formatHeaderTime(d: Date): string {
   const y = d.getFullYear()
@@ -177,10 +165,9 @@ export default function DashboardPage() {
   const [attribution, setAttribution] = useState<AttributionItem[]>([])
   const [aiReview, setAiReview] = useState<PortfolioAiReview | null>(null)
   const [aiReviewLoading, setAiReviewLoading] = useState(false)
-  const [brief, setBrief] = useState<DashboardBrief | null>(null)
-  const [briefOpen, setBriefOpen] = useState(false)
   // 自选股集合(用于判断盘前标的是否已在自选)
   const [watchSymbols, setWatchSymbols] = useState<Set<string>>(new Set())
+  void watchSymbols // v0.4.7: 简报移除后暂无读值场景, setter 仍用于快捷加自选
   const [marketStatus, setMarketStatus] = useState<DashboardMarketStatus[]>([])
   // 最新报告(Hermes cron):首页速览取最近 4 条,30s 随首页自动刷新
   const [reports, setReports] = useState<ReportItem[]>([])
@@ -190,8 +177,6 @@ export default function DashboardPage() {
   // 异动池(东财) / 热榜(同花顺):独立加载,任一失败静默,不影响首页其他内容
   const [anomalies, setAnomalies] = useState<MarketAnomalyItem[]>([])
   const [anomaliesLoading, setAnomaliesLoading] = useState(true)
-  const [hotStocks, setHotStocks] = useState<MarketHotStockItem[]>([])
-  const [hotStocksLoading, setHotStocksLoading] = useState(true)
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null)
   // 2026-08-17: 数据源失败显式标识 — 收集 {source, message},横幅展示具体哪个源挂了
   const [sourceErrors, setSourceErrors] = useState<Array<{ id: number; source: string; message: string; retry?: () => void }>>([])
@@ -268,16 +253,6 @@ export default function DashboardPage() {
         pushError('异动池 (东财)', err?.message || '服务不可用', load)
       })
       .finally(() => setAnomaliesLoading(false))
-    // 热榜(同花顺):独立加载,失败静默
-    setHotStocksLoading(true)
-    dashboardApi
-      .hotStocks({ period: 'hour', limit: 10 })
-      .then((r) => setHotStocks(pickList<MarketHotStockItem>(r, 'items').slice(0, 10)))
-      .catch((err) => {
-        setHotStocks([])
-        pushError('热榜 (同花顺)', err?.message || '服务不可用', load)
-      })
-      .finally(() => setHotStocksLoading(false))
     // 快车道:DB/轻量查询,先让首屏(要紧事/体检分布)尽快出来
     const [sc, ov, dg, ht, td, ms] = await Promise.allSettled([
       dashboardApi.intradayScan(),
@@ -315,14 +290,6 @@ export default function DashboardPage() {
     // 30s 自动刷新跳过(避免每分钟级重请求 + 图表反复"计算中"),仅首载/手动刷新触发
     if (!opts?.skipBench) loadBench()
 
-    // 盘前/盘后简报:独立加载,取较新一条
-    Promise.allSettled([dashboardApi.brief('premarket'), dashboardApi.brief('eod')]).then((res) => {
-      const briefs = res
-        .filter((b): b is PromiseFulfilledResult<DashboardBrief> => b.status === 'fulfilled' && !b.value.empty)
-        .map((b) => b.value)
-      briefs.sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''))
-      setBrief(briefs[0] || null)
-    })
 
     // 自选股列表(判断盘前标的是否已加自选)
     stocksApi.list().then((rows) => {
@@ -507,11 +474,6 @@ export default function DashboardPage() {
   const phaseKpi = usePhaseLabel()
   const mainlineKpi = useMainlineTop1()
 
-  const briefSummary = useMemo(() => {
-    if (!brief?.content) return ''
-    const stripped = stripMarkdown(brief.content)
-    return stripped.length > 120 ? `${stripped.slice(0, 120)}…` : stripped
-  }, [brief])
 
   return (
     <div className="page-container pb-10">
@@ -594,12 +556,17 @@ export default function DashboardPage() {
         phaseLoading={phaseKpi.loading}
         mainlineTop1={mainlineKpi.top}
         mainlineLoading={mainlineKpi.loading}
+        limitUp={phaseKpi.limitUp}
+        limitDown={phaseKpi.limitDown}
+        sealRate={phaseKpi.sealRate}
       />
 
       {/* 情绪周期6阶段 + 主线识别(TSP 口径): C 位主区 */}
-      <div id="market-phase-anchor" className="mt-2.5 grid grid-cols-1 gap-x-4 gap-y-3 md:grid-cols-2">
+      <div id="market-phase-anchor" className="mt-2.5 grid grid-cols-1 gap-x-4 gap-y-3 lg:grid-cols-3">
         <MarketPhaseCard />
         <MarketMainlineCard />
+        {/* v0.4.7: 市场温度仪表盘(数据复用 phase 接口) */}
+        <PhaseGaugeCard />
       </div>
 
       {/* 大盘资金流(东财两市主力净流入, 对齐同花顺APP) */}
@@ -623,6 +590,9 @@ export default function DashboardPage() {
                 <span className="mx-1">/</span>深 <b className="font-mono">{safeFixed(marketFlow.sz_flow, 1)}亿</b></span>
             </div>
 
+          {/* v0.4.7: 日内主力净流入面积图(30s 快照序列) */}
+          <FlowHistoryChart />
+
           {/* 板块资金明细: 流入榜 / 流出榜 */}
           {(marketFlow.inflow_boards?.length || marketFlow.outflow_boards?.length) ? (
             <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -630,12 +600,16 @@ export default function DashboardPage() {
                 <div>
                   <div className="mb-1 text-[11px] font-semibold text-red-600">资金流入板块</div>
                   <div className="space-y-0.5">
-                    {marketFlow.inflow_boards.map(b => (
-                      <div key={b.name} className="flex justify-between text-[11px]">
-                        <span className="text-muted-foreground truncate">{b.name}</span>
-                        <span className="font-mono text-red-600">+{safeFixed(b.net_inflow, 1)}亿</span>
-                      </div>
-                    ))}
+                    {(() => {
+                      const maxIn = Math.max(...(marketFlow.inflow_boards?.map(x => x.net_inflow) || [1]), 0.01)
+                      return marketFlow.inflow_boards.map((b, bi) => (
+                        <div key={b.name} className="relative flex justify-between overflow-hidden rounded text-[11px]">
+                          <div className="absolute inset-y-0 left-0 bg-red-500/10 transition-all duration-500" style={{ width: `${Math.min(100, (b.net_inflow / maxIn) * 100)}%`, transitionDelay: `${bi * 60}ms` }} />
+                          <span className="relative z-10 truncate px-1 text-muted-foreground">{b.name}</span>
+                          <span className="relative z-10 font-mono text-red-600">+{safeFixed(b.net_inflow, 1)}亿</span>
+                        </div>
+                      ))
+                    })()}
                   </div>
                 </div>
               ) : null}
@@ -643,12 +617,16 @@ export default function DashboardPage() {
                 <div>
                   <div className="mb-1 text-[11px] font-semibold text-green-700">资金流出板块</div>
                   <div className="space-y-0.5">
-                    {marketFlow.outflow_boards.map(b => (
-                      <div key={b.name} className="flex justify-between text-[11px]">
-                        <span className="text-muted-foreground truncate">{b.name}</span>
-                        <span className="font-mono text-green-700">{safeFixed(b.net_inflow, 1)}亿</span>
-                      </div>
-                    ))}
+                    {(() => {
+                      const maxOut = Math.max(...(marketFlow.outflow_boards?.map(x => Math.abs(x.net_inflow)) || [1]), 0.01)
+                      return marketFlow.outflow_boards.map((b, bi) => (
+                        <div key={b.name} className="relative flex justify-between overflow-hidden rounded text-[11px]">
+                          <div className="absolute inset-y-0 left-0 bg-emerald-500/10 transition-all duration-500" style={{ width: `${Math.min(100, (Math.abs(b.net_inflow) / maxOut) * 100)}%`, transitionDelay: `${bi * 60}ms` }} />
+                          <span className="relative z-10 truncate px-1 text-muted-foreground">{b.name}</span>
+                          <span className="relative z-10 font-mono text-green-700">{safeFixed(b.net_inflow, 1)}亿</span>
+                        </div>
+                      ))
+                    })()}
                   </div>
                 </div>
               ) : null}
@@ -659,8 +637,8 @@ export default function DashboardPage() {
 
       {/* 异动池(东财) | 热榜(同花顺):并排双列,移动端堆叠;独立加载,任一失败静默不影响首页 */}
       {/* 反AI模板 P2:异动/热榜同为列表感区块, 去卡片化 — 与大盘资金流一致 hairline 分隔 */}
-      <div className="mt-5 grid grid-cols-1 gap-x-6 gap-y-4 md:grid-cols-2">
-        {/* 异动池(东财) */}
+      <div className="mt-5 grid grid-cols-1 gap-x-6 md:grid-cols-2">
+        {/* 异动池(东财) — v0.4.7 与涨跌分布并排 */}
         <div className="border-t border-border/60 pt-2.5">
           <div className="mb-2 flex items-baseline gap-2">
             <h2 className="text-[13px] font-semibold">异动池</h2>
@@ -721,79 +699,16 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* 热榜(同花顺) */}
+        {/* v0.4.7: 全市场涨跌分布(双向柱) */}
         <div className="border-t border-border/60 pt-2.5">
           <div className="mb-2 flex items-baseline gap-2">
-            <h2 className="text-[13px] font-semibold">热榜</h2>
-            <span className="text-[10px] text-muted-foreground">同花顺热榜</span>
-            {hotStocksLoading && hotStocks.length === 0 && (
-              <RefreshCw className="ml-auto h-3 w-3 animate-spin self-center text-muted-foreground" />
-            )}
+            <h2 className="text-[13px] font-semibold">涨跌分布</h2>
+            <span className="text-[10px] text-muted-foreground">全A · 9档</span>
           </div>
-          {hotStocksLoading && hotStocks.length === 0 ? (
-            <div className="space-y-2 py-1">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <Skeleton key={i} className="h-10 w-full" />
-              ))}
-            </div>
-          ) : hotStocks.length === 0 ? (
-            <div className="py-6 text-center text-[12px] text-muted-foreground">暂无热榜数据</div>
-          ) : (
-            <div className="divide-y divide-border/40">
-              {hotStocks.map((h, i) => {
-                const sym = h.symbol || h.code || ''
-                const concepts = h.concepts?.length ? h.concepts : h.tags || []
-                const reason = h.reason || h.summary || ''
-                return (
-                  <button
-                    key={`${sym}-${i}`}
-                    type="button"
-                    onClick={() => sym && openStock(sym, h.market || 'CN', h.name || '')}
-                    onContextMenu={(e) => {
-                      if (!sym) return
-                      openStockContextMenu(e, { symbol: sym, name: h.name || sym, market: h.market || 'CN', hasPosition: false })
-                    }}
-                    className="flex w-full items-center gap-2.5 py-1.5 text-left transition-colors hover:bg-accent/30"
-                  >
-                    <span
-                      className={`w-5 shrink-0 text-center font-mono text-[13px] font-bold ${
-                        i < 3 ? 'text-red-600' : 'text-muted-foreground'
-                      }`}
-                    >
-                      {h.rank ?? i + 1}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="truncate text-[13px] font-medium">{h.name || sym || '--'}</span>
-                        <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{sym}</span>
-                      </div>
-                      {(concepts.length > 0 || reason) && (
-                        <div className="mt-0.5 flex min-w-0 items-center gap-1">
-                          {concepts.slice(0, 3).map((c) => (
-                            <span key={c} className="shrink-0 rounded bg-primary/10 px-1 py-px text-[9px] text-primary">
-                              {c}
-                            </span>
-                          ))}
-                          {concepts.length > 3 && (
-                            <span className="shrink-0 text-[9px] text-muted-foreground">+{concepts.length - 3}</span>
-                          )}
-                          {reason && <span className="truncate text-[11px] text-muted-foreground">{trunc(reason, 30)}</span>}
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex shrink-0 flex-col items-end gap-0.5">
-                      {h.heat != null && <span className="text-[10px] text-orange-500/90">{h.heat}</span>}
-                      <span className={`rounded px-1.5 py-0.5 font-mono text-[11px] ${pctChipCls(h.change_pct)}`}>
-                        {h.change_pct != null ? pct(h.change_pct) : '--'}
-                      </span>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-          )}
+          <BreadthDistributionChart />
         </div>
       </div>
+      {/* 热榜已移除(v0.4.7): 与发现页重复 */}
 
       {/* 主体:PC 工作台 3 列(要紧事3 | 体检6 | 机会3);次级 2 列(简报6 | 机会发现6)。1280px 以下回退 7/5-5/7 两行布局 */}
       {/* 反AI模板 P2:上方列表区已去卡片化, 工作台卡片区补 mt-3 维持呼吸感 */}
@@ -882,27 +797,34 @@ export default function DashboardPage() {
           <div className="mb-2 flex items-center gap-2">
             <ShieldAlert className="h-4 w-4 text-primary" />
             <h2 className="text-sm font-semibold">组合体检</h2>
-            {benchReady && (
-              <button
-                type="button"
-                onClick={() => setShareBench(true)}
-                className="ml-auto inline-flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-primary"
-                title="生成模拟盘成绩单分享图"
-              >
-                <Share2 className="h-3.5 w-3.5" />
-                成绩单
-              </button>
-            )}
-            {hasHoldings && (
-              <button
-                type="button"
-                onClick={() => setShareDiag(true)}
-                className={`${benchReady ? '' : 'ml-auto'} inline-flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-primary`}
-                title="生成组合体检分享图"
-              >
-                <Share2 className="h-3.5 w-3.5" />
-                体检图
-              </button>
+            {(benchReady || hasHoldings) && (
+              /* v0.4.7: 两个分享入口合并为一个下拉, 减少头部按钮拥挤 */
+              <details className="relative ml-auto">
+                <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-primary">
+                  <Share2 className="h-3.5 w-3.5" />
+                  分享 ▾
+                </summary>
+                <div className="absolute right-0 z-20 mt-1 w-28 rounded-lg border border-border/60 bg-card py-1 shadow-lg">
+                  {benchReady && (
+                    <button
+                      type="button"
+                      onClick={(e) => { setShareBench(true); (e.currentTarget.closest('details') as HTMLDetailsElement).open = false }}
+                      className="block w-full px-3 py-1.5 text-left text-[12px] hover:bg-accent/30"
+                    >
+                      成绩单图
+                    </button>
+                  )}
+                  {hasHoldings && (
+                    <button
+                      type="button"
+                      onClick={(e) => { setShareDiag(true); (e.currentTarget.closest('details') as HTMLDetailsElement).open = false }}
+                      className="block w-full px-3 py-1.5 text-left text-[12px] hover:bg-accent/30"
+                    >
+                      体检图
+                    </button>
+                  )}
+                </div>
+              </details>
             )}
           </div>
           {loading && !diag ? (
@@ -1133,66 +1055,9 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* 盘前/盘后简报(次级,左) */}
-        {brief && (brief.title || brief.content) && (
-          <div className="card p-4 lg:col-span-7 xl:col-span-6">
-            <div className="mb-1 flex items-center justify-between gap-2">
-              {/* 反AI模板 P2:简报段落头去图标, 纯字号层级 */}
-              <h2 className="text-sm font-semibold">{brief.agent_label}</h2>
-              <div className="flex shrink-0 items-center gap-2">
-                <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                  AI{brief.date ? ` · ${brief.date}` : ''}
-                </span>
-                {brief.content && (
-                  <button
-                    type="button"
-                    className="text-[11px] text-muted-foreground hover:text-foreground"
-                    onClick={() => setBriefOpen((v) => !v)}
-                  >
-                    {briefOpen ? '收起' : '展开'}
-                  </button>
-                )}
-              </div>
-            </div>
-            {brief.title && <div className="text-[14.5px] font-semibold text-foreground">{brief.title}</div>}
-            {brief.stocks && brief.stocks.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {brief.stocks.map((s) => {
-                  const inWatch = watchSymbols.has(`${s.market}:${s.symbol}`)
-                  return (
-                    <span
-                      key={s.symbol}
-                      className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-accent/40 px-2 py-0.5 text-[11px]"
-                    >
-                      <span className="text-foreground">{s.name}</span>
-                      <span className="font-mono text-muted-foreground">{s.symbol}</span>
-                      {inWatch ? (
-                        <span className="text-[10px] text-green-700">已自选</span>
-                      ) : (
-                        <button
-                          type="button"
-                          title="加入自选股"
-                          onClick={() => addToWatchlist(s.symbol, s.name, s.market)}
-                          className="ml-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-primary/15 text-primary transition-colors hover:bg-primary/30"
-                        >
-                          <Plus className="h-2.5 w-2.5" />
-                        </button>
-                      )}
-                    </span>
-                  )
-                })}
-              </div>
-            )}
-            {!briefOpen && briefSummary && <div className="mt-1 text-[12px] text-muted-foreground">{briefSummary}</div>}
-            {briefOpen && brief.content && (
-              <div className="prose prose-sm dark:prose-invert mt-1 max-w-none break-words text-[12px] [&_p]:my-1 [&_ul]:my-1">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{brief.content}</ReactMarkdown>
-              </div>
-            )}
-          </div>
-        )}
+                {/* 简报已移除(v0.4.7): 与报告中心重复, 入口保留在最新报告卡 */}
 
-        {/* 机会发现(次级,右;1280px 以下整行) */}
+{/* 机会发现(次级,右;1280px 以下整行) */}
         <div className="lg:col-span-12 xl:col-span-6">
           <DiscoveryPanel monitorStocks={scan} onOpenStock={openStock} />
         </div>
@@ -1247,6 +1112,40 @@ export default function DashboardPage() {
       />
 
       <Onboarding open={showOnboarding} onComplete={handleOnboardingComplete} hasStocks={hasWatchlist} />
+    </div>
+  )
+}
+
+
+/** v0.4.7: 市场温度卡 — 拉 /market/phase 喂 SentimentGauge(30s 轮询) */
+function PhaseGaugeCard() {
+  const [phaseData, setPhaseData] = useState<{ phase: string; label: string; max_height: number | null; promo_rate: number | null; seal_rate: number | null } | null>(null)
+  useEffect(() => {
+    let alive = true
+    const load = async () => {
+      try {
+        const res = await fetchAPI<{ available: boolean; current: { phase: string; label: string; max_height: number | null; promo_rate: number | null; seal_rate: number | null } | null }>('/market/phase')
+        if (alive && res?.available && res.current) setPhaseData(res.current)
+      } catch { /* 静默 */ }
+    }
+    void load()
+    const t = window.setInterval(() => void load(), 30000)
+    return () => { alive = false; window.clearInterval(t) }
+  }, [])
+  return (
+    <div className="rounded-xl border border-border/50 bg-card p-3">
+      <div className="mb-1 flex items-baseline gap-2">
+        <span className="text-[13px] font-semibold">市场温度</span>
+        <span className="text-[10px] text-muted-foreground">高度×15 + 晋级率×40 + 封板率×45</span>
+      </div>
+      {phaseData ? (
+        <SentimentGauge
+          phase={phaseData.phase}
+          metrics={{ max_height: phaseData.max_height, promo_rate: phaseData.promo_rate, seal_rate: phaseData.seal_rate }}
+        />
+      ) : (
+        <div className="flex h-[140px] items-center justify-center text-[11px] text-muted-foreground">阶段数据同步中…</div>
+      )}
     </div>
   )
 }

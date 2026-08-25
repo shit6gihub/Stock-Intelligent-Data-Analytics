@@ -12,16 +12,139 @@
 - GET /api/market-data/fundamentals-detail/{symbol}  个股基本面明细合并端点(龙虎榜/两融/股东户数/分红/事件日历)
 - GET /api/market-data/anomalies  东财异动池(交易所「严重异常波动」口径, 供首页 Dashboard)
 - GET /api/market-data/hot-stocks  同花顺热榜(小时榜/日榜, 含 AI 归因, 供首页 Dashboard)
+- GET /api/market-data/market-capital-flow  大盘资金(对齐同花顺APP口径, 顺手写 30s 快照入 DB)
+- GET /api/market-data/market-capital-flow/history?hours=4  当日大盘资金快照序列
+- GET /api/market-data/breadth-distribution  全市场涨跌幅 9 档分桶(60s biz_cache)
 """
 from __future__ import annotations
 
 import logging
+import threading
+import time
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
+from sqlalchemy import text
+
+from src.web.cache.biz_cache import biz_cache
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# ──────────── Task 1: 大盘资金快照表(双方言兼容, v0.4.7) ────────────
+# market-capital-flow 接口成功返回后, 异步写一条快照入 market_flow_snapshots;
+# 同一进程 30s 节流(前端高频轮询不会撑爆表), 失败静默不阻断主流程。
+_SNAPSHOT_INTERVAL_S = 30.0
+_snapshot_lock = threading.Lock()
+_snapshot_last_write_ts: float = 0.0
+_snapshot_table_ready = False
+
+
+def _ensure_snapshot_table() -> None:
+    """幂等建表: 模块加载时跑一次, CREATE TABLE IF NOT EXISTS。
+
+    双方言支持(SQLite / PostgreSQL):
+      - SQLite: ts DATETIME DEFAULT CURRENT_TIMESTAMP, 主键 INTEGER
+      - PG    : ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 主键 SERIAL
+    字段语义(与接口返回口径一致):
+      total_main_flow  两市主力净流入(亿元, 可负)
+      up/down/flat_count  涨跌平家数(同花顺APP盘面口径)
+      sh_flow / sz_flow  沪/深市主力净流入(亿元)
+    """
+    global _snapshot_table_ready
+    if _snapshot_table_ready:
+        return
+    try:
+        from src.web.database import IS_PG, engine
+        if IS_PG:
+            ddl = (
+                """
+                CREATE TABLE IF NOT EXISTS market_flow_snapshots (
+                    id SERIAL PRIMARY KEY,
+                    ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    total_main_flow DOUBLE PRECISION,
+                    up_count INTEGER,
+                    down_count INTEGER,
+                    flat_count INTEGER,
+                    sh_flow DOUBLE PRECISION,
+                    sz_flow DOUBLE PRECISION
+                )
+                """
+            )
+        else:
+            ddl = (
+                """
+                CREATE TABLE IF NOT EXISTS market_flow_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    total_main_flow REAL,
+                    up_count INTEGER,
+                    down_count INTEGER,
+                    flat_count INTEGER,
+                    sh_flow REAL,
+                    sz_flow REAL
+                )
+                """
+            )
+        with engine.begin() as conn:
+            conn.execute(text(ddl))
+        _snapshot_table_ready = True
+    except Exception as e:
+        # 静默失败(避免模块加载拖垮整个进程); 真正写入时再尝试
+        logger.debug(f"market_flow_snapshots 建表暂未就绪: {e}")
+
+
+def _try_write_snapshot_async(payload: dict) -> None:
+    """后台线程写一条大盘资金快照(失败静默, try/except + logger.debug)。
+
+    payload 来自 market-capital-flow 接口聚合后的 dict, 仅取需要的字段。
+    30s 节流: 同一进程内连续调用时只写第一条, 避免前端高频轮询拖垮表。
+    """
+    def _runner() -> None:
+        try:
+            from src.web.database import engine
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO market_flow_snapshots
+                            (total_main_flow, up_count, down_count, flat_count,
+                             sh_flow, sz_flow)
+                        VALUES
+                            (:total_main_flow, :up_count, :down_count, :flat_count,
+                             :sh_flow, :sz_flow)
+                        """
+                    ),
+                    {
+                        "total_main_flow": payload.get("total_main_flow"),
+                        "up_count": payload.get("up_count"),
+                        "down_count": payload.get("down_count"),
+                        "flat_count": payload.get("flat_count"),
+                        "sh_flow": payload.get("sh_flow"),
+                        "sz_flow": payload.get("sz_flow"),
+                    },
+                )
+        except Exception as e:
+            logger.debug(f"market_flow_snapshots 写入失败(静默): {e}")
+
+    now = time.monotonic()
+    with _snapshot_lock:
+        global _snapshot_last_write_ts
+        if now - _snapshot_last_write_ts < _SNAPSHOT_INTERVAL_S:
+            return  # 节流窗口内, 跳过
+        _snapshot_last_write_ts = now
+
+    # 兜底: 首次写入时若建表未就绪, 再补一次
+    if not _snapshot_table_ready:
+        _ensure_snapshot_table()
+    t = threading.Thread(target=_runner, name="mkt-flow-snapshot-writer", daemon=True)
+    t.start()
+
+
+# 模块加载时尝试一次建表(进程冷启动时不依赖首次请求)
+_ensure_snapshot_table()
 
 
 @router.get("/dragon-tiger/{trade_date}")
@@ -189,7 +312,7 @@ async def market_capital_flow_proxy():
             for b in reversed(boards_sorted[-10:])
             if (b.net_inflow or 0.0) < 0
         ]
-        return {
+        result = {
             # 两市主力净流入(对齐同花顺APP)
             "total_main_flow": ov.get("total_main_flow"),      # 亿
             "sh_flow": (ov.get("sh") or {}).get("main_flow"),  # 沪市主力
@@ -207,9 +330,83 @@ async def market_capital_flow_proxy():
             "source": "eastmoney_push2delay_cn",
             "timestamp": None,
         }
+        # v0.4.7: 顺手异步写库(30s 节流, 失败静默不阻断接口)
+        try:
+            _try_write_snapshot_async(result)
+        except Exception:
+            pass
+        return result
     except Exception as e:
         logger.warning(f"大盘资金代理失败: {e}")
         raise HTTPException(502, f"数据源调用失败: {e}")
+
+
+# ──────────── 大盘资金快照历史(v0.4.7) ────────────
+@router.get("/market-capital-flow/history")
+async def market_capital_flow_history(
+    hours: int = Query(4, ge=1, le=24, description="回溯小时数(默认 4h, 上限 24h)"),
+):
+    """读取 market_flow_snapshots 序列(按 ts 升序), 上限 500 条。
+
+    返回 [{ts, total_main_flow, up_count, down_count, sh_flow, sz_flow}, ...]
+    数据缺失/库不可达: 返回空数组 + note(前端展示"暂无快照"占位)。
+    """
+    try:
+        from src.web.database import engine
+        # 用 datetime/timedelta 计算 cutoff; SQLite 与 PG 都接受 ISO 字符串
+        from datetime import timedelta
+        cutoff = (datetime.now() - timedelta(hours=max(1, min(int(hours), 24)))).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT ts, total_main_flow, up_count, down_count,
+                           sh_flow, sz_flow
+                    FROM market_flow_snapshots
+                    WHERE ts >= :cutoff
+                    ORDER BY ts ASC
+                    LIMIT 500
+                    """
+                ),
+                {"cutoff": cutoff},
+            ).fetchall()
+        items = []
+        for r in rows:
+            ts_val = r[0]
+            # 统一把 datetime/timestamp 转 ISO 字符串, 给前端 timeline 用
+            try:
+                if hasattr(ts_val, "isoformat"):
+                    ts_str = ts_val.isoformat()
+                else:
+                    ts_str = str(ts_val)
+            except Exception:
+                ts_str = str(ts_val)
+            items.append(
+                {
+                    "ts": ts_str,
+                    "total_main_flow": float(r[1]) if r[1] is not None else None,
+                    "up_count": int(r[2]) if r[2] is not None else None,
+                    "down_count": int(r[3]) if r[3] is not None else None,
+                    "sh_flow": float(r[4]) if r[4] is not None else None,
+                    "sz_flow": float(r[5]) if r[5] is not None else None,
+                }
+            )
+        return {
+            "hours": hours,
+            "count": len(items),
+            "items": items,
+            "note": "" if items else "暂无快照(等待大盘资金接口写入)",
+        }
+    except Exception as e:
+        logger.warning(f"大盘资金历史读取失败: {e}")
+        return {
+            "hours": hours,
+            "count": 0,
+            "items": [],
+            "note": f"读取失败: {e}",
+        }
 
 
 # ──────────────── 个股基本面明细合并(龙虎榜/两融/股东户数/分红/事件日历) ────────────────
@@ -456,3 +653,132 @@ async def hot_stocks_proxy(
     except Exception as e:
         logger.warning(f"同花顺热榜代理失败 [{period}]: {e}")
         raise HTTPException(502, f"数据源调用失败: {e}")
+
+
+# ──────────── 全市场涨跌幅 9 档分桶(v0.4.7) ────────────
+# 数据源: 东财 push2 clist 全 A 股列表(沪深京A), 字段 f2=最新价(元), f3=涨跌幅%。
+# 仅一次性 HTTP 拉一页拿到 ~5000 行即可覆盖全 A; 加 60s biz_cache 防止高频轮询撞东财限流。
+_BREADTH_CACHE_KEY = "breadth:distribution:v1"
+_BREADTH_CACHE_TTL = 60
+
+# 9 档分桶定义(从弱到强, 与涨停/跌停并列两极)
+_BUCKET_BOUNDS = [
+    (-10.0, -9.5, "跌停"),
+    (-9.5, -5.0, "<-5%"),
+    (-5.0, -3.0, "-5~-3%"),
+    (-3.0, -1.0, "-3~-1%"),
+    (-1.0, 1.0, "-1~1%"),
+    (1.0, 3.0, "1~3%"),
+    (3.0, 5.0, "3~5%"),
+    (5.0, 9.5, ">5%"),
+    (9.5, 10.0, "涨停"),
+]
+
+# 涨跌幅近似涨停/跌停阈值(ST 5% / 普通 10%), 取 9.5 作为普通股的"准涨停"分界。
+# 真涨停识别: |pct - 10| < 0.05(或 ST: |pct - 5| < 0.05), 边界更稳。
+_LIMIT_UP_TOLERANCE = 0.2
+_LIMIT_DOWN_TOLERANCE = 0.2
+
+
+def _classify_bucket(pct: float | None) -> str | None:
+    """根据涨跌幅(%)映射到 9 档之一; None/异常返回 None(不计入总数)。"""
+    if pct is None:
+        return None
+    try:
+        p = float(pct)
+    except (TypeError, ValueError):
+        return None
+    # 准涨停/准跌停用绝对阈值, 其他用区间
+    if p >= 9.8:  # 普通股涨停≈10
+        return "涨停"
+    if p <= -9.8:  # 普通股跌停≈-10
+        return "跌停"
+    for lo, hi, label in _BUCKET_BOUNDS:
+        if lo <= p < hi:
+            return label
+    # 极小概率的 p >= 10 或 p < -10(异常), 归到 涨停 / 跌停
+    if p >= 10.0:
+        return "涨停"
+    return "跌停"
+
+
+def _fetch_breadth_change_pcts() -> list[float]:
+    """拉一次东财 push2 clist 全 A 股列表(沪深京A), 返回 f3 涨跌幅(%)数组。
+
+    用 pz=5000 单页拉足够; 失败/超时抛异常(由调用方 fallback 到空数组)。
+    """
+    import httpx
+
+    url = "https://push2.eastmoney.com/api/qt/clist/get"
+    params = {
+        "pn": "1",
+        "pz": "5000",
+        "po": "1",
+        "np": "1",
+        "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+        "fltt": "2",
+        "invt": "2",
+        "fid": "f3",
+        "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81",
+        "fields": "f2,f3",
+    }
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        "Referer": "https://quote.eastmoney.com/",
+    }
+    # 同步短超时(8s), 失败立即抛 — 上层捕获后写 note 给前端
+    with httpx.Client(timeout=8.0, follow_redirects=True, headers=headers) as client:
+        resp = client.get(url, params=params)
+    data = resp.json()
+    diff = ((data or {}).get("data") or {}).get("diff") or []
+    out: list[float] = []
+    for item in diff:
+        # f3 单位是 %(东财惯例, 非小数), 直接拿来用
+        try:
+            v = item.get("f3")
+            if v is None:
+                continue
+            out.append(float(v))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+@router.get("/breadth-distribution")
+async def breadth_distribution():
+    """全市场 A 股涨跌幅 9 档分桶(60s biz_cache)。
+
+    返回格式:
+      [{"bucket": "跌停", "count": n}, {"bucket": "<-5%", "count": n}, ...]
+    数据缺失: 返回全 0 计数 + note(明示数据源不可用)。
+    """
+    def _compute() -> dict:
+        try:
+            pcts = _fetch_breadth_change_pcts()
+        except Exception as e:
+            logger.warning(f"breadth-distribution 数据源失败: {e}")
+            return {
+                "count": 0,
+                "total": 0,
+                "items": [{"bucket": b[2], "count": 0} for b in _BUCKET_BOUNDS],
+                "note": f"数据源不可用: {e}",
+            }
+        # 分桶
+        buckets: dict[str, int] = {b[2]: 0 for b in _BUCKET_BOUNDS}
+        valid = 0
+        for pct in pcts:
+            label = _classify_bucket(pct)
+            if label is None:
+                continue
+            valid += 1
+            buckets[label] = buckets.get(label, 0) + 1
+        items = [{"bucket": b[2], "count": buckets.get(b[2], 0)} for b in _BUCKET_BOUNDS]
+        return {
+            "count": valid,
+            "total": len(pcts),
+            "items": items,
+            "note": "" if valid else "数据源返回为空(可能非交易日)",
+        }
+
+    cached = biz_cache.get_or_fetch(_BREADTH_CACHE_KEY, ttl=_BREADTH_CACHE_TTL, fetch=_compute)
+    return cached

@@ -2,6 +2,24 @@
 
 ## 2026-08-25
 
+### feature
+
+- 首页大盘区动态图表化(v0.4.7, 多智能体协作: Codex 后端 + Hermes 前端):
+  ① 涨跌分布双向柱: 全A 9档分桶(东财 clist 单页5000行, 60s biz_cache), 左绿右红 ECharts
+  ② 市场温度仪表盘: 高度×15+晋级率×40+封板率×45 半圆 gauge, 指针色随情绪阶段
+  ③ 主力净流入日内面积图: market_flow_snapshots 每30s快照落表(PG), /history 接口4h回溯, 30s轮询
+  ④ 资金流入/流出板块改横向条形榜(宽度按占比动画过渡)
+  ⑤ mainline 主线榜新增 rank_change 昨日排名变动(mainline_rank_daily 快照表)
+  ⑥ KPI带: 「市场体检」占位格换「涨停/跌停+封板率」; 数值 count-up 滚动动画
+
+### update
+
+- 移除鸡肋: 首页热榜整块(与发现页重复)/盘前盘后简报卡(与报告中心重复);
+  组合体检双分享按钮合并为「分享▾」下拉
+
+
+## 2026-08-25
+
 ### fix
 
 - K线采集器新增 PG hypertable 兜底(v0.4.6.3): 腾讯风控(501)+东财被掐+智兔429 全挂时,
@@ -1679,3 +1697,19 @@ agent_configs 里 premarket_outlook/daily_report 绑定商汤 deepseek-v4-flash,
 ### doc
 
 - 无。
+
+
+## 2026-08-25
+
+### update
+
+- 大盘区三个后端小改动(v0.4.7):
+  - **资金流历史快照落表**: 新建 PG 表 `market_flow_snapshots`(CREATE TABLE IF NOT EXISTS, 双方言),
+    接口成功返回后异步后台线程写一条快照(30s 同进程节流, 失败静默 logger.debug)。
+    新增 `GET /api/market-data/market-capital-flow/history?hours=4` 返回当日 ts 序列(上限 500 条)。
+  - **涨跌分布分桶**: 新增 `GET /api/market-data/breadth-distribution`, 9 档分桶
+    (跌停/<-5%/-5~-3%/-3~-1%/-1~1%/1~3%/3~5%/>5%/涨停) + 60s biz_cache 缓存。
+    数据源: 东财 push2 clist 全 A 股列表(f2 最新价、f3 涨跌幅%)。
+  - **mainline 昨日排名**: 新建 PG 表 `mainline_rank_daily`(date, name, rank, score, PRIMARY KEY(date,name)),
+    主线榜每次计算成功后 upsert 当日快照, 然后查昨日 max(date)<today 对比算
+    `rank_change`(昨日 rank - 今日 rank, 正=上升), 首次无昨日数据 → rank_change=null。
