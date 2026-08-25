@@ -659,13 +659,49 @@ class KlineCollector:
     def _fetch_all_sources(self, symbol: str, days: int) -> list[KlineData]:
         """走 marketdata 包取数(不含缓存/合并逻辑):Engine 按 DataSource 优先级 +
         min_count 取数(条数不足则换源/取最长,tencent → stooq(US) / eastmoney(CN/HK))。
+        v0.4.6.3: 腾讯风控+东财被掐+智兔429 全挂时, 回落 PG klines hypertable
+        (800天缓存, 与 /api/klines 的 PG 优先路径同源)。
         """
         need = (max(10, min(days, 30)) if self.market == MarketCode.US
                 else (max(120, int(days * 0.6)) if self.market in (MarketCode.CN, MarketCode.HK) else 1))
         want = min(max(days, 3000), 20000) if self.market in (MarketCode.CN, MarketCode.HK) else days
         bars = get_market_data().klines(symbol, market=self.market.value, days=want, min_count=need)
-        return [KlineData(date=b.date, open=b.open, close=b.close, high=b.high,
-                          low=b.low, volume=b.volume) for b in bars]
+        if bars:
+            return [KlineData(date=b.date, open=b.open, close=b.close, high=b.high,
+                              low=b.low, volume=b.volume) for b in bars]
+        pg = self._pg_fallback(symbol, days)
+        return pg if pg else []
+
+    def _pg_fallback(self, symbol: str, days: int) -> list[KlineData]:
+        """PG klines hypertable 兜底(v0.4.6.3): 联网源全挂时读本地缓存。fail-soft。"""
+        try:
+            from datetime import datetime, timedelta, timezone
+            from sqlalchemy import create_engine, text
+            from src.web.database import DB_URL
+            engine = create_engine(DB_URL, pool_pre_ping=True)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=max(days, 5) * 2)
+            with engine.connect() as conn:
+                rows = conn.execute(
+                    text(
+                        "SELECT ts, open, high, low, close, volume "
+                        "FROM klines "
+                        "WHERE symbol=:s AND market=:m AND period='1d' AND ts >= :c "
+                        "ORDER BY ts ASC"
+                    ),
+                    {"s": symbol, "m": self.market.value, "c": cutoff},
+                ).fetchall()
+            engine.dispose()
+            out = [
+                KlineData(date=str(r[0])[:10], open=float(r[1]), high=float(r[2]),
+                          low=float(r[3]), close=float(r[4]), volume=float(r[5] or 0))
+                for r in rows
+            ]
+            if out:
+                logger.info(f"[kline-pg-fallback] {self.market.value}:{symbol} PG 兜底 {len(out)} 根")
+            return out
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"[kline-pg-fallback] {symbol}: {e!r}")
+            return []
 
     def get_technical_indicators(
         self, symbol: str = "", klines: list[KlineData] | None = None

@@ -4,6 +4,15 @@
 
 ### fix
 
+- K线采集器新增 PG hypertable 兜底(v0.4.6.3): 腾讯风控(501)+东财被掐+智兔429 全挂时,
+  KlineCollector._fetch_all_sources 回落读 PG klines 本地缓存(与 /api/klines 同源),
+  修复个股弹窗 summary"无K线数据"→ 技术指标区消失的问题。fail-soft, 不影响正常链路。
+
+
+## 2026-08-25
+
+### fix
+
 - /api/klines 指数分支新浪兜底未生效修复: 腾讯被风控时 market_get 抛异常早于兜底判断,
   现单独捕获异常后再走新浪回落; 兜底失败报错文案改为"腾讯+新浪均失败"
 
