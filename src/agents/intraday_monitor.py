@@ -292,6 +292,39 @@ def _main_intent_structured(symbol: str) -> dict | None:
 
 _AI_LLM_TIMEOUT = 8  # 反证层 LLM 超时秒数(超时 → 静默降级)
 
+# ── v0.4.9: 反证层限速/冷却/缓存(修生产 429 rpm exhausted 风暴) ──
+_AI_RATE_MAX_PER_MIN = 10      # 全局令牌桶: 每分钟最多 N 次 LLM 反证
+_AI_429_COOLDOWN_S = 600       # 撞 429 后全局面板冷却 10 分钟, 期间反证直接降级 None
+_ai_rate_lock = __import__("threading").Lock()
+_ai_rate_window_start = [0.0]
+_ai_rate_count = [0]
+_ai_429_until = [0.0]
+
+
+def _ai_rate_allow() -> bool:
+    """全局令牌桶: 每分钟最多 _AI_RATE_MAX_PER_MIN 次; 429 冷却期内一律 False。"""
+    import time as _t
+
+    now = _t.time()
+    with _ai_rate_lock:
+        if now < _ai_429_until[0]:
+            return False
+        if now - _ai_rate_window_start[0] >= 60.0:
+            _ai_rate_window_start[0] = now
+            _ai_rate_count[0] = 0
+        if _ai_rate_count[0] >= _AI_RATE_MAX_PER_MIN:
+            return False
+        _ai_rate_count[0] += 1
+        return True
+
+
+def _ai_rate_mark_429():
+    """撞 429: 全局进入冷却窗口。"""
+    import time as _t
+
+    with _ai_rate_lock:
+        _ai_429_until[0] = _t.time() + _AI_429_COOLDOWN_S
+
 _AI_COUNTER_SYSTEM_PROMPT = (
     "你是一名A股主力资金行为反证分析师。给定算法(逐笔主力净额/参与度/买占比)给出的"
     "主力意图结论, 以及该股当日公告/新闻事件, 判断算法结论是否可信。\n"
@@ -308,21 +341,35 @@ _AI_COUNTER_SYSTEM_PROMPT = (
 )
 
 
-def _run_coro(coro):
-    """同步上下文执行异步协程: 无运行中事件循环 → asyncio.run; 有(如 FastAPI
-    请求上下文)→ 新建独立事件循环执行, 避免 asyncio.run 抛
-    "cannot be called from a running event loop"。"""
-    import asyncio
+# v0.4.9: 进程级复用的后台事件循环 — 修 "no running event loop"/"Event loop is closed"
+# (旧实现每次新建+close loop, 而 AsyncOpenAI 的 HTTP 客户端进程级复用, 持有旧 loop 引用)
+_bg_loop = None
+_bg_loop_lock = __import__("threading").Lock()
 
+
+def _get_bg_loop():
+    global _bg_loop
+    with _bg_loop_lock:
+        if _bg_loop is None or _bg_loop.is_closed():
+            _bg_loop = __import__("asyncio").new_event_loop()
+            __import__("threading").Thread(target=_bg_loop.run_forever, daemon=True, name="ai-counter-loop").start()
+        return _bg_loop
+
+
+def _run_coro(coro):
+    """同步上下文执行异步协程(v0.4.9): 统一投递到进程级后台 loop(run_coroutine_threadsafe),
+    不再新建/关闭事件循环。若当前线程已有运行中 loop(不可能在 sync fn 里, 防御性保留),
+    也走后台 loop。"""
+    import asyncio
+    import concurrent.futures
+
+    loop = _get_bg_loop()
+    fut = asyncio.run_coroutine_threadsafe(coro, loop)
     try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    new_loop = asyncio.new_event_loop()
-    try:
-        return new_loop.run_until_complete(coro)
-    finally:
-        new_loop.close()
+        return fut.result(timeout=_AI_LLM_TIMEOUT + 5)
+    except concurrent.futures.TimeoutError:
+        fut.cancel()
+        raise TimeoutError(f"_run_coro timeout {_AI_LLM_TIMEOUT + 5}s")
 
 
 def _build_counter_client(db=None):
@@ -429,6 +476,22 @@ def _ai_counter_check(symbol: str, dark: dict, db=None) -> dict | None:
             2026-08-14 热修: None 时内部自建 SessionLocal —— 否则生产容器
             env 无 AI_* 配置, 反证层永远走空配置 → 永远 None。
     """
+    # v0.4.9: 当日缓存 — 同股一天只评一次(biz_cache, TTL 到收盘), 省 token 且防风暴
+    try:
+        from datetime import datetime as _dt
+        from src.web.cache.biz_cache import biz_cache
+
+        _cache_key = f"ai_counter:{symbol}:{_dt.now().strftime('%Y%m%d')}"
+        _cached = biz_cache.get_json(_cache_key)
+        if _cached is not None:
+            return _cached
+    except Exception:
+        _cache_key = None
+
+    # v0.4.9: 全局限速 + 429 冷却 — 超额直接降级 None(不影响算法结论)
+    if not _ai_rate_allow():
+        return None
+
     _close_db = False
     if db is None:
         try:
@@ -471,6 +534,8 @@ def _ai_counter_check(symbol: str, dark: dict, db=None) -> dict | None:
         raw = _run_coro(_ai_counter_llm_chat(dark_feat, events_summary, db))
         if not raw or not raw.strip():
             return None
+        if "429" in raw or "rate" in raw.lower()[:50]:
+            _ai_rate_mark_429()
 
         # ---- 解析 JSON(容忍 ```json 围栏) ----
         text = raw.strip()
@@ -488,9 +553,21 @@ def _ai_counter_check(symbol: str, dark: dict, db=None) -> dict | None:
             return None
         if len(reason) > 60:
             reason = reason[:60] + "…"
-        return {"verdict": verdict, "confidence": confidence, "reason": reason}
+        result = {"verdict": verdict, "confidence": confidence, "reason": reason}
+        # v0.4.9: 成功结果写当日缓存(TTL 到收盘, 简化: 6h)
+        if _cache_key:
+            try:
+                biz_cache.set_json(_cache_key, result, ttl=6 * 3600)
+            except Exception:
+                pass
+        return result
     except Exception as e:
-        logger.debug(f"AI 反证层失败(静默降级, 不影响算法结论): {symbol}: {e}")
+        # 429/限流类异常 → 全局冷却
+        if "429" in repr(e) or "quota" in repr(e).lower() or "rate" in repr(e).lower():
+            _ai_rate_mark_429()
+            logger.warning(f"[ai-counter] 撞限流, 全局冷却 {_AI_429_COOLDOWN_S}s: {symbol}")
+        else:
+            logger.debug(f"AI 反证层失败(静默降级, 不影响算法结论): {symbol}: {e}")
         return None
     finally:
         if _close_db and db is not None:

@@ -18,6 +18,8 @@ class AIClient:
         }
         if proxy:
             kwargs["http_client"] = None  # TODO: 如需代理，用 httpx 配置
+        # v0.4.9: 关闭 SDK 自动重试 — 429 时由上层限速/冷却控制, 避免 retry 放大风暴
+        kwargs.setdefault("max_retries", 0)
         self.client = AsyncOpenAI(**kwargs)
         # 保留原始配置作为实例属性,供需要桥接到第三方 LLM 框架的 agent 使用
         # (e.g. TradingAgents 需要 base_url+api_key 重新构造 langchain 的 LLM)

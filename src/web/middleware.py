@@ -47,8 +47,10 @@ _SENSITIVE_PATHS = (
 )
 
 # 例外路径 (跳过限流和日志)
+# v0.4.9: 加 /api/quotes/ws — WebSocket 行情轮询被自家限流挡(429), 前端反复重连风暴
 EXEMPT_PATHS = {
     "/health", "/metrics", "/api/health", "/api/metrics", "/favicon.ico",
+    "/api/quotes/ws",
 }
 
 

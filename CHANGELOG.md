@@ -4,6 +4,20 @@
 
 ### fix
 
+- AI 反证层 429 风暴根治(v0.4.9, 五连修):
+  ① 全局令牌桶限速 ≤10 次/分钟 + 撞 429 后 10 分钟全局面板冷却(期间反证直接静默降级)
+  ② AIClient 关闭 SDK 自动重试(max_retries=0), 消灭 retry 放大
+  ③ 反证结果按 (股票,日期) 写 biz_cache(TTL 6h), 同股一天只评一次
+  ④ _run_coro 改进程级复用后台事件循环(run_coroutine_threadsafe),
+     修 "no running event loop"/"Event loop is closed"(旧实现每次新建+close,
+     AsyncOpenAI 客户端持有旧 loop 引用)
+  ⑤ /api/quotes/ws 加入限流豁免列表 — WebSocket 行情轮询被自家限流挡(429 重连风暴)
+
+
+## 2026-08-25
+
+### fix
+
 - 自选页技术指标全部显示"观望"修复: summary 接口冷启动(主力意图逐笔翻页)20-30s,
   前端默认 20s 超时导致首轮大面积 abort → kline=null → 徽章回落"观望",
   点进弹窗单只重拉时后端已有缓存才有真数据。双修:
