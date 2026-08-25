@@ -12,7 +12,7 @@ router = APIRouter()
 # 2026-08-20: summary 接口开盘后 20-30s(主力意图逐笔翻页), 与前端并发请求叠加
 # 撞 Caddy 30s 反代超时 → 502 Bad Gateway。加 30s 进程内缓存, 单次冷启动后秒回。
 _SUMMARY_CACHE: dict = {}
-_SUMMARY_TTL = 30.0
+_SUMMARY_TTL = 300.0  # v0.4.8.1: 30s→5min, 冷启动重算20-30s太贵; 技术指标分钟级刷新足够
 
 
 class KlineItem(BaseModel):

@@ -837,7 +837,9 @@ export default function StocksPage() {
           const i = idx++
           const it = items[i]
           try {
-            const res = await fetchAPI<{ symbol: string; market: string; summary: KlineSummary }>(`/klines/${encodeURIComponent(it.symbol)}/summary?market=${encodeURIComponent(it.market)}`, { cacheMode: 'reload' })
+            // v0.4.8.1: summary 冷启动(主力意图逐笔翻页)可到 20-30s, 默认 20s 超时会导致
+            // 首轮大面积 abort → 技术徽章全部回落"观望"; 显式放宽到 45s
+            const res = await fetchAPI<{ symbol: string; market: string; summary: KlineSummary }>(`/klines/${encodeURIComponent(it.symbol)}/summary?market=${encodeURIComponent(it.market)}`, { cacheMode: 'reload', timeoutMs: 45000 })
             if (res && (res as any).summary) {
               map[`${it.market}:${it.symbol}`] = (res as any).summary as KlineSummary
             }
