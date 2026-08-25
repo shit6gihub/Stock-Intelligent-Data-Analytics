@@ -4,6 +4,14 @@
 
 ### fix
 
+- /api/klines 指数分支新浪兜底未生效修复: 腾讯被风控时 market_get 抛异常早于兜底判断,
+  现单独捕获异常后再走新浪回落; 兜底失败报错文案改为"腾讯+新浪均失败"
+
+
+## 2026-08-25
+
+### fix
+
 - 指数K线生产不可用修复: 腾讯 ifzq fqkline 对生产云服务器 IP 风控(501 Not Implemented),
   东财 push2his 同样被掐 → 首页指数 sparkline 与大盘详情页K线全空。
   新增新浪指数日K兜底(CN_MarketData.getKLineData, 生产实测可达):

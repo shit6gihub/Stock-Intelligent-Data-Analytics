@@ -128,22 +128,26 @@ def get_klines(symbol: str, market: str = "CN", days: int = 60, interval: str = 
             # 海外节点 web.ifzq.gtimg.cn 偶发连接挂起(43.154.254.x HK CDN) → 事件循环堵死 → 全站无响应。
             # 改走 market_http: 短超时(5s)+ 退避重试, 失败快速抛错(不长时间卡住)。
             from src.collectors.market_http import market_get
-            raw_resp = market_get(
-                "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
-                host_key="web.ifzq.gtimg.cn",
-                params={"param": f"{tencent_code},day,,,{days},qfq"},
-                headers={"User-Agent": "Mozilla/5.0"},
-                timeout=5,
-                retries=1,
-                parse="json",
-                symbol=symbol,
-                log_label="腾讯指数K线",
-            )
-            if raw_resp is None:
-                raise RuntimeError(f"腾讯指数K线请求失败({tencent_code})")
+            # v0.4.6.1: 腾讯被风控(501)会抛异常 — 单独捕获, 让新浪兜底有机会执行
+            try:
+                raw_resp = market_get(
+                    "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+                    host_key="web.ifzq.gtimg.cn",
+                    params={"param": f"{tencent_code},day,,,{days},qfq"},
+                    headers={"User-Agent": "Mozilla/5.0"},
+                    timeout=5,
+                    retries=1,
+                    parse="json",
+                    symbol=symbol,
+                    log_label="腾讯指数K线",
+                )
+            except Exception as _tx_err:
+                _log_k.warning(f"腾讯指数K线异常({tencent_code}): {_tx_err!r}, 尝试新浪兜底")
+                raw_resp = None
             d = raw_resp
-            data = (d.get("data") or {}).get(tencent_code) or {}
-            bars = data.get("day") or data.get("qfqday") or []
+            data = (d.get("data") if isinstance(d, dict) else None) or {}
+            data = data.get(tencent_code) or {}
+            bars = data.get("day") or []
             if not bars and "." not in tencent_code and tencent_code[:2] in ("sh", "sz"):
                 # v0.4.6 hotfix: 腾讯对生产云 IP 风控(501) → 新浪指数日K兜底(A股指数)
                 import json as _json
@@ -172,7 +176,9 @@ def get_klines(symbol: str, market: str = "CN", days: int = 60, interval: str = 
                     if isinstance(r, dict) and r.get("day")
                 ]
             if not bars:
-                raise RuntimeError(f"腾讯指数K线返回空 bars({tencent_code},msg={d.get('msg')})")
+                raise RuntimeError(
+                    f"指数K线不可用(腾讯+新浪均失败, {tencent_code})"
+                )
             from src.collectors.kline_collector import KlineData
 
             raw = [
