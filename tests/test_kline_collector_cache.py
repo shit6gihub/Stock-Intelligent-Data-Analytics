@@ -70,6 +70,9 @@ def test_empty_result_negative_cached_then_retries(monkeypatch):
     冷却过后仍会重试,不把瞬时故障永久固化为空。"""
     fake = _FakeMarketData([])
     monkeypatch.setattr(kline_collector, "get_market_data", lambda: fake)
+    # PG/新浪兜底也会注水，测试时屏蔽以验证“空结果负缓存”本身
+    monkeypatch.setattr(kline_collector.KlineCollector, "_pg_fallback", lambda self, symbol, days: [])
+    monkeypatch.setattr(kline_collector.KlineCollector, "_sina_fallback", lambda self, symbol, days: [])
 
     c = kline_collector.KlineCollector(MarketCode.CN)
     assert c.get_klines("600519", days=120) == []

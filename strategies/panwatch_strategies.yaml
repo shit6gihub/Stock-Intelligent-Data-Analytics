@@ -155,3 +155,54 @@ data_completeness:
     low_volatility_quality:
       available_in: "realtime"
       realtime_fallback: "直接可用"
+sentiment_adaptive:
+  display_name: "情绪周期自适应"
+  description: "冰点试错→修复期1进2→发酵期做多→高潮持仓→退潮空仓，动态仓位随情绪周期调节"
+  category: "sentiment"
+  tags: ["sentiment_cycle", "adaptive", "regime"]
+  filter:
+    price_min: 3
+    price_max: 300
+    change_pct_min: -10
+    change_pct_max: 10
+  ranking_factors:
+    sentiment_fit: 0.4
+    momentum: 0.3
+    volume_ratio: 0.3
+  ui_badge: "情绪"
+  source: "sida/sentiment_adaptive@v1"
+
+event_catalyst:
+  display_name: "事件预期差"
+  description: "公告/快讯催化预期差，LLM推理受益链，抢先潜伏未兑现题材"
+  category: "event_driven"
+  tags: ["event", "catalyst", "expectation_gap"]
+  filter:
+    price_min: 3
+    price_max: 300
+    change_pct_min: -3
+    change_pct_max: 7
+    volume_ratio_min: 1.2
+  ranking_factors:
+    catalyst_score: 0.5
+    change_pct: 0.3
+    volume_ratio: 0.2
+  ui_badge: "事件"
+  source: "sida/event_catalyst@v1"
+
+dark_flow_tracking:
+  display_name: "暗盘资金跟随"
+  description: "暗盘净流入>800万+明盘流出(拆单吸筹)，价格未涨时潜伏"
+  category: "capital_flow"
+  tags: ["dark_flow", "capital_flow", "accumulation"]
+  filter:
+    price_min: 5
+    price_max: 200
+    dark_flow_net_min: 8000000
+    change_pct_max: 3
+  ranking_factors:
+    dark_flow_net: 0.5
+    divergence_strength: 0.3
+    volume_ratio: 0.2
+  ui_badge: "暗盘"
+  source: "sida/dark_flow_tracking@v1"

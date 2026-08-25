@@ -317,7 +317,7 @@ CHAT_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_forecast",
-            "description": "读取系统 AI 预测引擎的最近预测结果（预测方向/预期涨跌幅/目标价/到期时间，数据来自预测引擎独立库）。用于回答「系统预测了什么」「预测引擎今天给了什么预测」「XX股票的预测结果怎么样」「预测目标价是多少」等问题。可选按股票代码过滤。",
+            "description": "读取系统 AI 预测引擎的最近预测结果（预测方向/预期涨跌幅/目标价/到期时间，数据来自预测引擎独立库）。⚠️ 历史回测准确率仅31.7%，预测方向不可靠，仅供参考，不可作为交易依据。用于回答「系统预测了什么」「预测引擎今天给了什么预测」「XX股票的预测结果怎么样」「预测目标价是多少」等问题。可选按股票代码过滤。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -678,7 +678,8 @@ def _read_forecast(symbol: str = "", limit: int = 5) -> str:
             if not rows:
                 return "暂无系统预测" + (f"（{symbol}）" if symbol else "") + "。"
             today = datetime.now().date().isoformat()
-            lines = [f"【系统预测】最近{len(rows)}条" + (f"（{symbol}）" if symbol else "") + f"，来自预测引擎 {table} 表:"]
+            lines = [f"【系统预测】最近{len(rows)}条" + (f"（{symbol}）" if symbol else "") + f"，来自预测引擎 {table} 表。",
+                     "⚠️ 警告：历史回测准确率仅31.7%，预测方向不可靠，仅供参考，不可作为交易依据。"]
             for r in rows:
                 # 列名统一回写为规范名(final_direction → direction 等), 便于下方格式化
                 key_map = {actual: canon for canon, actual in cmap.items() if actual}
@@ -2493,11 +2494,6 @@ def suggested_questions(
         ) is not None
         if has_signal:
             questions.append("今天系统发现了什么机会？")
-
-    # ② 未到期系统预测(预测库 target_date >= 今天) → 问预测
-    forecast_symbol = _latest_unexpired_forecast_symbol(symbol)
-    if forecast_symbol:
-        questions.append(f"系统预测 {forecast_symbol} 多少？和我的判断比呢？")
 
     # ③ 未读通知 → 问通知
     unread = db.query(Notification.id).filter(Notification.read_at.is_(None)).first()

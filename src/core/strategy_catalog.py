@@ -78,6 +78,30 @@ DEFAULT_STRATEGIES: tuple[StrategySpec, ...] = (
         params={"horizon_days": 3},
         default_weight=1.08,
     ),
+    StrategySpec(
+        code="sentiment_adaptive",
+        name="情绪周期自适应",
+        description="冰点试错→修复→发酵→高潮→退潮，五阶段动态仓位",
+        risk_level="medium",
+        params={"horizon_days": 5},
+        default_weight=1.12,
+    ),
+    StrategySpec(
+        code="event_catalyst",
+        name="事件预期差",
+        description="公告/快讯催化预期差，LLM受益链抢先",
+        risk_level="high",
+        params={"horizon_days": 3},
+        default_weight=1.15,
+    ),
+    StrategySpec(
+        code="dark_flow_tracking",
+        name="暗盘资金跟随",
+        description="暗盘流入+明盘流出拆单吸筹潜伏",
+        risk_level="medium",
+        params={"horizon_days": 5},
+        default_weight=1.18,
+    ),
 )
 
 

@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import echarts from '@panwatch/biz-ui/lib/echarts-core'
-import { SIDA_THEME_NAME } from '@panwatch/biz-ui/lib/echarts-theme'
+import { useECharts } from '@panwatch/biz-ui/hooks/useECharts'
 import type { EChartsType } from 'echarts/core'
 
 export interface MinutePoint {
@@ -16,75 +16,12 @@ interface Props {
   isIndex: boolean
 }
 
-/** ECharts 分时走势图(2026-08-10 替换手写SVG)。
- *
- * 标准金融分时样式: 价格线(红涨绿跌) + 均价线(黄, 个股) + 昨收基准虚线(±分界线)
- * + 下方成交量柱(红涨绿跌) + 十字光标联动。
- *
- * v0.1.40: 修复点分时白屏(React 崩溃)。根因是 echarts 实例在容器尺寸/卸载竞态下
- * init/setOption 抛异常; 增加 try/catch + init 防重入 + 实例守卫。
- */
+/** ECharts 分时走势图(2026-08-10 替换手写SVG)。 */
 export default function MinuteEChart({ points, prevClose, isIndex }: Props) {
-  const ref = useRef<HTMLDivElement | null>(null)
-  const chartRef = useRef<EChartsType | null>(null)
-  const initedRef = useRef(false)
+  const { ref, chartRef } = useECharts()
 
   useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    // 防重入: StrictMode/double-invoke 下不重复 init
-    let chart: EChartsType | null = null
-    try {
-      chart = echarts.init(el, SIDA_THEME_NAME)
-      chartRef.current = chart
-      initedRef.current = true
-      // 容器可能刚挂载尺寸为 0, 强制按当前尺寸重绘
-      chart.resize()
-    } catch (e) {
-      console.warn('[MinuteEChart] init failed', e)
-      return
-    }
-    const onResize = () => {
-      try {
-        chart?.resize()
-      } catch {
-        /* ignore */
-      }
-    }
-    window.addEventListener('resize', onResize)
-    // ResizeObserver: 容器尺寸变化(如 tab 切换/布局稳定)时重绘
-    let ro: ResizeObserver | null = null
-    try {
-      ro = new ResizeObserver(() => {
-        try {
-          chart?.resize()
-        } catch {
-          /* ignore */
-        }
-      })
-      ro.observe(el)
-    } catch {
-      /* ResizeObserver 不支持时忽略 */
-    }
-    return () => {
-      window.removeEventListener('resize', onResize)
-      try {
-        ro?.disconnect()
-      } catch {
-        /* ignore */
-      }
-      try {
-        chart?.dispose()
-      } catch {
-        /* ignore */
-      }
-      chartRef.current = null
-      initedRef.current = false
-    }
-  }, [])
-
-  useEffect(() => {
-    const chart = chartRef.current
+    const chart: EChartsType | null = chartRef.current
     if (!chart || points.length === 0) return
 
     try {
@@ -243,10 +180,9 @@ export default function MinuteEChart({ points, prevClose, isIndex }: Props) {
         true,
       )
     } catch (e) {
-      // 图表渲染失败不应拖垮整个页面(React 崩溃 → 白屏)
       console.warn('[MinuteEChart] setOption failed', e)
     }
-  }, [points, prevClose, isIndex])
+  }, [points, prevClose, isIndex, chartRef])
 
   return <div ref={ref} className="w-full h-[380px]" />
 }

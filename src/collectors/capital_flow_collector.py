@@ -9,7 +9,7 @@ from src.models.market import MarketCode
 logger = logging.getLogger(__name__)
 
 # 资金流为日级数据、变动慢:中等 TTL 缓存,避免每轮重复拉。
-_FLOW_CACHE = TTLCache(default_ttl_sec=600.0)
+_FLOW_CACHE = TTLCache(default_ttl_sec=120.0)
 
 
 @dataclass

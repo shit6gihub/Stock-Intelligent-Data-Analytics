@@ -42,11 +42,11 @@ import os
 import sqlite3
 from datetime import datetime
 
-# 4 个参与投票的模型(与 forecast_server.predict 的 votes 名称一一对应)
-MODEL_NAMES = ["xgboost", "kronos", "chronos", "linreg"]
+# 5 个参与投票的模型(与 forecast_server.predict 的 votes 名称一一对应)
+MODEL_NAMES = ["xgboost", "kronos", "chronos", "timesfm", "linreg"]
 
 # 兜底默认权重(无任何历史数据时使用)
-DEFAULT_MODEL_WEIGHTS = {"xgboost": 0.4, "kronos": 0.25, "chronos": 0.25, "linreg": 0.1}
+DEFAULT_MODEL_WEIGHTS = {"xgboost": 0.35, "kronos": 0.25, "chronos": 0.20, "timesfm": 0.15, "linreg": 0.05}
 
 # 单模型权重下限: 命中率再差也保留最低参与度, 避免某模型被完全剔除
 WEIGHT_FLOOR = 0.08

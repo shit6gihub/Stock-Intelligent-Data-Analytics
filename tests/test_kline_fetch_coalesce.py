@@ -51,6 +51,8 @@ def test_failed_fetch_is_negative_cached(monkeypatch):
     """同一标的取数失败后,冷却窗口内再次调用不再联网(负缓存)。"""
     fake = _FakeMarketData(lambda symbol, market, days: [])
     monkeypatch.setattr(kc, "get_market_data", lambda: fake)
+    monkeypatch.setattr(kc.KlineCollector, "_pg_fallback", lambda self, symbol, days: [])
+    monkeypatch.setattr(kc.KlineCollector, "_sina_fallback", lambda self, symbol, days: [])
 
     col = kc.KlineCollector(MarketCode.CN)
     assert col.get_klines("600519") == []

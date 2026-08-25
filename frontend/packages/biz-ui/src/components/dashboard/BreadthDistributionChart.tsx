@@ -1,15 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
-import echarts from '@panwatch/biz-ui/lib/echarts-core'
-import { SIDA_THEME_NAME } from '@panwatch/biz-ui/lib/echarts-theme'
+import { useEffect, useState } from 'react'
+import { useECharts } from '@panwatch/biz-ui/hooks/useECharts'
 import { fetchAPI } from '@panwatch/api'
 
 /**
  * 全市场涨跌分布双向柱状图(v0.4.7, Dashboard 大盘区)。
- *
- * 数据: GET /market-data/breadth-distribution
- *   → {count, total, items: [{bucket, count}...9档], note}
- * 60s 轮询(与后端 biz_cache TTL 对齐)。以 0 为中心左绿右红,
- * 桶顺序[跌停..< -5%..涨停], 条上显数值。
+ * v0.5.0: 使用 useECharts hook (ResizeObserver 替代 window.resize)。
  */
 
 interface BreadthItem {
@@ -31,8 +26,7 @@ function bucketColor(bucket: string): string {
 }
 
 export default function BreadthDistributionChart() {
-  const ref = useRef<HTMLDivElement>(null)
-  const chartRef = useRef<echarts.ECharts | null>(null)
+  const { ref, chartRef } = useECharts()
   const [items, setItems] = useState<BreadthItem[] | null>(null)
   const [note, setNote] = useState('')
 
@@ -45,7 +39,6 @@ export default function BreadthDistributionChart() {
         setItems(res?.items ?? [])
         setNote(res?.note ?? '')
       } catch {
-        /* 接口失败静默 — 显示空态 */
         if (alive) setItems((prev) => prev ?? [])
       }
     }
@@ -58,12 +51,8 @@ export default function BreadthDistributionChart() {
   }, [])
 
   useEffect(() => {
-    if (!ref.current || !items || items.length === 0) return
-    if (!chartRef.current) {
-      chartRef.current = echarts.init(ref.current, SIDA_THEME_NAME)
-    }
     const chart = chartRef.current
-    // 类目轴从下到上 = 从跌停到涨停(数组反转使涨停在顶部)
+    if (!chart || !items || items.length === 0) return
     const ordered = [...items].reverse()
     chart.setOption({
       grid: { left: 64, right: 40, top: 4, bottom: 4 },
@@ -94,18 +83,7 @@ export default function BreadthDistributionChart() {
       ],
       tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
     })
-    const onResize = () => chart.resize()
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [items])
-
-  useEffect(() => {
-    // 卸载时销毁实例
-    return () => {
-      chartRef.current?.dispose()
-      chartRef.current = null
-    }
-  }, [])
+  }, [items, chartRef])
 
   if (items === null) {
     return <div className="h-[160px] animate-pulse rounded-lg bg-accent/10" />

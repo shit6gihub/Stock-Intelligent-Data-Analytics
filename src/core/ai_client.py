@@ -1,6 +1,10 @@
 import base64
 import json
 import logging
+import asyncio
+import random
+import threading
+import time
 from pathlib import Path
 
 from openai import AsyncOpenAI
@@ -8,10 +12,106 @@ from openai import AsyncOpenAI
 logger = logging.getLogger(__name__)
 
 
+# ── 全局 LLM 熔断器 (2026-08-25, P0 AI 审计整改) ──
+# 复用 intraday_monitor.py:304-318 令牌桶(10/min) + 600s 冷却逻辑,
+# 按 service 分桶避免跨通道误伤。进程级共享, 线程安全。
+
+class GlobalLLMCircuitBreaker:
+    """进程级全局 LLM 熔断器: 令牌桶 + 429 冷却 + 按 service 分桶。
+
+    每个 service 独立计费, 避免 deepseek 冷却误伤 agnes 通道。
+    线程安全: 所有状态变更由 threading.Lock 保护。
+    用法:  AIClient 在 __init__ 时自动获取／创建对应 service 的桶。
+
+    Reference:
+        intraday_monitor.py `_ai_rate_allow()` (行 304-318)
+        intraday_monitor.py `_ai_rate_mark_429()` (行 321-326)
+    """
+
+    _instances: dict[str, "GlobalLLMCircuitBreaker"] = {}
+    _instances_lock = threading.Lock()
+
+    DEFAULT_RATE = 10         # 每分钟最多 N 次
+    DEFAULT_COOLDOWN = 600    # 429 冷却秒数
+
+    __slots__ = ("service", "rate", "cooldown", "_lock",
+                 "_window_start", "_count", "_429_until")
+
+    def __init__(self, service: str, rate: int = DEFAULT_RATE,
+                 cooldown: int = DEFAULT_COOLDOWN):
+        self.service = service
+        self.rate = rate
+        self.cooldown = cooldown
+        self._lock = threading.Lock()
+        self._window_start = 0.0
+        self._count = 0
+        self._429_until = 0.0
+
+    @classmethod
+    def get_or_create(cls, service: str, rate: int = DEFAULT_RATE,
+                      cooldown: int = DEFAULT_COOLDOWN) -> "GlobalLLMCircuitBreaker":
+        """获取或创建 service 级别的熔断器。"""
+        with cls._instances_lock:
+            if service not in cls._instances:
+                cls._instances[service] = cls(service, rate, cooldown)
+            return cls._instances[service]
+
+    def acquire(self) -> bool:
+        """尝试获取一个令牌。返回 True 表示可以调用, False 表示限流/冷却中。"""
+        now = time.time()
+        with self._lock:
+            if now < self._429_until:
+                return False
+            if now - self._window_start >= 60.0:
+                self._window_start = now
+                self._count = 0
+            if self._count >= self.rate:
+                return False
+            self._count += 1
+            return True
+
+    def mark_429(self):
+        """标记 429 响应: 进入冷却窗口。"""
+        with self._lock:
+            self._429_until = time.time() + self.cooldown
+
+    @property
+    def is_cooling(self) -> bool:
+        """是否在 429 冷却中。"""
+        with self._lock:
+            return time.time() < self._429_until
+
+
+# ── 指数退避常量 (与 max_retries=0 的 SDK 配合) ──
+_CB_RETRY_MAX = 2          # 最多重试次数
+_CB_BASE_DELAY = 1.0       # 基础退避秒数(每次翻倍 + jitter)
+
+
+def _is_rate_limit_error(e: Exception) -> bool:
+    """判断异常是否为 429 限流(兼容 openai v1+/httpx 等)。"""
+    if hasattr(e, "status_code"):
+        return e.status_code == 429
+    if hasattr(e, "response") and hasattr(e.response, "status_code"):
+        return e.response.status_code == 429
+    err_name = type(e).__name__.lower()
+    return "ratelimit" in err_name or "rate_limit" in err_name
+
+
+def _is_retryable_error(e: Exception) -> bool:
+    """判断是否为可重试的临时错误(超时/连接/500 系)。"""
+    if hasattr(e, "status_code"):
+        return e.status_code in (500, 502, 503)
+    if hasattr(e, "response") and hasattr(e.response, "status_code"):
+        return e.response.status_code in (500, 502, 503)
+    err_name = type(e).__name__.lower()
+    return any(x in err_name for x in ("timeout", "connection", "internalserver"))
+
+
 class AIClient:
     """OpenAI 协议兼容的 AI 客户端"""
 
-    def __init__(self, base_url: str, api_key: str, model: str = "", proxy: str = "", scene: str = "other"):
+    def __init__(self, base_url: str, api_key: str, model: str = "",
+                 proxy: str = "", scene: str = "other"):
         kwargs = {
             "base_url": base_url,
             "api_key": api_key,
@@ -28,9 +128,12 @@ class AIClient:
         self.model = model
         self.scene = scene
         self.total_tokens_used = 0
+        # v0.6.0: 全局 LLM 熔断器(按 scene 分桶)
+        self._cb = GlobalLLMCircuitBreaker.get_or_create(scene)
 
     # ── LLM 调用日志(2026-08-15): 轻量记录 token/耗时/场景, 失败静默 ──
-    def _log_usage(self, scene: str | None, model_name: str, usage, latency_ms: int) -> None:
+    def _log_usage(self, scene: str | None, model_name: str,
+                   usage, latency_ms: int) -> None:
         try:
             from src.web.models import LLMUsage
             from src.web.database import SessionLocal
@@ -53,6 +156,50 @@ class AIClient:
         except Exception as e:  # 记录失败绝不阻塞主流程
             logger.debug(f"LLM usage 记录失败(忽略): {e}")
 
+    # ── 通用重试骨架 ──
+    async def _call_with_retry(self, create_kwargs: dict,
+                               method_name: str) -> tuple:
+        """带指数退避的 LLM 调用骨架。
+
+        Returns:
+            (response, latency_ms) 成功时
+        Raises:
+            最后一次异常(非 429) — 所有重试用尽后抛出
+        """
+        last_exc = None
+        for attempt in range(_CB_RETRY_MAX + 1):
+            try:
+                _t0 = time.perf_counter()
+                response = await self.client.chat.completions.create(
+                    **create_kwargs
+                )
+                _latency_ms = (time.perf_counter() - _t0) * 1000
+                return response, _latency_ms
+            except Exception as e:
+                if _is_rate_limit_error(e):
+                    self._cb.mark_429()
+                    logger.warning(
+                        f"429 限流(service={self.scene}), "
+                        f"冷却 {self._cb.cooldown}s"
+                    )
+                    raise  # 让调用方捕获并降级
+                if _is_retryable_error(e) and attempt < _CB_RETRY_MAX:
+                    delay = _CB_BASE_DELAY * (2 ** attempt) + random.random() * 0.5
+                    logger.warning(
+                        f"{method_name} 失败(第{attempt+1}/{_CB_RETRY_MAX}次重试), "
+                        f"{delay:.1f}s 后重试: {e}"
+                    )
+                    await asyncio.sleep(delay)
+                    last_exc = e
+                    continue
+                last_exc = e
+                break
+
+        logger.error(
+            f"{method_name} 调用失败(已重试 {_CB_RETRY_MAX} 次): {last_exc}"
+        )
+        raise last_exc  # type: ignore[arg-type]
+
     async def chat(
         self,
         system_prompt: str,
@@ -69,6 +216,11 @@ class AIClient:
             images: 图片路径列表（用于多模态，可选）
             temperature: 生成温度
         """
+        # ── 限流检查: 令牌桶耗尽 → 优雅降级 ──
+        if not self._cb.acquire():
+            logger.warning(f"LLM 限流(service={self.scene}), 令牌桶耗尽")
+            return "AI 服务暂时不可用（限流），请稍后重试"
+
         messages = [
             {"role": "system", "content": system_prompt},
         ]
@@ -87,14 +239,14 @@ class AIClient:
         else:
             messages.append({"role": "user", "content": user_content})
 
+        create_kwargs = {"model": self.model, "messages": messages}
+        if temperature is not None:
+            create_kwargs["temperature"] = temperature
+
         try:
-            import time as _t
-            _t0 = _t.perf_counter()
-            create_kwargs = {"model": self.model, "messages": messages}
-            if temperature is not None:
-                create_kwargs["temperature"] = temperature
-            response = await self.client.chat.completions.create(**create_kwargs)
-            _latency_ms = (_t.perf_counter() - _t0) * 1000
+            response, _latency_ms = await self._call_with_retry(
+                create_kwargs, "chat"
+            )
             # 记录 token 用量
             if response.usage:
                 self.total_tokens_used += response.usage.total_tokens
@@ -107,6 +259,9 @@ class AIClient:
             return response.choices[0].message.content or ""
 
         except Exception as e:
+            # 429 已被 _call_with_retry 标记冷却, 在这里优雅降级
+            if _is_rate_limit_error(e):
+                return "AI 服务暂时不可用（429 限流），请稍后重试"
             logger.error(f"AI 调用失败: {e}")
             raise
 
@@ -122,11 +277,20 @@ class AIClient:
             messages: [{"role": "system"/"user"/"assistant", "content": "..."}]
             temperature: 生成温度
         """
+        # ── 限流检查: 令牌桶耗尽 → 优雅降级 ──
+        if not self._cb.acquire():
+            logger.warning(f"LLM 限流(service={self.scene}), 令牌桶耗尽")
+            return "AI 服务暂时不可用（限流），请稍后重试"
+
+        create_kwargs = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+
         try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=temperature,
+            response, _latency_ms = await self._call_with_retry(
+                create_kwargs, "chat_multi"
             )
             if response.usage:
                 self.total_tokens_used += response.usage.total_tokens
@@ -136,6 +300,8 @@ class AIClient:
                 )
             return response.choices[0].message.content or ""
         except Exception as e:
+            if _is_rate_limit_error(e):
+                return "AI 服务暂时不可用（429 限流），请稍后重试"
             logger.error(f"AI 多轮对话调用失败: {e}")
             raise
 
@@ -146,21 +312,37 @@ class AIClient:
         temperature: float = 0.4,
     ):
         """带 tool use 的对话调用，返回原始 message 对象。"""
-        try:
-            import time as _t
-            _t0 = _t.perf_counter()
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                tools=tools,
-                temperature=temperature,
+        # ── 限流检查: 令牌桶耗尽 → 优雅降级 ──
+        if not self._cb.acquire():
+            logger.warning(f"LLM 限流(service={self.scene}), 令牌桶耗尽")
+            from types import SimpleNamespace
+            return SimpleNamespace(
+                content="AI 服务暂时不可用（限流），请稍后重试",
+                tool_calls=None,
             )
-            _latency_ms = (_t.perf_counter() - _t0) * 1000
+
+        create_kwargs = {
+            "model": self.model,
+            "messages": messages,
+            "tools": tools,
+            "temperature": temperature,
+        }
+
+        try:
+            response, _latency_ms = await self._call_with_retry(
+                create_kwargs, "chat_with_tools"
+            )
             if response.usage:
                 self.total_tokens_used += response.usage.total_tokens
                 self._log_usage(None, self.model, response.usage, int(_latency_ms))
             return response.choices[0].message
         except Exception as e:
+            if _is_rate_limit_error(e):
+                from types import SimpleNamespace
+                return SimpleNamespace(
+                    content="AI 服务暂时不可用（429 限流），请稍后重试",
+                    tool_calls=None,
+                )
             logger.error(f"AI tool use 调用失败: {e}")
             raise
 

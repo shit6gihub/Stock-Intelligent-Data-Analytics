@@ -188,6 +188,72 @@ def get_chronos_predictor():
     return _chronos_pipeline
 
 
+# ════ TimesFM (Google, 最轻量) 全局缓存 — 2026-08-25 接入替代 Lag-Llama ════
+_timesfm_model = None
+_timesfm_lock = False
+
+
+def get_timesfm_predictor():
+    """懒加载 TimesFM (Google, CPU ~0.2s, 单变量最轻)。"""
+    global _timesfm_model, _timesfm_lock
+    if _timesfm_model is not None:
+        return _timesfm_model
+    if _timesfm_lock:
+        raise HTTPException(503, "TimesFM 加载中,请稍候")
+    _timesfm_lock = True
+    try:
+        import timesfm  # pip: timesfm
+        # TimesFM 官方: TimesFm(hparams=..., checkpoint=...)
+        _timesfm_model = timesfm.TimesFm(
+            context_len=512,
+            horizon_len=5,
+            input_patch_len=32,
+            output_patch_len=128,
+            num_layers=20,
+            model_dims=1280,
+            backend="cpu",
+        )
+        # 加载 checkpoint (首次自动下载)
+        _timesfm_model.load_from_checkpoint(repo_id="google/timesfm-1.0-200m")
+    except Exception as e:
+        _timesfm_lock = False
+        raise HTTPException(502, f"TimesFM 加载失败: {e}")
+    _timesfm_lock = False
+    return _timesfm_model
+
+
+def timesfm_predict(df: pd.DataFrame, pred_len: int = 5):
+    """TimesFM 预测(第5模型, Google 单变量时序基础模型, 最轻量 ~200M)。
+
+    输入 close 单变量，输出 median + p10/p90，与 chronos 口径对齐。
+    未安装 timesfm 包时静默返回 None，不阻断投票。
+    """
+    try:
+        model = get_timesfm_predictor()
+        closes = df["close"].astype("float32").values
+        if len(closes) < 32:
+            return None
+        # TimesFM 推理: 输入 (1, context_len), 输出 (1, horizon)
+        import numpy as np
+        freq = [0] * len(closes)  # 日频
+        point_forecast, quantiles = model.forecast(
+            inputs=[closes],
+            freq=freq,
+        )
+        # point_forecast: (1, pred_len), quantiles 含 p10/p90
+        median = [round(float(x), 2) for x in point_forecast[0][:pred_len]]
+        # quantiles 形状依版本: 取 0.1/0.9 若有，否则用 median 扩展
+        try:
+            p10 = [round(float(x), 2) for x in quantiles[0][0][:pred_len]]
+            p90 = [round(float(x), 2) for x in quantiles[0][1][:pred_len]]
+        except Exception:
+            p10, p90 = median, median
+        return {"median": median, "p10": p10, "p90": p90, "n_samples": 1}
+    except Exception as e:
+        print(f"TimesFM 预测失败(未安装或推理异常): {e}")
+        return None
+
+
 def chronos_predict(df: pd.DataFrame, pred_len: int = 5):
     """Chronos-Bolt-small 预测(第4模型,时序基础模型,替代 Lag-Llama)。
 

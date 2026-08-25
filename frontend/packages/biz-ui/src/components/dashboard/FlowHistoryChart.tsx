@@ -1,14 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import echarts from '@panwatch/biz-ui/lib/echarts-core'
-import { SIDA_THEME_NAME } from '@panwatch/biz-ui/lib/echarts-theme'
+import { useECharts } from '@panwatch/biz-ui/hooks/useECharts'
 import { fetchAPI } from '@panwatch/api'
 
 /**
  * 主力净流入日内面积图(v0.4.7, Dashboard 大盘资金流区)。
- *
- * 数据: GET /market-data/market-capital-flow/history?hours=4
- *   → [{ts, total_main_flow, ...}] 按 ts 升序(每30s一条快照)。
- * 30s 轮询。y 轴亿元, 零轴虚线, >0 红 <0 绿渐变。
+ * v0.5.0: 使用 useECharts hook (ResizeObserver 替代 window.resize)。
  */
 
 interface FlowSnapshot {
@@ -24,8 +21,7 @@ function fmtTime(ts: string): string {
 }
 
 export default function FlowHistoryChart() {
-  const ref = useRef<HTMLDivElement>(null)
-  const chartRef = useRef<echarts.ECharts | null>(null)
+  const { ref, chartRef } = useECharts()
   const [rows, setRows] = useState<FlowSnapshot[] | null>(null)
 
   useEffect(() => {
@@ -49,11 +45,8 @@ export default function FlowHistoryChart() {
   }, [])
 
   useEffect(() => {
-    if (!ref.current || !rows || rows.length === 0) return
-    if (!chartRef.current) {
-      chartRef.current = echarts.init(ref.current, SIDA_THEME_NAME)
-    }
     const chart = chartRef.current
+    if (!chart || !rows || rows.length === 0) return
     const times = rows.map((r) => fmtTime(r.ts))
     const vals = rows.map((r) => +(r.total_main_flow / 1e8).toFixed(2))
     chart.setOption({
@@ -78,7 +71,6 @@ export default function FlowHistoryChart() {
           smooth: true,
           lineStyle: { width: 1.5, color: '#ef4444' },
           areaStyle: {
-            // 单色渐变(红系); 零轴以下由 markLine 视觉分隔
             color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
               { offset: 0, color: 'rgba(239,68,68,.30)' },
               { offset: 1, color: 'rgba(239,68,68,.02)' },
@@ -98,18 +90,7 @@ export default function FlowHistoryChart() {
         valueFormatter: (v: unknown) => `${v as number}亿`,
       },
     })
-    const onResize = () => chart.resize()
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [rows])
-
-  useEffect(
-    () => () => {
-      chartRef.current?.dispose()
-      chartRef.current = null
-    },
-    [],
-  )
+  }, [rows, chartRef])
 
   if (rows === null) {
     return <div className="h-[150px] animate-pulse rounded-lg bg-accent/10" />

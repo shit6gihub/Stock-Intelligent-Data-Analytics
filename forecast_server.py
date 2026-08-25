@@ -34,7 +34,7 @@ _PREDICT_CACHE_TTL = 1800.0
 # 模块导入
 from forecast_models import (
     get_predictor, load_kline, kronos_predict,
-    xgboost_predict, linreg_predict, chronos_predict,
+    xgboost_predict, linreg_predict, chronos_predict, timesfm_predict,
 )
 from forecast_history import (
     get_stock_name, save_forecast, list_forecasts,
@@ -244,6 +244,18 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
     else:
         _log(tid, "Chronos-Bolt 不可用(跳过,用其余模型加权投票)")
 
+    # TimesFM (Google, 最轻量, 2026-08-25 接入替代 Lag-Llama)
+    _log(tid, "TimesFM 推理中(Google,首次加载约5-10s)...")
+    try:
+        timesfm = run_model_with_trace(run_id, "timesfm", timesfm_predict, df, pred_len=days, weight=weights["timesfm"], last_close=last_close) if run_id else timesfm_predict(df, pred_len=days)
+    except Exception as e:
+        _log(tid, f"TimesFM 异常跳过: {e}")
+        timesfm = None
+    if timesfm:
+        _log(tid, "TimesFM 完成")
+    else:
+        _log(tid, "TimesFM 不可用(跳过,未安装或推理失败)")
+
     # 消息情绪面(2026-08-13 用户决策: 独立 LLM 情绪打分停用, 由 AI 裁判接管消息面/情绪判断)
     # fetch_sentiment / llm_sentiment_score 保留在 forecast_sentiment 模块(不删, 供参考/降级),
     # 但主流程不再调用 —— adjustment_pct 恒为 0, 不再参与 final 修正。
@@ -318,6 +330,13 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
             fill = c_med.mean() if len(c_med) else last_close
             c_med = np.concatenate([c_med, np.full(days - len(c_med), fill)])
         votes.append(("chronos", c_med))
+    # TimesFM 单变量预测 (Google, 最轻量)
+    if 'timesfm' in locals() and timesfm:
+        t_med = _clip_arr(timesfm["median"], last_close)
+        if len(t_med) < days:
+            fill = t_med.mean() if len(t_med) else last_close
+            t_med = np.concatenate([t_med, np.full(days - len(t_med), fill)])
+        votes.append(("timesfm", t_med))
     if xgb_preds:
         votes.append(("xgboost", _clip_arr(xgb_preds, last_close)))
     if reg_preds:
@@ -381,6 +400,7 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
             {
                 "kronos": kronos,
                 "chronos": chronos,
+                "timesfm": timesfm if 'timesfm' in locals() else None,
                 "xgboost": xgb_preds,
                 "linreg": reg_preds,
             },
@@ -442,6 +462,7 @@ def _do_predict(symbol: str, days: int = 5, task_id: str = "", target_date: str 
         "models": {
             "kronos": kronos,
             "chronos": chronos,
+            "timesfm": timesfm if 'timesfm' in locals() else None,
             "xgboost": xgb_preds,
             "linreg": reg_preds,
         },

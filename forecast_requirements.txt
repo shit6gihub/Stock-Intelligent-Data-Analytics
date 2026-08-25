@@ -24,3 +24,4 @@ requests>=2.30
 
 # K 线数据源
 baostock>=0.8.8          # 预测引擎 fetch_kline 拉日 K(不复权)
+timesfm>=1.0          # Google TimesFM 时序基础模型(替代Lag-Llama,最轻量)

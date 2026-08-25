@@ -29,9 +29,9 @@ import { buildAnalysisSections } from '@panwatch/biz-ui/analysis-sections'
 import ShareCardModal from '../components/ShareCardModal'
 
 const DECISION_COLOR: Record<string, string> = {
-  buy: 'text-rose-500',
+  buy: 'text-stock-up',
   hold: 'text-amber-500',
-  sell: 'text-emerald-500',
+  sell: 'text-stock-down',
 }
 
 /** 各 section 配图标(决策/技术/情绪/新闻/基本面/辩论/风控),与 buildAnalysisSections 的 id 对齐 */
@@ -57,7 +57,7 @@ function inferMarket(symbol: string): string {
 
 function pctClass(v: number | null | undefined): string {
   if (v == null) return 'text-muted-foreground'
-  return v > 0 ? 'text-rose-500' : v < 0 ? 'text-emerald-500' : 'text-muted-foreground'
+  return v > 0 ? 'text-stock-up' : v < 0 ? 'text-stock-down' : 'text-muted-foreground'
 }
 
 // 修复(S-5 / M-3~M-8, 2026-08-23): PG DECIMAL 变字符串后裸 .toFixed 抛 TypeError.

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 import threading
 import time
+from zoneinfo import ZoneInfo
 
 from src.collectors.market_http import fetch_source
 from src.models.market import MARKETS, MarketCode
@@ -30,7 +31,8 @@ kline_source = fetch_source
 # 日K一天只定稿一次(收盘后),但调度任务每轮都逐只重新联网拉 → 批量突发触发限流。
 # 交易时段用短 TTL(末根K线盘中会动),收盘后用长 TTL(数据已定稿,无需重复拉)。
 _KLINE_CACHE: dict[str, tuple[float, int, list["KlineData"]]] = {}
-_KLINE_TTL_TRADING_S = 180
+_KLINE_TTL_AUCTION_S = 15  # 集合竞价(9:15-9:25): 数据秒级变动, 最短 TTL
+_KLINE_TTL_TRADING_S = 60  # 连续竞价: 盘中末根K线会更新, 中等 TTL
 _KLINE_TTL_CLOSED_S = 1800
 
 # 失败负缓存:源短暂故障(Server disconnected/限流)时,冷却窗口内不再联网。
@@ -67,10 +69,26 @@ def _get_fetch_lock(cache_key: str) -> threading.Lock:
         return lk
 
 
+def _is_auction_time() -> bool:
+    """判断当前是否处于集合竞价时段(9:15-9:25, 仅交易日)。"""
+    try:
+        import datetime as _dt
+        now = _dt.datetime.now(ZoneInfo("Asia/Shanghai"))
+        if now.weekday() >= 5:
+            return False
+        t = now.time()
+        return _dt.time(9, 15) <= t <= _dt.time(9, 25)
+    except Exception:
+        return False
+
+
 def _kline_cache_ttl(market: MarketCode) -> float:
     try:
         md = MARKETS.get(market)
         if md and md.is_trading_time():
+            # 集合竞价期间数据秒级变动, 用最短 TTL
+            if _is_auction_time():
+                return _KLINE_TTL_AUCTION_S
             return _KLINE_TTL_TRADING_S
     except Exception:
         pass

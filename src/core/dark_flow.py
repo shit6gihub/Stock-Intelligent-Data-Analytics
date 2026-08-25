@@ -45,6 +45,16 @@ _RHYTHM_SEG_NET = 300e4   # 单时段净额阈值: ±300万
 _RHYTHM_DAY_NET = 500e4   # 尾盘异动: 全天四段合计 |净额| > 500万
 _RHYTHM_TAIL_RATIO = 0.4  # 尾盘异动: 尾盘 |净额| > 40% * 四段绝对值之和
 
+# ── 主力意图判据共享常量(2026-08-25 抽公共, 防逻辑漂移)──────────────────────
+# 审计建议5(docs/audit_main_intent_20260825.md §6.2): 以下阈值此前在
+#   src/core/dark_flow.py::_judge_signal 与 src/agents/intraday_monitor.py::
+#   _main_intent_both_inner 两处独立写死(500e4/35/48), 存在漂移风险。
+# 现收敛为公共常量, dark_flow 内直接引用; intraday_monitor 应改为 import 本模块
+# 引用同一常量, 避免阈值不一致导致主力意图口径漂移(本次因"不改其他文件"约束, 仅落地 dark_flow 侧)。
+MAIN_NET_LIMIT = 500e4    # 主力(≥20万)净额阈值: ±500万元
+ABSORB_INTENSITY = 35.0   # 强吸筹: 主力参与度(占全市场成交) ≥ 35%
+ABSORB_BUY_RATIO = 48.0   # 强吸筹: 主力买占比(买占主力成交) ≥ 48%
+
 # 暗盘数据源(2026-08-11 预留): 环境变量 PANWATCH_DARK_SOURCE 可切换
 #   tencent_ticks = 腾讯逐笔(免费, 默认, 已与同花顺暗盘验证误差7%)
 #   l2_tencent    = 腾讯L2(预留, 需付费账号)
@@ -449,12 +459,18 @@ def _classify_split(seq: list[dict], prev_close: float | None) -> dict:
 # volume_outer(外盘/主动买) + volume_inner(内盘/主动卖) + change_pct + volume_ratio。
 _MNEMONIC_STRONG = 55.0       # ①~④ 单边占比阈值(外盘或内盘 >55%)
 _MNEMONIC_BALANCE = 10.0      # ⑤ 内外盘相当: |买%-卖%| < 10%
-_MNEMONIC_DOUBLE_LOW = 30.0   # ⑥ 双小: 主动买+主动卖 < 30% 总成交量
-_MNEMONIC_DOUBLE_HIGH = 85.0  # ⑦ 双大: 主动买+主动卖 > 85% 总成交量
 _MNEMONIC_VOL_RATIO = 1.5     # ① ② 放量: 量比 > 1.5
 _MNEMONIC_MOVE = 0.5          # 有效涨跌: |涨跌%| > 0.5 才算涨/跌(剔除噪音)
 _MNEMONIC_FLAT = 1.0          # ⑦ 价格不动: |涨跌%| <= 1.0
-_MNEMONIC_OSCILLATE = 3.0     # ⑥ 震荡: 0.5% < |涨跌%| <= 3%(有波动无单边)
+_MNEMONIC_OSCILLATE = 3.0     # ⑥ 震荡: 0.5 < |涨跌%| <= 3%(有波动无单边)
+
+# 2026-08-25 腾讯数据源适配(审计修复, 见 docs/audit_main_intent_20260825.md):
+# 腾讯口径 volume≈外盘+内盘(active_ratio≈100%), 原 ⑥ active_ratio<30% 永不触发、
+# ⑦ active_ratio>85% 恒真。改用量比/内外失衡替代, 保留用户七口诀语义。
+_MNEMONIC_IMBALANCE = 15.0    # ⑦ 对倒: 内外盘失衡 |买%-卖%| < 15%(方向模糊)
+_MNEMONIC_SHRINK_VOL = 0.8    # ⑥ 控盘洗盘: 缩量 量比 < 0.8
+_MNEMONIC_NO_BIG_VOL = 1.2    # ⑥⑦③④ 共用: ③④ 缩量确认 量比 < 1.2; ⑦ 对倒放量 量比 > 1.2
+_MNEMONIC_CHURN_VOL = 1.2     # ⑦ 对倒放量: 量比 > 1.2
 
 
 def _num(v) -> float | None:
@@ -540,10 +556,11 @@ def _judge_mnemonic(dark: dict, quote: dict | None = None) -> dict | None:
     无命中返回 None。
 
     判定优先级(避免多口诀同时命中时自相矛盾):
-      ⑥ 双小(结构)→ ⑤ 平衡(良性解读优先, 否则每个横盘日都被 ⑦ 误报对倒)→ ⑦ 双大
+      ⑥ 控盘洗盘(结构)→ ⑤ 平衡(良性解读优先, 否则每个横盘日都被 ⑦ 误报对倒)→ ⑦ 对倒
       → ① ② 放量确认的强信号 → ③ ④ 位置信号
-    注意: 腾讯口径 volume≈外盘+内盘(active_ratio≈100%), 故 ⑥ 双小在当前数据源
-    几乎不触发(保留规则, 未来 L2 含中性盘时生效); ⑦ 仅在单边失衡+价格不动时触发。
+    2026-08-25 腾讯口径适配(审计修复): 腾讯 volume≈外盘+内盘(active_ratio≈100%),
+    故 ⑥ 不再用 active_ratio<30%(永不触发), 改为「缩量+震荡」;
+    ⑦ 不再用 active_ratio>85%(恒真), 改为「内外失衡+不动+放量」三条件。
     """
     if not dark or not quote:
         return None
@@ -571,10 +588,14 @@ def _judge_mnemonic(dark: dict, quote: dict | None = None) -> dict | None:
     flat = abs(change_pct) <= _MNEMONIC_MOVE
     no_move = abs(change_pct) <= _MNEMONIC_FLAT       # ⑦ 价格不动
     oscillate = _MNEMONIC_MOVE < abs(change_pct) <= _MNEMONIC_OSCILLATE  # ⑥ 震荡
-    volume_up = volume_ratio is not None and volume_ratio > _MNEMONIC_VOL_RATIO  # 放量
-    double_small = active_ratio < _MNEMONIC_DOUBLE_LOW   # ⑥ 双小
-    double_big = active_ratio > _MNEMONIC_DOUBLE_HIGH     # ⑦ 双大
+    volume_up = volume_ratio is not None and volume_ratio > _MNEMONIC_VOL_RATIO  # ① ② 放量
+    volume_shrink = volume_ratio is not None and volume_ratio < _MNEMONIC_SHRINK_VOL  # ⑥ 缩量
     balance = abs(buy_pct - sell_pct) < _MNEMONIC_BALANCE  # ⑤ 内外盘相当
+    # 2026-08-25 腾讯口径适配: 腾讯 volume≈外盘+内盘(active_ratio≈100%), 故不再用
+    # active_ratio 判定 ⑥双小/⑦双大。⑥ 改用「缩量+震荡」, ⑦ 改用「内外失衡+不动+放量」。
+    imbalance = abs(buy_pct - sell_pct) < _MNEMONIC_IMBALANCE   # ⑦ 内外盘失衡(方向模糊)
+    quiet = volume_ratio is not None and volume_ratio < _MNEMONIC_NO_BIG_VOL  # ③④ 缩量确认
+    churn = volume_ratio is not None and volume_ratio > _MNEMONIC_CHURN_VOL    # ⑦ 对倒放量
 
     head = (
         f"外盘{buy_pct:.1f}%/内盘{sell_pct:.1f}%, 涨跌{change_pct:+.2f}%, "
@@ -583,31 +604,28 @@ def _judge_mnemonic(dark: dict, quote: dict | None = None) -> dict | None:
 
     # (条件, 口诀名, 方向, 解析文本) —— 按优先级排列
     rules = [
-        # ⑥ 内外盘双小(主动盘<30%成交)+震荡 → 控盘洗盘(关注)
-        (double_small and oscillate, "控盘洗盘", "关注",
-         "主动买卖盘占比<30%却仍在震荡 → 交投清淡, 疑似主力高度控盘后的洗盘(关注)"),
+        # ⑥ 控盘洗盘: 缩量(量比<0.8)+震荡(0.5<|涨跌|<=3%) → 关注
+        (volume_shrink and oscillate, "控盘洗盘", "关注",
+         "缩量(量比<0.8)且窄幅震荡 → 交投清淡, 疑似主力高度控盘后的洗盘(关注)"),
         # ⑤ 内外盘相当(|买-卖|<10%)+横盘 → 多空平衡(观望)
         (balance and flat, "多空平衡", "观望",
          "内外盘占比接近且横盘 → 多空力量平衡, 方向不明(观望)"),
-        # ⑦ 内外盘双大(主动盘>85%)+价格不动 → 对倒造假(警惕)
-        (double_big and no_move, "对倒造假", "警惕",
-         "主动买卖盘占比>85%但价格几乎不动, 且内外盘单边失衡 → 疑似对倒制造成交量, 警惕出货陷阱(警惕)"),
+        # ⑦ 对倒造假: 内外盘失衡(|买-卖|<15%)+价格不动(|涨跌|<=1%)+放量(量比>1.2) → 警惕
+        (imbalance and no_move and churn, "对倒造假", "警惕",
+         "内外盘方向模糊且价格几乎不动却放量 → 疑似对倒制造成交量, 警惕出货陷阱(警惕)"),
         # ① 外盘大(>55%)+涨+放量 → 真金进攻(看涨)
         (buy_pct > _MNEMONIC_STRONG and up and volume_up, "真金进攻", "看涨",
          "外盘占比高+上涨+放量 → 主动性买盘真金进攻(看涨)"),
         # ② 内盘大(>55%)+跌+放量 → 主力撤退(看跌)
         (sell_pct > _MNEMONIC_STRONG and down and volume_up, "主力撤退", "看跌",
          "内盘占比高+下跌+放量 → 主动性卖盘汹涌, 疑似主力撤退(看跌)"),
-        # ③ 外盘大+跌+高位 → 诱多出货(警惕)
-        (buy_pct > _MNEMONIC_STRONG and down and position == "high", "诱多出货", "警惕",
-         "外盘占比高却下跌且处高位 → 疑似边拉边出诱多, 警惕高位派发(警惕)"),
-        # ④ 内盘大+涨+低位 → 压盘吸筹(看涨)
-        (sell_pct > _MNEMONIC_STRONG and up and position == "low", "压盘吸筹", "看涨",
-         "内盘占比高但上涨且处低位 → 疑似压盘吸筹, 低位换手收集筹码(看涨)"),
-        # ⑤ 内外盘相当(|买-卖|<10%)+横盘 → 多空平衡(观望)
-        (balance and flat, "多空平衡", "观望",
-         "内外盘占比接近且横盘 → 多空力量平衡, 方向不明(观望)"),
-    ]
+        # ③ 外盘大+跌+高位+缩量(量比<1.2) → 诱多出货(警惕)
+        (buy_pct > _MNEMONIC_STRONG and down and position == "high" and quiet, "诱多出货", "警惕",
+         "外盘占比高却下跌且处高位, 量能萎缩 → 疑似边拉边出诱多, 警惕高位派发(警惕)"),
+        # ④ 内盘大+涨+低位+缩量(量比<1.2) → 压盘吸筹(看涨)
+        (sell_pct > _MNEMONIC_STRONG and up and position == "low" and quiet, "压盘吸筹", "看涨",
+         "内盘占比高但上涨且处低位, 量能萎缩 → 疑似压盘吸筹, 低位换手收集筹码(看涨)"),
+        ]
     for cond, name, direction, text in rules:
         if not cond:
             continue
@@ -1025,12 +1043,12 @@ def _judge_signal(dark_net: float, main_net: float, big_net: float, mid_net: flo
     - 神剑: 主力买8.6亿(占40.6%)净额仅-2.9% → 判吸筹(同花顺一致), 不再判"托盘出货"
     - 主力买入强度 = 主力参与度%(占全市场成交) + 主力买占比%(买占主力成交)
     """
-    threshold = 500e4  # 500万
+    threshold = MAIN_NET_LIMIT  # 500万
     tail = seg.get("tail", 0)
     low_boost = "低位承接" if (low_ratio or 0) > 0.4 else ""
     auction_note = f"竞价{auction_amt/1e4:.0f}万" if auction_amt > 0 else ""
-    # 吸筹力度: 主力参与度>35% 且 主力买占比>48% = 强吸筹
-    strong_absorb = (main_intensity or 0) >= 35 and (main_buy_ratio or 0) >= 48
+    # 吸筹力度: 主力参与度>35% 且 主力买占比>48% = 强吸筹(阈值见模块顶部共享常量)
+    strong_absorb = (main_intensity or 0) >= ABSORB_INTENSITY and (main_buy_ratio or 0) >= ABSORB_BUY_RATIO
     intensity_note = f"主力买占比{main_buy_ratio:.0f}%" if main_buy_ratio else ""
 
     # 主力净方向(≥20万)

@@ -2,6 +2,23 @@
 
 ## 2026-08-25
 
+### feature
+
+- 交易策略新增3(情绪周期自适应/事件预期差/暗盘资金跟随): `panwatch_strategies.yaml` + `strategy_catalog.py` 注册，11个孤岛模块首次接入策略引擎
+- TimesFM(Google)接入替代Lag-Llama: `forecast_models.py` 新增 `timesfm_predict` + 5模型投票(`model_weights.py` 0.35/0.25/0.20/0.15/0.05)，`forecast_server.py` 全链路打通，`forecast_requirements.txt` +timesfm
+- DarkFlowCard前端: `DarkFlowCard.tsx` 主力意图+内外盘占比+七口诀标签，背离时⚠️提示+「咨询AI助手」按钮
+
+### fix
+
+- 暗盘七口诀全修(`dark_flow.py`): ⑥永不触发→缩量+震荡，⑦恒真→失衡+不动+放量，③④追加量能确认，抽公共常量防漂移
+- AI全局熔断(`ai_client.py`): 新增 `GlobalLLMCircuitBreaker` 按service分桶(10/min+600s冷却)，三方法入口限流+429优雅降级，指数退避
+- K线/资金流TTL收紧: `kline_collector.py` 180→60s(集合竞价15s)，`capital_flow_collector.py` 600→120s，区分竞价/连续竞价
+- 方向预测摘除: `chat.py` get_forecast加31.7%不可靠警告+去suggested_questions引流，`daily_report.txt` 明日关注→证伪清单
+- ECharts主题注册: `echarts-core.ts` 注册SIDA双态主题，`echarts-theme.ts` CSS变量双态，`useECharts` hook+ResizeObserver，4图表白屏修复
+
+
+## 2026-08-25
+
 ### update
 
 - 首页 UI 重构(v0.4.11): 信息优先级重排——「今日要紧事+组合体检+机会精选」工作台上提到

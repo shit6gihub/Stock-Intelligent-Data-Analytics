@@ -1,18 +1,15 @@
-import { useEffect, useRef } from 'react'
-import echarts from '@panwatch/biz-ui/lib/echarts-core'
-import { SIDA_THEME_NAME } from '@panwatch/biz-ui/lib/echarts-theme'
+import { useEffect } from 'react'
+import { useECharts } from '@panwatch/biz-ui/hooks/useECharts'
 
 /**
  * 市场温度仪表盘(v0.4.7, Dashboard 情绪周期区)。
- *
- * 温度分 = 高度×15 + 晋级率×40 + 封板率×45 (0-100)。
- * 半圆 gauge, 指针色随情绪阶段(与 MarketPhaseCard PHASE_STYLE 一致)。
+ * v0.5.0: 使用 useECharts hook (ResizeObserver 替代 window.resize)。
  */
 
 export interface GaugeMetrics {
   max_height: number | null
-  promo_rate: number | null // 0-1 小数
-  seal_rate: number | null // 0-1 小数
+  promo_rate: number | null
+  seal_rate: number | null
 }
 
 /** 阶段 → 指针色(对齐 MarketPhaseCard 配色语义) */
@@ -43,15 +40,11 @@ export default function SentimentGauge({
   phase: string | null
   metrics: GaugeMetrics | null
 }) {
-  const ref = useRef<HTMLDivElement>(null)
-  const chartRef = useRef<echarts.ECharts | null>(null)
+  const { ref, chartRef } = useECharts()
 
   useEffect(() => {
-    if (!ref.current) return
-    if (!chartRef.current) {
-      chartRef.current = echarts.init(ref.current, SIDA_THEME_NAME)
-    }
     const chart = chartRef.current
+    if (!chart) return
 
     const h = metrics?.max_height ?? 0
     const promo = metrics?.promo_rate ?? 0
@@ -95,7 +88,7 @@ export default function SentimentGauge({
             fontSize: 20,
             fontFamily: 'monospace',
             fontWeight: 'bold',
-            formatter: `{v|${score}}\n{n|市场温度 · ${label}}`,
+            formatter: `{v|${score}}\\n{n|市场温度 · ${label}}`,
             rich: {
               v: { fontSize: 22, fontWeight: 'bold', color: pointerColor },
               n: { fontSize: 9, color: '#8e8e96', padding: [4, 0, 0, 0] },
@@ -105,18 +98,7 @@ export default function SentimentGauge({
         },
       ],
     })
-    const onResize = () => chart.resize()
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [phase, metrics])
-
-  useEffect(
-    () => () => {
-      chartRef.current?.dispose()
-      chartRef.current = null
-    },
-    [],
-  )
+  }, [phase, metrics, chartRef])
 
   return <div ref={ref} className="h-[140px] w-full" />
 }

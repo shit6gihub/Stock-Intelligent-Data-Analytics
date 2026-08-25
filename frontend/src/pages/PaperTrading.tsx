@@ -31,14 +31,14 @@ function formatCurrency(v: unknown) {
 
 function PnlText({ value, suffix = '' }: { value: unknown; suffix?: string }) {
   const n = safeNum(value)
-  const color = n === null ? 'text-muted-foreground' : n > 0 ? 'text-rose-500' : n < 0 ? 'text-emerald-500' : 'text-muted-foreground'
+  const color = n === null ? 'text-muted-foreground' : n > 0 ? 'text-stock-up' : n < 0 ? 'text-stock-down' : 'text-muted-foreground'
   const prefix = n !== null && n > 0 ? '+' : ''
   return <span className={color}>{prefix}{formatCurrency(value)}{suffix}</span>
 }
 
 function PnlPctText({ value }: { value: unknown }) {
   const n = safeNum(value)
-  const color = n === null ? 'text-muted-foreground' : n > 0 ? 'text-rose-500' : n < 0 ? 'text-emerald-500' : 'text-muted-foreground'
+  const color = n === null ? 'text-muted-foreground' : n > 0 ? 'text-stock-up' : n < 0 ? 'text-stock-down' : 'text-muted-foreground'
   const prefix = n !== null && n > 0 ? '+' : ''
   const txt = n === null ? '--' : `${n.toFixed(2)}%`
   return <span className={color}>{prefix}{txt}</span>

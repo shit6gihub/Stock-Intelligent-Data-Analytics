@@ -6,6 +6,17 @@
   :root {
     /* 反AI模板 P1: 中性色色相 220→240 统一向锚点色收敛(消除 AI 灰);卡片不再纯白 */
     --background: 240 20% 95.5%;
+    /* P0-1: 涨跌色 CSS 变量 — 供 ECharts 主题双态引用 */
+    --stock-up: #E53935;
+    --stock-down: #43A047;
+    /* ECharts 主题 token */
+    --echarts-text: #18181b;
+    --echarts-axis-label: #52525b;
+    --echarts-tooltip-bg: rgba(255,255,255,.95);
+    --echarts-tooltip-border: rgba(120,120,130,.3);
+    --echarts-tooltip-text: #18181b;
+    --echarts-split-line: rgba(120,120,130,.15);
+    --echarts-crosshair: rgba(120,120,130,.4);
     --foreground: 240 20% 10%;
     --card: 240 25% 99%; /* 纸面白(极低色度),替代纯白卡 */
     --card-foreground: 240 20% 10%;
@@ -48,6 +59,17 @@
     /* 反AI模板 P1: 暗色统一色相 240,锚点色提亮为 240 70% 60%。
        层级说明(oklch L 实测): bg 15.0 → card 19.8(Δ4.8)→ hover 23.1(Δ3.3)→ muted 25.1 → accent 27.9,
        背景明度下调一档拉大与 card 的层级差(暗色层级靠明度不用阴影),卡片/悬浮保持不动。 */
+    /* P0-1: 暗色涨跌色 — 同色保持, 暗背景上更醒目 */
+    --stock-up: #E53935;
+    --stock-down: #43A047;
+    /* ECharts 暗色 token */
+    --echarts-text: #c4c4cb;
+    --echarts-axis-label: #8e8e96;
+    --echarts-tooltip-bg: rgba(24,24,27,.95);
+    --echarts-tooltip-border: rgba(120,120,130,.3);
+    --echarts-tooltip-text: #fafafa;
+    --echarts-split-line: rgba(120,120,130,.12);
+    --echarts-crosshair: rgba(120,120,130,.4);
     --background: 240 20% 5%;
     --foreground: 240 15% 90%;
     --card: 240 20% 10%;
