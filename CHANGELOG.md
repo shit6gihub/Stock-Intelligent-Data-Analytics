@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-25
+
+### fix
+
+- 主线识别: wudao theme='无' 时回落 sector 字段,修复主线条榜为空
+
+
 ## 2026-08-24
 
 ### feature
