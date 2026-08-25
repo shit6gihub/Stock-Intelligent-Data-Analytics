@@ -670,7 +670,42 @@ class KlineCollector:
             return [KlineData(date=b.date, open=b.open, close=b.close, high=b.high,
                               low=b.low, volume=b.volume) for b in bars]
         pg = self._pg_fallback(symbol, days)
-        return pg if pg else []
+        if pg:
+            return pg
+        # v0.4.9.1: 新浪日K直拉兜底(容器内实测可达; 腾讯风控+东财断连时的最后防线)
+        return self._sina_fallback(symbol, days)
+
+    def _sina_fallback(self, symbol: str, days: int) -> list[KlineData]:
+        """新浪 CN_MarketData.getKLineData 日K兜底(v0.4.9.1)。fail-soft。"""
+        try:
+            from marketdata.http import market_get
+
+            tsym = ("sh" if self.market == MarketCode.HK else
+                    ("sh" if symbol.startswith(("6", "9")) else "sz")) + symbol if self.market == MarketCode.CN else None
+            if not tsym:
+                return []
+            text = market_get(
+                "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+                "CN_MarketData.getKLineData",
+                host_key="money.finance.sina.com.cn", min_interval_s=0.15,
+                params={"symbol": tsym, "scale": "240", "ma": "no",
+                        "datalen": str(min(max(days, 1), 1023))},
+                timeout=10, retries=2, parse="text", log_label="新浪个股日K", symbol=symbol,
+            )
+            import json as _json
+            rows = _json.loads(text) if isinstance(text, str) and text.strip() else []
+            out = [
+                KlineData(date=r["day"], open=float(r["open"]), high=float(r["high"]),
+                          low=float(r["low"]), close=float(r["close"]),
+                          volume=float(r.get("volume") or 0))
+                for r in (rows or []) if isinstance(r, dict) and r.get("day")
+            ]
+            if out:
+                logger.info(f"[kline-sina-fallback] {self.market.value}:{symbol} 新浪兜底 {len(out)} 根")
+            return out[-days:] if len(out) > days else out
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"[kline-sina-fallback] {symbol}: {e!r}")
+            return []
 
     def _pg_fallback(self, symbol: str, days: int) -> list[KlineData]:
         """PG klines hypertable 兜底(v0.4.6.3): 联网源全挂时读本地缓存。fail-soft。"""
