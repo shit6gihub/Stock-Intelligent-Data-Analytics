@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import * as echarts from 'echarts'
+import echarts from '@panwatch/biz-ui/lib/echarts-core'
+import { SIDA_THEME_NAME } from '@panwatch/biz-ui/lib/echarts-theme'
 import { fetchAPI } from '@panwatch/api'
 
 /**
@@ -59,7 +60,7 @@ export default function BreadthDistributionChart() {
   useEffect(() => {
     if (!ref.current || !items || items.length === 0) return
     if (!chartRef.current) {
-      chartRef.current = echarts.init(ref.current)
+      chartRef.current = echarts.init(ref.current, SIDA_THEME_NAME)
     }
     const chart = chartRef.current
     // 类目轴从下到上 = 从跌停到涨停(数组反转使涨停在顶部)

@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react'
-import * as echarts from 'echarts'
+import echarts from '@panwatch/biz-ui/lib/echarts-core'
+import { SIDA_THEME_NAME } from '@panwatch/biz-ui/lib/echarts-theme'
+import type { EChartsType } from 'echarts/core'
 
 export interface MinutePoint {
   t: string
@@ -24,16 +26,16 @@ interface Props {
  */
 export default function MinuteEChart({ points, prevClose, isIndex }: Props) {
   const ref = useRef<HTMLDivElement | null>(null)
-  const chartRef = useRef<echarts.ECharts | null>(null)
+  const chartRef = useRef<EChartsType | null>(null)
   const initedRef = useRef(false)
 
   useEffect(() => {
     const el = ref.current
     if (!el) return
     // 防重入: StrictMode/double-invoke 下不重复 init
-    let chart: echarts.ECharts | null = null
+    let chart: EChartsType | null = null
     try {
-      chart = echarts.init(el)
+      chart = echarts.init(el, SIDA_THEME_NAME)
       chartRef.current = chart
       initedRef.current = true
       // 容器可能刚挂载尺寸为 0, 强制按当前尺寸重绘

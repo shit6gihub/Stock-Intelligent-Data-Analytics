@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
-import * as echarts from 'echarts'
+import echarts from '@panwatch/biz-ui/lib/echarts-core'
+import { SIDA_THEME_NAME } from '@panwatch/biz-ui/lib/echarts-theme'
 
 /**
  * 市场温度仪表盘(v0.4.7, Dashboard 情绪周期区)。
@@ -48,7 +49,7 @@ export default function SentimentGauge({
   useEffect(() => {
     if (!ref.current) return
     if (!chartRef.current) {
-      chartRef.current = echarts.init(ref.current)
+      chartRef.current = echarts.init(ref.current, SIDA_THEME_NAME)
     }
     const chart = chartRef.current
 

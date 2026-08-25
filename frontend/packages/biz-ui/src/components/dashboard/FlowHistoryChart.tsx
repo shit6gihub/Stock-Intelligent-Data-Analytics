@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import * as echarts from 'echarts'
+import echarts from '@panwatch/biz-ui/lib/echarts-core'
+import { SIDA_THEME_NAME } from '@panwatch/biz-ui/lib/echarts-theme'
 import { fetchAPI } from '@panwatch/api'
 
 /**
@@ -50,7 +51,7 @@ export default function FlowHistoryChart() {
   useEffect(() => {
     if (!ref.current || !rows || rows.length === 0) return
     if (!chartRef.current) {
-      chartRef.current = echarts.init(ref.current)
+      chartRef.current = echarts.init(ref.current, SIDA_THEME_NAME)
     }
     const chart = chartRef.current
     const times = rows.map((r) => fmtTime(r.ts))

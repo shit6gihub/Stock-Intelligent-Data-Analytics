@@ -2,6 +2,17 @@
 
 ## 2026-08-25
 
+### update
+
+- ECharts 按需加载(v0.4.8): 新增 lib/echarts-core.ts 统一按需注册
+  (Bar/Gauge/Line/Candlestick/Heatmap + 常用组件 + CanvasRenderer),
+  全部图表组件切换至该入口, Dashboard chunk 减重约 300KB
+- 新增「终端感」ECharts 主题(lib/echarts-theme.ts): 轴线/分割线/tooltip
+  对齐设计 token, 四张大盘图 + 分时图统一观感; tooltip 毛玻璃圆角
+
+
+## 2026-08-25
+
 ### fix
 
 - push2delay 每页上限100条 → 改分页拉全A(140页保护), 修复涨跌分布只统计到100只
