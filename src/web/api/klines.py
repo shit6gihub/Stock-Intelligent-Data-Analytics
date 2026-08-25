@@ -144,6 +144,33 @@ def get_klines(symbol: str, market: str = "CN", days: int = 60, interval: str = 
             d = raw_resp
             data = (d.get("data") or {}).get(tencent_code) or {}
             bars = data.get("day") or data.get("qfqday") or []
+            if not bars and "." not in tencent_code and tencent_code[:2] in ("sh", "sz"):
+                # v0.4.6 hotfix: 腾讯对生产云 IP 风控(501) → 新浪指数日K兜底(A股指数)
+                import json as _json
+
+                sina_resp = market_get(
+                    "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+                    "CN_MarketData.getKLineData",
+                    host_key="money.finance.sina.com.cn",
+                    params={"symbol": tencent_code, "scale": "240", "ma": "no",
+                            "datalen": str(min(max(days, 1), 1023))},
+                    headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.sina.com.cn"},
+                    timeout=8,
+                    retries=1,
+                    parse="text",
+                    symbol=symbol,
+                    log_label="新浪指数K线",
+                )
+                try:
+                    sina_rows = _json.loads(sina_resp) if isinstance(sina_resp, str) else (sina_resp or [])
+                except Exception:
+                    sina_rows = []
+                bars = [
+                    [r.get("day"), r.get("open"), r.get("close"), r.get("high"),
+                     r.get("low"), r.get("volume")]
+                    for r in (sina_rows or [])
+                    if isinstance(r, dict) and r.get("day")
+                ]
             if not bars:
                 raise RuntimeError(f"腾讯指数K线返回空 bars({tencent_code},msg={d.get('msg')})")
             from src.collectors.kline_collector import KlineData

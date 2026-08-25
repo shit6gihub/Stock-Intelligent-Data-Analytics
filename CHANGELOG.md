@@ -2,6 +2,17 @@
 
 ## 2026-08-25
 
+### fix
+
+- 指数K线生产不可用修复: 腾讯 ifzq fqkline 对生产云服务器 IP 风控(501 Not Implemented),
+  东财 push2his 同样被掐 → 首页指数 sparkline 与大盘详情页K线全空。
+  新增新浪指数日K兜底(CN_MarketData.getKLineData, 生产实测可达):
+  ① marketdata.index_klines 腾讯空后回落 fetch_sina_index_kline
+  ② /api/klines 指数分支腾讯空 bars 后同源兜底(A股 sh/sz 前缀)
+
+
+## 2026-08-25
+
 ### feature
 
 - 首页信息架构重排(借鉴 TSP tick-stock-panel, MIT):

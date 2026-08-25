@@ -31,6 +31,41 @@ def _days(config: dict, default: int = 60) -> int:
 _TENCENT_MAX_COUNT = 800
 
 
+def fetch_sina_index_kline(tsym: str, days: int) -> list[Bar]:
+    """新浪指数日K兜底(v0.4.6 hotfix): 腾讯 ifzq 对部分云服务器 IP 风控(501),
+    东财 push2his 同样被掐 → 指数K线全空。新浪 money.finance.sina.com.cn 生产实测可达。
+
+    tsym 为原始腾讯风格符号(sh000001/sz399001/hkHSI…); 新浪仅支持 A股指数同款符号,
+    港美指数符号不同(hkHSI→INT_HSI 等)不映射, 直接失败返回 []。
+    """
+    days = min(max(int(days or 1), 1), 1023)
+    try:
+        text = market_get(
+            "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+            "CN_MarketData.getKLineData",
+            host_key="money.finance.sina.com.cn", min_interval_s=0.15,
+            params={"symbol": tsym, "scale": "240", "ma": "no", "datalen": str(days)},
+            timeout=10, retries=2, parse="text", log_label="新浪指数K线", symbol=tsym,
+        )
+    except Exception:
+        return []
+    if not text:
+        return []
+    try:
+        rows = json.loads(text)
+    except Exception:
+        return []
+    out: list[Bar] = []
+    for it in rows if isinstance(rows, list) else []:
+        try:
+            out.append(Bar(date=it["day"], open=float(it["open"]), close=float(it["close"]),
+                           high=float(it["high"]), low=float(it["low"]),
+                           volume=float(it.get("volume") or 0)))
+        except Exception:  # noqa: BLE001
+            continue
+    return out
+
+
 def fetch_tencent_kline_raw(tsym: str, days: int) -> list[Bar]:
     """按**原始腾讯符号**取日K(不经 Symbol 转换)。
 

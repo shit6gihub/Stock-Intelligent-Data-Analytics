@@ -204,7 +204,12 @@ class MarketData:
         tsym = INDEX_TENCENT.get(c) or INDEX_TENCENT.get(c.upper())
         if tsym:
             from marketdata.vendors.kline import fetch_tencent_kline_raw
-            return fetch_tencent_kline_raw(tsym, days)
+            bars = fetch_tencent_kline_raw(tsym, days)
+            if bars:
+                return bars
+            # v0.4.6 hotfix: 腾讯 ifzq 对生产云 IP 风控(501) → 新浪兜底(A股指数)
+            from marketdata.vendors.kline import fetch_sina_index_kline
+            return fetch_sina_index_kline(tsym, days)
         return []
 
     def capital_flow(self, symbol: str, *, market: str = "CN") -> CapitalFlow | None:
