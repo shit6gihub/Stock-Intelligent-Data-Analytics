@@ -60,7 +60,7 @@ SIDA doesn't reinvent wheels — it integrates proven open-source projects into 
 
 *Dashboard · K-line + main-force intent · Forecast & verification · Opportunities · AI chat · Paper trading*
 
-*Live demo: [https://www.sida.hengsheng-elec.com](https://www.sida.hengsheng-elec.com) — demo account: `demo` / `sida_demo_2026`*
+
 
 ## Quick Start
 
