@@ -193,14 +193,14 @@ WHERE kind IS NULL OR TRIM(kind) = ''
             """
 UPDATE agent_configs
 SET kind = 'capability',
-    visible = 0,
+    visible = false,
     lifecycle_status = 'deprecated',
     replaced_by = CASE
       WHEN name = 'news_digest' THEN 'premarket_outlook,daily_report,intraday_monitor'
       WHEN name = 'chart_analyst' THEN 'intraday_monitor,daily_report,premarket_outlook'
       ELSE replaced_by
     END,
-    enabled = 0,
+    enabled = false,
     schedule = ''
 WHERE name IN ('news_digest', 'chart_analyst')
 """
@@ -211,7 +211,7 @@ WHERE name IN ('news_digest', 'chart_analyst')
             """
 UPDATE agent_configs
 SET kind = 'workflow',
-    visible = 1,
+    visible = true,
     lifecycle_status = 'active',
     replaced_by = ''
 WHERE name IN ('premarket_outlook', 'intraday_monitor', 'daily_report')
@@ -1837,7 +1837,7 @@ LIMIT 1
             text(
                 """
 SELECT id FROM users
-WHERE role = 'owner' AND is_active = 1
+WHERE role = 'owner' AND is_active = true
 ORDER BY created_at ASC, id ASC
 LIMIT 1
 """
