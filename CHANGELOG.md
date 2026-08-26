@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-26
+
+### feature
+
+- 通达信TQ数据源接入(v0.4.13): 新增 `vendors/tq.py`(TqQuoteVendor/TqKlineVendor, JSON-RPC→127.0.0.1:5100 frp隧道→小主机通达信客户端17709), quote/kline 双类型注册 registry + seed(priority=0 最高)。实测延迟: 快照~30ms/K线(含refresh_kline预热)~165ms/并发10路67ms, 远优于腾讯/东财爬源; 隧道断开快速失败(4s超时)自动降级腾讯→ths。TQ冷缓存只回1根K线,vendor 内置 refresh_kline 预热修复; 容器内走宿主网关 172.18.0.1:5100。同花顺行情源降级到 priority=2(tq/tencent 之后, 生产IP常年403白试一轮)
+
 ## 2026-08-25
 
 ### feature
