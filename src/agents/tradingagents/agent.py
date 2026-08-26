@@ -486,6 +486,9 @@ class TradingAgentsAgent(BaseAgent):
         except Exception as e:
             logger.warning(f"[TA] 收集 toolkit 诊断失败,忽略: {e}")
 
+        # S5(2026-08-26): 提取触发用户 UUID, 报告/建议归属该账号(调度任务无 user 时为 NULL 共享)
+        _ta_user_id = getattr(getattr(context, "user", None), "id", None)
+
         # 6) 落库到 AnalysisHistory:供 UI 查最近一次结果 (DeepAnalysisModal 弹窗) +
         # 月度成本预算聚合。同标的同日复跑会覆盖 (analysis_history.save_analysis 语义)。
         try:
@@ -495,6 +498,7 @@ class TradingAgentsAgent(BaseAgent):
                 content=result.content,
                 title=result.title,
                 raw_data=result.raw_data,
+                user_id=_ta_user_id,
             )
         except Exception as e:
             logger.warning(f"[TA] save_analysis 失败,不影响主流程: {e}")
@@ -526,6 +530,7 @@ class TradingAgentsAgent(BaseAgent):
                 reason=reason_text,
                 expires_hours=24,  # 深度分析结果 24 小时内有效
                 ai_response=result.content[:2000],
+                user_id=_ta_user_id,
                 meta={
                     "cost_usd": result.raw_data.get("cost_usd", 0),
                     "decision": result.raw_data.get("decision", "HOLD"),

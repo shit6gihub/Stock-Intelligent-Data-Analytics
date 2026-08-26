@@ -51,8 +51,11 @@ def _parse_market(market: str) -> MarketCode:
 
 
 @router.post("/batch")
-def insights_batch(payload: InsightsBatchRequest):
-    """聚合返回行情 + K线摘要 + 最新建议"""
+def insights_batch(payload: InsightsBatchRequest, user: User = Depends(get_current_user)):
+    """聚合返回行情 + K线摘要 + 最新建议。
+
+    S5(2026-08-26): 建议按用户过滤(NULL 共享); 非本人建议不下发 prompt_context/ai_response。
+    """
     if not payload.items:
         return []
 
@@ -96,15 +99,29 @@ def insights_batch(payload: InsightsBatchRequest):
             _KLINE_CACHE[cache_key] = (now, summary)
         kline_by_symbol[cache_key] = summary
 
-    # 3) 最新建议（建议池）
+    # 3) 最新建议（建议池）— S5: 仅本人建议 + NULL 共享行
     stock_keys = [(it.symbol, _parse_market(it.market).value) for it in payload.items]
-    latest_sugs = get_latest_suggestions(stock_keys=stock_keys, include_expired=False)
+    latest_sugs = get_latest_suggestions(
+        stock_keys=stock_keys,
+        include_expired=False,
+        user_id=user.id,
+    )
 
-    # 4) 合并返回
+    # 4) 合并返回（S5: 下发前剥离跨账号可见的 Prompt/AI 原文）
     results = []
     for it in payload.items:
         market_code = _parse_market(it.market)
         quote = quotes_by_market.get(market_code, {}).get(it.symbol)
+        suggestion = latest_sugs.get(f"{market_code.value}:{it.symbol}")
+        if isinstance(suggestion, dict) and suggestion.get("user_id") not in (
+            None,
+            user.id,
+        ):
+            suggestion = {
+                **suggestion,
+                "prompt_context": "",
+                "ai_response": "",
+            }
         results.append({
             "symbol": it.symbol,
             "market": market_code.value,
@@ -119,7 +136,7 @@ def insights_batch(payload: InsightsBatchRequest):
                 "turnover": quote.get("turnover") if quote else None,
             },
             "kline_summary": kline_by_symbol.get(f"{market_code.value}:{it.symbol}", {}),
-            "suggestion": latest_sugs.get(f"{market_code.value}:{it.symbol}"),
+            "suggestion": suggestion,
         })
 
     return results

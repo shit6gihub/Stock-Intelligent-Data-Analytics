@@ -127,7 +127,8 @@ def _evaluate_strategy(cfg: dict, q: dict, strategy_id: str, symbol: str, market
     change_pct = getf("change_pct")
     volume_ratio = getf("volume_ratio")
     turnover_rate = getf("turnover_rate")
-    amount = getf("amount")  # 元
+    # 2026-08-26 顺手修: 行情对象字段名是 turnover(成交额,元), 'amount' 恒为 None
+    amount = getf("amount") or getf("turnover")  # 元
     open_p = getf("open")
     high = getf("high")
     low = getf("low")

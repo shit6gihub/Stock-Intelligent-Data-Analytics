@@ -223,6 +223,7 @@ def get_suggestions_for_stock(
     stock_market: str | None = None,
     include_expired: bool = False,
     limit: int = 10,
+    user_id: str | None = None,
 ) -> list[dict]:
     """
     获取某只股票的建议列表
@@ -231,6 +232,7 @@ def get_suggestions_for_stock(
         stock_symbol: 股票代码
         include_expired: 是否包含已过期建议
         limit: 返回数量限制
+        user_id: S5(2026-08-26) 归属过滤;None(内部调用/未登录场景)保持旧行为
 
     Returns:
         建议列表，按时间倒序
@@ -241,6 +243,14 @@ def get_suggestions_for_stock(
         if stock_market:
             query = query.filter(
                 StockSuggestion.stock_market == (stock_market or "CN").strip().upper()
+            )
+        # S5: 只返回本人建议 + user_id=NULL 的旧数据共享行
+        if user_id is not None:
+            query = query.filter(
+                or_(
+                    StockSuggestion.user_id == user_id,
+                    StockSuggestion.user_id.is_(None),
+                )
             )
 
         now = utc_now()
@@ -264,6 +274,7 @@ def get_latest_suggestions(
     stock_symbols: Optional[list[str]] = None,
     stock_keys: Optional[list[tuple[str, str]]] = None,
     include_expired: bool = False,
+    user_id: str | None = None,
 ) -> dict[str, dict]:
     """
     获取所有股票的最新建议（每只股票只返回最新的一条）
@@ -271,6 +282,7 @@ def get_latest_suggestions(
     Args:
         stock_symbols: 股票代码列表，None 表示所有
         include_expired: 是否包含已过期建议
+        user_id: S5(2026-08-26) 归属过滤;None(内部调用/调度)保持旧行为
 
     Returns:
         {symbol: suggestion_dict}
@@ -284,8 +296,16 @@ def get_latest_suggestions(
                 func.max(StockSuggestion.id).label("max_id"),
             )
             .group_by(StockSuggestion.stock_symbol, StockSuggestion.stock_market)
-            .subquery()
         )
+        # S5: 子查询先按用户圈定候选行(NULL 视为旧数据共享), 再取每标的最新一条
+        if user_id is not None:
+            subquery = subquery.filter(
+                or_(
+                    StockSuggestion.user_id == user_id,
+                    StockSuggestion.user_id.is_(None),
+                )
+            )
+        subquery = subquery.subquery()
 
         query = db.query(StockSuggestion).join(
             subquery,
@@ -339,8 +359,18 @@ def get_latest_suggestions(
         db.close()
 
 
-def _to_dict(suggestion: StockSuggestion, now: Optional[datetime] = None) -> dict:
-    """将 StockSuggestion 转换为字典（时间使用 ISO 格式带时区）"""
+def _to_dict(
+    suggestion: StockSuggestion,
+    now: Optional[datetime] = None,
+    user_id: str | None = None,
+    include_private: bool = True,
+) -> dict:
+    """将 StockSuggestion 转换为字典（时间使用 ISO 格式带时区）
+
+    S5(2026-08-26) 隐私收敛: prompt_context/ai_response 仅在调用方声明
+    include_private 且建议归属本人(或 user_id=NULL 共享行, 或内部调用未传 user_id)时下发;
+    非本人建议一律置空, 防止跨账号泄露 Prompt/AI 原文。
+    """
     if now is None:
         now = utc_now()
 
@@ -348,6 +378,12 @@ def _to_dict(suggestion: StockSuggestion, now: Optional[datetime] = None) -> dic
     if suggestion.expires_at:
         # naive 时间按 app 时区(北京)解读后再转 UTC 比较(2026-08-24 修复 +8 偏移)
         is_expired = to_utc(suggestion.expires_at) < now
+
+    row_user_id = getattr(suggestion, "user_id", None)
+    if include_private and user_id is not None:
+        can_read_private = row_user_id == user_id or row_user_id is None
+    else:
+        can_read_private = True
 
     # 转换时间为带时区的 ISO 格式(naive 按 app 时区解读, 见 timezone.to_iso_with_tz)
     created_at_str = to_iso_with_tz(suggestion.created_at) if suggestion.created_at else None
@@ -367,20 +403,21 @@ def _to_dict(suggestion: StockSuggestion, now: Optional[datetime] = None) -> dic
         "created_at": created_at_str,
         "expires_at": expires_at_str,
         "is_expired": is_expired,
-        "prompt_context": suggestion.prompt_context or "",
-        "ai_response": suggestion.ai_response or "",
+        "prompt_context": (suggestion.prompt_context or "") if can_read_private else "",
+        "ai_response": (suggestion.ai_response or "") if can_read_private else "",
         "meta": suggestion.meta or {},
         "should_alert": (suggestion.action or "")
         in ("alert", "avoid", "sell", "reduce"),
     }
 
 
-def cleanup_expired_suggestions(days: int = 7) -> int:
+def cleanup_expired_suggestions(days: int = 7, user_id: str | None = None) -> int:
     """
     清理过期的建议记录
 
     Args:
         days: 清理多少天前的记录
+        user_id: S5(2026-08-26) 归属范围;None 保持旧行为(系统清理全量)
 
     Returns:
         删除的记录数
@@ -388,11 +425,13 @@ def cleanup_expired_suggestions(days: int = 7) -> int:
     db = SessionLocal()
     try:
         cutoff = utc_now() - timedelta(days=days)
-        result = (
-            db.query(StockSuggestion)
-            .filter(StockSuggestion.created_at < cutoff)
-            .delete()
+        query = db.query(StockSuggestion).filter(
+            StockSuggestion.created_at < cutoff
         )
+        # S5: 端点限本人范围 — 只删自己创建的建议, 不碰 NULL/旧数据与他人数据
+        if user_id is not None:
+            query = query.filter(StockSuggestion.user_id == user_id)
+        result = query.delete()
         db.commit()
         logger.info(f"清理了 {result} 条过期建议")
         return result

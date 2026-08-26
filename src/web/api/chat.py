@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from src.config import Settings
@@ -610,9 +610,16 @@ def _filter_tool_args(handler, args: dict) -> dict:
 CHAT_TOOLS.extend(_build_thsdk_chat_schemas())
 
 
-def _build_watchlist_context(db: Session) -> str:
-    """构建用户自选股列表。"""
-    stocks = db.query(Stock).order_by(Stock.sort_order.asc()).all()
+def _build_watchlist_context(db: Session, user: User | None = None) -> str:
+    """构建用户自选股列表。
+
+    S5(2026-08-26): 传入 user 时只返回本人自选 + user_id=NULL 全局自选;
+    不传保持旧行为(内部工具兼容)。
+    """
+    query = db.query(Stock).order_by(Stock.sort_order.asc())
+    if user is not None:
+        query = query.filter(or_(Stock.user_id == user.id, Stock.user_id.is_(None)))
+    stocks = query.all()
     if not stocks:
         return "用户暂无自选股。"
     lines = [f"- {s.name}({s.market}:{s.symbol})" for s in stocks]
@@ -1091,7 +1098,9 @@ def get_web_content(url: str) -> str:
         return f"抓取失败: {str(e)[:120]}。"
 
 
-async def _execute_tool(db: Session, name: str, args: dict) -> str:
+async def _execute_tool(
+    db: Session, name: str, args: dict, user: User | None = None
+) -> str:
     """执行工具调用，返回结果文本。
 
     修复 2026-08-21(国内生产): get_market_news 等分支的局部 `import asyncio`
@@ -1099,11 +1108,14 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
     等分支引用 asyncio 时抛 UnboundLocalError(线上表现: "主力意图获取失败:
     cannot access local variable 'asyncio'")。在函数入口统一 import 一次,
     所有分支可用; 各分支内的重复局部 import 变为冗余但无害。
+
+    S5(2026-08-26): user 沿工具链下传, 数据类工具(get_portfolio/get_stock_suggestions/
+    get_watchlist)只读当前用户自己的数据。
     """
     import asyncio
     try:
         if name == "get_portfolio":
-            result = _build_portfolio_context(db)
+            result = _build_portfolio_context(db, user=user)
             return result or "用户暂无持仓。"
         elif name == "get_stock_quote":
             symbol = args.get("symbol", "")
@@ -1145,10 +1157,10 @@ async def _execute_tool(db: Session, name: str, args: dict) -> str:
         elif name == "get_stock_suggestions":
             symbol = args.get("symbol", "")
             market = args.get("market", "CN")
-            result = _build_stock_context(db, symbol, market)
+            result = _build_stock_context(db, symbol, market, user=user)
             return result or f"暂无 {market}:{symbol} 的 AI 建议。"
         elif name == "get_watchlist":
-            return _build_watchlist_context(db)
+            return _build_watchlist_context(db, user=user)
         elif name == "get_capital_flow":
             symbol = args.get("symbol", "")
             market = args.get("market", "CN")
@@ -1892,11 +1904,11 @@ async def _build_ai_messages(
         logger.info("重复提问守卫触发: %s", repeat_hint.splitlines()[0][:60])
         messages_for_ai.append({"role": "user", "content": repeat_hint})
 
-    # 注入基础上下文（持仓 + 绑定股票的行情/建议）
+    # 注入基础上下文（持仓 + 绑定股票的行情/建议）— S5: 按当前用户过滤
     context_parts: list[str] = []
 
     # 用户持仓
-    portfolio_ctx = _build_portfolio_context(db)
+    portfolio_ctx = _build_portfolio_context(db, user=user)
     if portfolio_ctx:
         context_parts.append(portfolio_ctx)
 
@@ -1908,7 +1920,7 @@ async def _build_ai_messages(
         technical = await _fetch_technical_context(conv.stock_symbol, conv.stock_market)
         if technical:
             context_parts.append(technical)
-        stock_ctx = _build_stock_context(db, conv.stock_symbol, conv.stock_market)
+        stock_ctx = _build_stock_context(db, conv.stock_symbol, conv.stock_market, user=user)
         if stock_ctx:
             context_parts.append(stock_ctx)
 
@@ -1933,7 +1945,9 @@ async def _build_ai_messages(
     return messages_for_ai
 
 
-async def _run_tool_loop(ai_client: AIClient, messages_for_ai: list[dict], db: Session):
+async def _run_tool_loop(
+    ai_client: AIClient, messages_for_ai: list[dict], db: Session, user: User | None = None
+):
     """带 tool use 的多轮对话(异步生成器)。
 
     产出两类事件:
@@ -1942,6 +1956,8 @@ async def _run_tool_loop(ai_client: AIClient, messages_for_ai: list[dict], db: S
 
     语义与原 send_message 内联循环完全等价(tool 不可用回落 chat_multi /
     轮次上限兜底 / 异常兜底), send_message 非流式路径同样消费本生成器。
+
+    S5(2026-08-26): user 下传到 _execute_tool, 工具读数限本人数据。
     """
     try:
         for _round in range(MAX_TOOL_ROUNDS):
@@ -1978,7 +1994,7 @@ async def _run_tool_loop(ai_client: AIClient, messages_for_ai: list[dict], db: S
                 tool_args = json.loads(tc.function.arguments) if tc.function.arguments else {}
                 logger.info(f"Tool call: {tc.function.name}({tool_args})")
                 yield "stage", _TOOL_STAGE_LABELS.get(tc.function.name, f"正在调用 {tc.function.name}...")
-                result = await _execute_tool(db, tc.function.name, tool_args)
+                result = await _execute_tool(db, tc.function.name, tool_args, user=user)
                 messages_for_ai.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
@@ -1996,7 +2012,7 @@ def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-async def _run_tool_loop_stream(ai_client, messages_for_ai, db):
+async def _run_tool_loop_stream(ai_client, messages_for_ai, db, user: User | None = None):
     """流式 tool 循环(2026-08-23 U1 真流式): 边流式出字边执行工具。
 
     与 _run_tool_loop 等价, 但最终回答由 chat_with_tools_stream 单次调用
@@ -2004,6 +2020,8 @@ async def _run_tool_loop_stream(ai_client, messages_for_ai, db):
     - ("stage", 文案): 工具执行前
     - ("delta", 正文增量): 最终回答实时增量
     - ("done", 全文): 结束时产出一次, 供落库
+
+    S5(2026-08-26): user 下传到 _execute_tool, 工具读数限本人数据。
     """
     try:
         for _round in range(MAX_TOOL_ROUNDS):
@@ -2046,7 +2064,7 @@ async def _run_tool_loop_stream(ai_client, messages_for_ai, db):
                 tool_args = json.loads(tc.function.arguments) if tc.function.arguments else {}
                 logger.info(f"Tool call: {tc.function.name}({tool_args})")
                 yield "stage", _TOOL_STAGE_LABELS.get(tc.function.name, f"正在调用 {tc.function.name}...")
-                result = await _execute_tool(db, tc.function.name, tool_args)
+                result = await _execute_tool(db, tc.function.name, tool_args, user=user)
                 messages_for_ai.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
@@ -2194,18 +2212,28 @@ def _get_ai_client(db: Session, model_id: int | None = None, user=None) -> AICli
     )
 
 
-def _build_stock_context(db: Session, symbol: str, market: str) -> str:
-    """为绑定股票构建上下文摘要。"""
+def _build_stock_context(db: Session, symbol: str, market: str, user: User | None = None) -> str:
+    """为绑定股票构建上下文摘要。
+
+    S5(2026-08-26): 传入 user 时按归属过滤建议/报告(NULL 视为共享),
+    防止跨账号读取他人的 AI 建议与分析历史。
+    """
     parts = []
 
     # 最近建议
-    suggestions = (
-        db.query(StockSuggestion)
-        .filter(
-            StockSuggestion.stock_symbol == symbol,
-            StockSuggestion.stock_market == market,
+    sug_query = db.query(StockSuggestion).filter(
+        StockSuggestion.stock_symbol == symbol,
+        StockSuggestion.stock_market == market,
+    )
+    if user is not None:
+        sug_query = sug_query.filter(
+            or_(
+                StockSuggestion.user_id == user.id,
+                StockSuggestion.user_id.is_(None),
+            )
         )
-        .order_by(StockSuggestion.created_at.desc())
+    suggestions = (
+        sug_query.order_by(StockSuggestion.created_at.desc())
         .limit(3)
         .all()
     )
@@ -2216,10 +2244,18 @@ def _build_stock_context(db: Session, symbol: str, market: str) -> str:
         parts.append("最近 AI 建议：\n" + "\n".join(lines))
 
     # 最近分析报告
+    hist_query = db.query(AnalysisHistory).filter(
+        AnalysisHistory.stock_symbol == symbol
+    )
+    if user is not None:
+        hist_query = hist_query.filter(
+            or_(
+                AnalysisHistory.user_id == user.id,
+                AnalysisHistory.user_id.is_(None),
+            )
+        )
     histories = (
-        db.query(AnalysisHistory)
-        .filter(AnalysisHistory.stock_symbol == symbol)
-        .order_by(AnalysisHistory.created_at.desc())
+        hist_query.order_by(AnalysisHistory.created_at.desc())
         .limit(1)
         .all()
     )
@@ -2233,12 +2269,21 @@ def _build_stock_context(db: Session, symbol: str, market: str) -> str:
     return "\n\n".join(parts)
 
 
-def _build_portfolio_context(db: Session) -> str:
-    """构建用户全部持仓摘要。"""
+def _build_portfolio_context(db: Session, user: User | None = None) -> str:
+    """构建用户全部持仓摘要。
+
+    S5(2026-08-26): 传入 user 时只返回本人持仓 + user_id=NULL 全局持仓,
+    实盘(Position)与模拟盘(PaperTradingPosition)同样处理。
+    """
     lines: list[str] = []
 
     # 实盘持仓
-    positions = db.query(Position).all()
+    pos_query = db.query(Position)
+    if user is not None:
+        pos_query = pos_query.filter(
+            or_(Position.user_id == user.id, Position.user_id.is_(None))
+        )
+    positions = pos_query.all()
     if positions:
         real_lines = []
         for p in positions:
@@ -2253,11 +2298,17 @@ def _build_portfolio_context(db: Session) -> str:
             lines.append("实盘持仓：\n" + "\n".join(real_lines))
 
     # 模拟盘持仓
-    paper_positions = (
-        db.query(PaperTradingPosition)
-        .filter(PaperTradingPosition.status == "open")
-        .all()
+    paper_query = db.query(PaperTradingPosition).filter(
+        PaperTradingPosition.status == "open"
     )
+    if user is not None and hasattr(PaperTradingPosition, "user_id"):
+        paper_query = paper_query.filter(
+            or_(
+                PaperTradingPosition.user_id == user.id,
+                PaperTradingPosition.user_id.is_(None),
+            )
+        )
+    paper_positions = paper_query.all()
     if paper_positions:
         paper_lines = []
         for pp in paper_positions:
@@ -2471,8 +2522,12 @@ def suggested_questions(
     symbol: str = Query(..., description="股票代码"),
     market: str = Query("CN", description="市场"),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    """根据股票当前状态动态生成推荐问题（最多5条, 按优先级: 今日机会/系统预测/未读通知/持仓浮亏 → 通用模板兜底, 不调 AI）。"""
+    """根据股票当前状态动态生成推荐问题（最多5条, 按优先级: 今日机会/系统预测/未读通知/持仓浮亏 → 通用模板兜底, 不调 AI）。
+
+    S5(2026-08-26): 通知/持仓/建议等动态问题只看当前用户自己的数据(NULL 共享)。
+    """
     questions: list[str] = []
 
     # ① 今日 active 机会候选(entry_candidates, 最新交易日且有信号) → 问机会
@@ -2495,30 +2550,44 @@ def suggested_questions(
         if has_signal:
             questions.append("今天系统发现了什么机会？")
 
-    # ③ 未读通知 → 问通知
-    unread = db.query(Notification.id).filter(Notification.read_at.is_(None)).first()
+    # ③ 未读通知 → 问通知(S5: 仅本人 + 全局 NULL)
+    unread = (
+        db.query(Notification.id)
+        .filter(
+            Notification.read_at.is_(None),
+            or_(Notification.user_id == user.id, Notification.user_id.is_(None)),
+        )
+        .first()
+    )
     if unread:
         questions.append("今天的通知里有什么需要我关注的？")
 
     # ④ 持仓浮亏(简单判断: 模拟盘 open 且 unrealized_pnl < 0, 取浮亏最大的一只) → 问调仓
-    losing = (
-        db.query(PaperTradingPosition)
-        .filter(
-            PaperTradingPosition.status == "open",
-            PaperTradingPosition.unrealized_pnl < 0,
-        )
-        .order_by(PaperTradingPosition.unrealized_pnl.asc())
-        .first()
+    losing_q = db.query(PaperTradingPosition).filter(
+        PaperTradingPosition.status == "open",
+        PaperTradingPosition.unrealized_pnl < 0,
     )
+    if hasattr(PaperTradingPosition, "user_id"):
+        losing_q = losing_q.filter(
+            or_(
+                PaperTradingPosition.user_id == user.id,
+                PaperTradingPosition.user_id.is_(None),
+            )
+        )
+    losing = losing_q.order_by(PaperTradingPosition.unrealized_pnl.asc()).first()
     if losing:
         questions.append(f"我的 {losing.stock_symbol} 持仓要调仓吗？")
 
-    # ⑤ 兜底: 查最近建议(保持原有逻辑)
+    # ⑤ 兜底: 查最近建议(保持原有逻辑; S5: 仅本人 + NULL 共享行)
     latest_suggestion = (
         db.query(StockSuggestion)
         .filter(
             StockSuggestion.stock_symbol == symbol,
             StockSuggestion.stock_market == market,
+            or_(
+                StockSuggestion.user_id == user.id,
+                StockSuggestion.user_id.is_(None),
+            ),
         )
         .order_by(StockSuggestion.created_at.desc())
         .first()
@@ -2732,7 +2801,7 @@ async def send_message(
         messages_for_ai = await _build_ai_messages(db, conv, user, image_data=body.image_data)
         ai_client = _get_ai_client(db, conv.ai_model_id, user=user)
         ai_response = ""
-        async for _kind, payload in _run_tool_loop(ai_client, messages_for_ai, db):
+        async for _kind, payload in _run_tool_loop(ai_client, messages_for_ai, db, user=user):
             if _kind == "text":
                 ai_response = payload
 
@@ -2833,7 +2902,7 @@ async def send_message_stream(
 
             # 多轮 tool use + 真流式(2026-08-23 U1): 边流式出字边执行工具
             ai_response = ""
-            async for kind, payload in _run_tool_loop_stream(ai_client, messages_for_ai, db):
+            async for kind, payload in _run_tool_loop_stream(ai_client, messages_for_ai, db, user=user):
                 if kind == "stage":
                     yield _sse_event("stage", {"message": payload})
                 elif kind == "delta":

@@ -7,11 +7,13 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from src.web.database import get_db
-from src.web.models import AgentConfig, AgentRun, LogEntry
+from src.web.models import AgentConfig, AgentRun, LogEntry, User
+from src.web.api.auth import get_current_user
 from src.core.schedule_parser import preview_schedule
 from src.core.schedule_parser import count_runs_within
 from src.config import Settings
@@ -532,11 +534,14 @@ def find_active_tradingagents_trace(db: Session, stock_symbol: str) -> str | Non
 def get_tradingagents_latest(
     stock_symbol: str = Query(..., description="股票代码,如 300418"),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """获取某只股票最近一次 TradingAgents 深度分析的完整结果(含 raw_data)。
 
     /history 端点 cherry-pick 字段不含 raw_data,这里专门为深度分析弹窗
     暴露完整字段(suggestion / debate_history / analyst_reports / cost_usd 等)。
+
+    S5(2026-08-26): 仅返回当前用户的报告; user_id=NULL 的系统/旧数据视为共享可见。
     """
     from src.web.models import AnalysisHistory
 
@@ -545,6 +550,10 @@ def get_tradingagents_latest(
         .filter(
             AnalysisHistory.agent_name == "tradingagents",
             AnalysisHistory.stock_symbol == stock_symbol,
+            or_(
+                AnalysisHistory.user_id == user.id,
+                AnalysisHistory.user_id.is_(None),
+            ),
         )
         .order_by(
             AnalysisHistory.analysis_date.desc(),
@@ -574,8 +583,12 @@ def get_tradingagents_analysis(
     stock_symbol: str = Query(..., description="股票代码"),
     analysis_date: str = Query(..., description="分析日期 YYYY-MM-DD"),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    """按 symbol + date 查某次 TradingAgents 深度分析完整结果(详细阅读页用)。"""
+    """按 symbol + date 查某次 TradingAgents 深度分析完整结果(详细阅读页用)。
+
+    S5(2026-08-26): 仅返回当前用户的报告; user_id=NULL 视为共享可见。
+    """
     from src.web.models import AnalysisHistory
 
     record = (
@@ -584,6 +597,10 @@ def get_tradingagents_analysis(
             AnalysisHistory.agent_name == "tradingagents",
             AnalysisHistory.stock_symbol == stock_symbol,
             AnalysisHistory.analysis_date == analysis_date,
+            or_(
+                AnalysisHistory.user_id == user.id,
+                AnalysisHistory.user_id.is_(None),
+            ),
         )
         .order_by(AnalysisHistory.updated_at.desc(), AnalysisHistory.id.desc())
         .first()
@@ -609,10 +626,12 @@ def export_tradingagents_analysis_pdf(
     stock_symbol: str = Query(..., description="股票代码"),
     analysis_date: str = Query(..., description="分析日期 YYYY-MM-DD"),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """把某次 TradingAgents 深度分析报告导出为 PDF 文件(后台直出,不依赖 Chromium)。
 
     返回 application/pdf(ResponseWrapperMiddleware 对非 JSON 原样放行,不会包裹)。
+    S5(2026-08-26): 仅允许导出当前用户自己的报告; user_id=NULL 视为共享可见。
     """
     from urllib.parse import quote
 
@@ -628,6 +647,10 @@ def export_tradingagents_analysis_pdf(
             AnalysisHistory.agent_name == "tradingagents",
             AnalysisHistory.stock_symbol == stock_symbol,
             AnalysisHistory.analysis_date == analysis_date,
+            or_(
+                AnalysisHistory.user_id == user.id,
+                AnalysisHistory.user_id.is_(None),
+            ),
         )
         .order_by(AnalysisHistory.updated_at.desc(), AnalysisHistory.id.desc())
         .first()
@@ -705,11 +728,18 @@ def get_tradingagents_budget(db: Session = Depends(get_db)):
 
 
 @router.get("/runs/{trace_id}/progress")
-def get_run_progress(trace_id: str, db: Session = Depends(get_db)):
+def get_run_progress(
+    trace_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """读取一次 agent 运行的进度。
 
     适用 TradingAgents 等长耗时(3-5 分钟)的 agent。从 log_entries 表里
     查 event=ta_progress + 同 trace_id 的日志,聚合成阶段进度。
+
+    S5(2026-08-26): trace_id 归属校验 — AgentRun.user_id 必须等于当前用户
+    或为 NULL(系统定时任务共享);否则按 not_found 处理,防止枚举他人运行详情。
 
     返回:
     {
@@ -729,6 +759,20 @@ def get_run_progress(trace_id: str, db: Session = Depends(get_db)):
 
     if not trace_id or len(trace_id) > 64:
         raise HTTPException(400, "无效的 trace_id")
+
+    # S5(2026-08-26) 归属校验: 运行记录必须属于当前用户或为系统(NULL);
+    # 他人 trace 一律按 not_found 处理(不泄露存在性), 日志/结果也不再下发。
+    owner_run = (
+        db.query(AgentRun)
+        .filter(
+            AgentRun.trace_id == trace_id,
+            or_(AgentRun.user_id == user.id, AgentRun.user_id.is_(None)),
+        )
+        .order_by(AgentRun.id.desc())
+        .first()
+    )
+    if not owner_run:
+        return {"trace_id": trace_id, "status": "not_found"}
 
     logs = (
         db.query(LogEntry)
@@ -818,11 +862,20 @@ def get_run_progress(trace_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{agent_name}/history", response_model=list[AgentRunResponse])
-def get_agent_history(agent_name: str, limit: int = 20, db: Session = Depends(get_db)):
+def get_agent_history(
+    agent_name: str,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """S5(2026-08-26): 仅返回当前用户触发/系统调度(NULL)的运行记录。"""
     tz = Settings().app_timezone or "UTC"
     runs = (
         db.query(AgentRun)
-        .filter(AgentRun.agent_name == agent_name)
+        .filter(
+            AgentRun.agent_name == agent_name,
+            or_(AgentRun.user_id == user.id, AgentRun.user_id.is_(None)),
+        )
         .order_by(AgentRun.created_at.desc())
         .limit(limit)
         .all()
@@ -848,7 +901,11 @@ def get_agent_history(agent_name: str, limit: int = 20, db: Session = Depends(ge
 
 
 @router.post("/intraday/scan")
-async def scan_intraday(analyze: bool = False, db: Session = Depends(get_db)):
+async def scan_intraday(
+    analyze: bool = False,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """
     实时扫描盘中监测 Agent 关联的股票
 
@@ -1134,6 +1191,7 @@ async def scan_intraday(analyze: bool = False, db: Session = Depends(get_db)):
 
                         item["suggestion"] = suggestion
                         # 写入建议池（用于持仓页展示），盘中建议固定 6 小时有效
+                        # S5(2026-08-26): 建议归属当前触发用户, 多账号互不串数据
                         expires_hours = 6
                         save_suggestion(
                             stock_symbol=item["symbol"],
@@ -1148,6 +1206,7 @@ async def scan_intraday(analyze: bool = False, db: Session = Depends(get_db)):
                             prompt_context=user_content,
                             ai_response=response,
                             stock_market=item.get("market") or "CN",
+                            user_id=getattr(user, "id", None),
                             meta={
                                 "source": "intraday_scan",
                                 "quote": {

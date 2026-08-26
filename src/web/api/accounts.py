@@ -215,9 +215,18 @@ def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(g
 
 
 @router.delete("/accounts/{account_id}")
-def delete_account(account_id: int, db: Session = Depends(get_db)):
-    """删除账户（会同时删除该账户的所有持仓）"""
-    account = db.query(Account).filter(Account.id == account_id).first()
+def delete_account(
+    account_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    """删除账户（会同时删除该账户的所有持仓）
+
+    S5(2026-08-26): 归属校验 — 与 list/get/update 同款 or_ 过滤,
+    只能删除自己的(或 NULL 全局)账户; 他人账户返回 404 防账号探测。
+    """
+    account = db.query(Account).filter(
+        Account.id == account_id,
+        or_(Account.user_id == user.id, Account.user_id.is_(None)),
+    ).first()
     if not account:
         raise HTTPException(404, "账户不存在")
 

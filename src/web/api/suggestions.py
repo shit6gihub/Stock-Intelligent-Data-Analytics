@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from src.web.database import get_db
+from src.web.models import User
+from src.web.api.auth import get_current_user
 from src.core.suggestion_pool import (
     get_suggestions_for_stock,
     get_latest_suggestions,
@@ -21,17 +23,21 @@ def get_stock_suggestions(
     include_expired: bool = Query(False, description="是否包含已过期建议"),
     limit: int = Query(10, description="返回数量限制"),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """
     获取某只股票的所有建议
 
-    返回该股票的建议列表，按时间倒序排列
+    返回该股票的建议列表，按时间倒序排列。
+    S5(2026-08-26): 仅返回本人建议 + user_id=NULL 旧数据共享行;
+    非本人的建议不下发 prompt_context/ai_response(防跨账号泄露 Prompt/AI 原文)。
     """
     suggestions = get_suggestions_for_stock(
         stock_symbol=symbol,
         stock_market=(market or "").strip().upper() or None,
         include_expired=include_expired,
         limit=limit,
+        user_id=user.id,
     )
     return suggestions
 
@@ -45,12 +51,15 @@ def get_all_latest_suggestions(
     ),
     include_expired: bool = Query(False, description="是否包含已过期建议"),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """
     获取所有股票的最新建议
 
     每只股票只返回最新的一条有效建议
-    用于持仓页面快速展示各股票的最新建议
+    用于持仓页面快速展示各股票的最新建议。
+    S5(2026-08-26): 仅统计/返回本人建议 + user_id=NULL 旧数据共享行,
+    非本人建议不下发 prompt_context/ai_response。
     """
     symbol_list = None
     if symbols:
@@ -77,6 +86,7 @@ def get_all_latest_suggestions(
         stock_symbols=symbol_list,
         stock_keys=key_list,
         include_expired=include_expired,
+        user_id=user.id,
     )
     return suggestions
 
@@ -85,11 +95,13 @@ def get_all_latest_suggestions(
 def cleanup_suggestions(
     days: int = Query(7, description="清理多少天前的记录"),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """
     清理过期的建议记录
 
-    默认清理 7 天前的记录
+    默认清理 7 天前的记录。
+    S5(2026-08-26): 只允许删除当前用户自己创建的建议(NULL/旧数据与他人数据不碰)。
     """
-    count = cleanup_expired_suggestions(days=days)
+    count = cleanup_expired_suggestions(days=days, user_id=user.id)
     return {"deleted": count}

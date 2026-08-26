@@ -9,12 +9,13 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from src.config import Settings
 from src.core.strategy_engine import get_strategy_stats, list_strategy_signals
 from src.web.api.chat import _get_ai_client
+from src.web.api.auth import get_current_user
 from src.web.database import get_db
 from src.web.models import (
     AnalysisHistory,
@@ -24,6 +25,7 @@ from src.web.models import (
     NewsTopicSnapshot,
     Position,
     Stock,
+    User,
 )
 
 router = APIRouter()
@@ -109,7 +111,11 @@ def _summarize_topics(raw_topics) -> list[dict]:
     return out
 
 
-def _load_latest_insights(db: Session) -> list[dict]:
+def _load_latest_insights(db: Session, user: User | None = None) -> list[dict]:
+    """各 agent 最新报告卡片。
+
+    S5(2026-08-26): 传入 user 时仅取本人报告 + user_id=NULL 共享行。
+    """
     out = []
     agents = (
         ("premarket_outlook", "盘前分析"),
@@ -117,10 +123,18 @@ def _load_latest_insights(db: Session) -> list[dict]:
         ("news_digest", "新闻速递"),
     )
     for agent_name, label in agents:
+        query = db.query(AnalysisHistory).filter(
+            AnalysisHistory.agent_name == agent_name
+        )
+        if user is not None:
+            query = query.filter(
+                or_(
+                    AnalysisHistory.user_id == user.id,
+                    AnalysisHistory.user_id.is_(None),
+                )
+            )
         row = (
-            db.query(AnalysisHistory)
-            .filter(AnalysisHistory.agent_name == agent_name)
-            .order_by(
+            query.order_by(
                 AnalysisHistory.analysis_date.desc(),
                 AnalysisHistory.updated_at.desc(),
                 AnalysisHistory.id.desc(),
@@ -149,6 +163,7 @@ def get_dashboard_overview(
     risk_limit: int = Query(6, ge=3, le=20),
     days: int = Query(45, ge=7, le=365),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     mkt = _to_market(market)
     market_filter = "" if mkt == "ALL" else mkt
@@ -385,7 +400,7 @@ def get_dashboard_overview(
             "by_market": stats.get("by_market") or [],
             "top_by_strategy": top_strategy_rows,
         },
-        "insights": _load_latest_insights(db),
+        "insights": _load_latest_insights(db, user=user),
     }
 
 
@@ -456,9 +471,14 @@ async def curate_today(req: CurateRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/brief")
-def get_brief(type: str = Query("eod", description="premarket | eod"), db: Session = Depends(get_db)):
+def get_brief(
+    type: str = Query("eod", description="premarket | eod"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """盘前/盘后 AI 简报(复用 premarket_outlook / daily_report agent 的最新报告)。
 
+    S5(2026-08-26): 仅返回本人报告 + user_id=NULL 共享行, 跨账号不可见。
     premarket 类型: PanWatch 自己的报告缺失时,回退读 Hermes 盘前产物
     (挂载 /app/data/premarket-reports/<日期>/premarket.txt),并解析股票标的
     (格式: 名称(6位代码))供前端快捷加自选。
@@ -467,7 +487,13 @@ def get_brief(type: str = Query("eod", description="premarket | eod"), db: Sessi
     label = "盘前分析" if type == "premarket" else "收盘复盘"
     row = (
         db.query(AnalysisHistory)
-        .filter(AnalysisHistory.agent_name == agent)
+        .filter(
+            AnalysisHistory.agent_name == agent,
+            or_(
+                AnalysisHistory.user_id == user.id,
+                AnalysisHistory.user_id.is_(None),
+            ),
+        )
         .order_by(
             AnalysisHistory.analysis_date.desc(),
             AnalysisHistory.updated_at.desc(),

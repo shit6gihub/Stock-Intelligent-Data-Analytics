@@ -12,6 +12,13 @@
 
 ### fix
 
+- 多用户隔离修复(S5, P0×5+P1×2, 4 账号并存下跨账号读/删数据):
+  - agents.py 深度分析三端点(latest/analysis/pdf)与 run 历史/进度补 user_id 过滤(NULL 兼容), trace_id 归属校验防枚举他人运行详情
+  - 建议池读端全链路隔离(suggestion_pool get_suggestions_for_stock/get_latest_suggestions 子查询按用户圈定; suggestions.py 三端点注入 user), 非本人建议不下发 prompt_context/ai_response, cleanup 限本人范围
+  - chat.py 四个上下文 helper(自选/个股/持仓/推荐问题)与 tool 调用链(_execute_tool/_run_tool_loop/_run_tool_loop_stream)全传 user, 只注入本人持仓/建议/报告/通知/自选
+  - accounts.py delete_account 补归属校验(唯一漏网的写操作, 越权返回 404 防账号探测); dashboard.py overview insights/get_brief 按 user 过滤报告
+  - 写端补 user_id 归属: tradingagents agent save_analysis/save_suggestion 从 context.user 提取, intraday scan save_suggestion 同步修复(防止建议写到 NULL 共享池被他人读到 Prompt/AI 原文)
+  - 顺手修 strategies.py apply 的 amount 字段恒为 None(行情对象字段名是 turnover, 改 getf('amount') or getf('turnover'))
 - 修复 migration boolean 类型 bug: agent_configs.visible/enabled 与 users.is_active 用 0/1 导致 PG 严格类型启动崩溃(SQLite 宽松不报错), 改 false/true
 - 修复 migration SQLite→PG 系统性兼容(生产临时库实测 101-124 全跑通): AUTOINCREMENT→SERIAL PRIMARY KEY(19处)、DATETIME→TIMESTAMP(31处)、INSERT OR IGNORE→INSERT...ON CONFLICT DO NOTHING(5处)、boolean 列 INTEGER→BOOLEAN+seed 0/1→True/False、json 列 strategy_tags LIKE 加 ::text 转型(10处)+TEXT→JSON(3处)、_m117 try/except ALTER→_add_column_if_missing(PG 失败会 abort transaction)、_m124 PG 分支加 DROP CONSTRAINT IF EXISTS 幂等
 - 修复 migration 数据回填缺列+OR REPLACE 语法(有数据临时库实测回填通过): entry_candidates 回填补 candidate_source(NOT NULL 违反)、建表 SQL 补 candidate_source/strategy_tags/is_holding_snapshot/plan_quality 列+evidence/plan/meta TEXT→JSON、INSERT OR REPLACE→INSERT...ON CONFLICT DO UPDATE(2处)
