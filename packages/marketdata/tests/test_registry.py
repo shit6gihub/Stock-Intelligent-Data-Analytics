@@ -11,8 +11,8 @@ from marketdata.registry import VENDOR_CLASSES_BY_TYPE, build_vendors
 def test_package_vendors_by_type_content():
     """内容必须与 marketdata 包当前注册的 vendor 完全一致(2026-08-09 实抓 registry 校准)。"""
     assert PACKAGE_VENDORS_BY_TYPE == {
-        "quote": frozenset({"alphavantage", "eastmoney", "sina", "tencent", "ths", "tq", "twelvedata", "yfinance"}),
-        "kline": frozenset({"eastmoney", "stooq", "tencent", "ths", "tq", "yahoo", "zhitu"}),
+        "quote": frozenset({"alphavantage", "eastmoney", "sina", "tencent", "ths", "twelvedata", "yfinance"}),
+        "kline": frozenset({"eastmoney", "stooq", "tencent", "ths", "yahoo", "zhitu"}),
         "capital_flow": frozenset({"eastmoney", "sina", "tencent"}),
         "board_capital_flow": frozenset({"ths_flow"}),
         "market_capital_flow": frozenset({"ths_market_flow"}),

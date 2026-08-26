@@ -402,25 +402,12 @@ DATA_SOURCE_SEEDS: list[dict] = [
         },
         # K线数据源
         {
-            "name": "通达信TQ K线",
-            "type": "kline",
-            "provider": "tq",
-            "config": {
-                "description": "通达信TQ本机网关(127.0.0.1:5100, 经frp隧道到小主机客户端), "
-                "前复权日K。仅CN; 隧道断开自动降级腾讯/东财。",
-            },
-            "enabled": True,
-            "priority": 0,
-            "supports_batch": False,
-            "test_symbols": ["600519", "000001", "300750"],
-        },
-        {
             "name": "腾讯K线",
             "type": "kline",
             "provider": "tencent",
             "config": {},
             "enabled": True,
-            "priority": 1,
+            "priority": 0,
             "supports_batch": False,
             "test_symbols": ["601127", "600519", "300750"],
         },
@@ -484,25 +471,12 @@ DATA_SOURCE_SEEDS: list[dict] = [
         },
         # 实时行情数据源
         {
-            "name": "通达信TQ行情",
-            "type": "quote",
-            "provider": "tq",
-            "config": {
-                "description": "通达信TQ本机网关(127.0.0.1:5100, 经frp隧道到小主机客户端), "
-                "实时快照含内外盘。仅CN; 实测延迟<30ms, 隧道断开自动降级腾讯。",
-            },
-            "enabled": True,
-            "priority": 0,
-            "supports_batch": False,
-            "test_symbols": ["600519", "000001", "300750"],
-        },
-        {
             "name": "腾讯行情",
             "type": "quote",
             "provider": "tencent",
             "config": {},
             "enabled": True,
-            "priority": 1,
+            "priority": 0,
             "supports_batch": True,
             "test_symbols": ["601127", "600519", "300750"],
         },
@@ -767,10 +741,10 @@ DATA_SOURCE_SEEDS: list[dict] = [
             "type": "quote",
             "provider": "ths",
             "config": {
-                "description": "fuyao 统一行情聚合接口(免登录,实时快照)。生产IP常被403,降级档。",
+                "description": "fuyao 统一行情聚合接口(免登录,实时快照)。",
             },
             "enabled": True,
-            "priority": 2,  # tq(0)/tencent(1) 之后: 生产实测 fuyao 常年403
+            "priority": 0,
             "supports_batch": False,
             "test_symbols": ["600519", "000001"],
         },

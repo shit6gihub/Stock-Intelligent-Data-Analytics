@@ -55,7 +55,6 @@ from marketdata.vendors.news import (
 from marketdata.vendors.northbound import HexinNorthboundVendor
 from marketdata.vendors.sina import SinaQuoteVendor
 from marketdata.vendors.tencent import TencentQuoteVendor
-from marketdata.vendors.tq import TqKlineVendor, TqQuoteVendor
 from marketdata.vendors.yfinance import YFinanceQuoteVendor
 from marketdata.vendors.alphavantage import AlphaVantageQuoteVendor
 from marketdata.vendors.twelvedata import TwelveDataQuoteVendor
@@ -64,7 +63,6 @@ from marketdata.vendors.twelvedata import TwelveDataQuoteVendor
 # (可选三方依赖如 yfinance 均在 fetch() 内部惰性 import),模块级导入不会引入重依赖。
 VENDOR_CLASSES_BY_TYPE: dict[str, dict[str, type]] = {
     "quote": {
-        "tq": TqQuoteVendor,
         "tencent": TencentQuoteVendor,
         "sina": SinaQuoteVendor,
         "eastmoney": EastmoneyQuoteVendor,
@@ -74,7 +72,6 @@ VENDOR_CLASSES_BY_TYPE: dict[str, dict[str, type]] = {
         "ths": ThsQuoteVendor,
     },
     "kline": {
-        "tq": TqKlineVendor,
         "zhitu": ZhituKlineVendor,
         "tencent": TencentKlineVendor,
         "stooq": StooqKlineVendor,
