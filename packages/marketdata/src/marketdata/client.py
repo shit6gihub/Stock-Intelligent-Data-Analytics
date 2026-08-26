@@ -24,6 +24,7 @@ from marketdata.types import (
     HotStock,
     MarginItem,
     MarketCapitalFlow,
+    MoreInfo,
     NewsArticle,
     NorthboundItem,
     Quote,
@@ -154,6 +155,13 @@ class MarketData:
             vendors=build_vendors("northbound"),
             config=config, metrics=self.metrics,
             cache=TTLCache(default_ttl_sec=60.0), default_ttl=60.0,
+        )
+        # TQ 扩展指标(104字段, get_more_info): 盘中实时, 5s TTL 与 quote 同步
+        self._more_info_engine = Engine(
+            datatype="more_info",
+            vendors=build_vendors("more_info"),
+            config=config, metrics=self.metrics,
+            cache=TTLCache(default_ttl_sec=5.0), default_ttl=5.0,
         )
 
     def klines(self, symbol: str, *, market: str, days: int = 120, min_count: int = 1) -> list:
@@ -402,6 +410,20 @@ class MarketData:
         req = Request(symbols=(), market=market)
         resp = self._northbound_engine.fetch(req)
         return resp.data or []
+
+    def more_info(self, symbols: list[str | Symbol], *, market: str | None = None) -> list[MoreInfo]:
+        """TQ 扩展指标(104字段)。批量按 symbol, 盘中实时。"""
+        groups: dict[str, list[Symbol]] = {}
+        for raw in symbols:
+            sym = raw if isinstance(raw, Symbol) else Symbol.parse(raw, market)
+            groups.setdefault(sym.market.value, []).append(sym)
+        out: list[MoreInfo] = []
+        for mkt, syms in groups.items():
+            req = Request(symbols=tuple(s.code for s in syms), market=mkt)
+            resp = self._more_info_engine.fetch(req)
+            if resp.ok and resp.data:
+                out.extend(resp.data)
+        return out
 
     def health(self) -> dict[str, dict]:
         """每个 vendor 的内存健康度快照(成功率 / p50 延迟 / 最近错误)。"""

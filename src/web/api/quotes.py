@@ -54,6 +54,7 @@ def _quote_to_response(symbol: str, market: MarketCode, quote: dict | None) -> d
             "turnover_rate": None,
             "volume_ratio": None,
             "pe_ratio": None,
+            "pb_ratio": None,
             "total_market_value": None,
             "circulating_market_value": None,
             "quote_time": None,
@@ -78,6 +79,7 @@ def _quote_to_response(symbol: str, market: MarketCode, quote: dict | None) -> d
         "turnover_rate": quote.get("turnover_rate"),
         "volume_ratio": quote.get("volume_ratio"),
         "pe_ratio": quote.get("pe_ratio"),
+        "pb_ratio": quote.get("pb_ratio"),
         "total_market_value": quote.get("total_market_value"),
         "circulating_market_value": quote.get("circulating_market_value"),
         "quote_time": quote.get("quote_time"),
@@ -123,6 +125,20 @@ async def get_quotes_batch(payload: QuoteBatchRequest):
         results.append(_quote_to_response(item.symbol, market_code, quote))
 
     return results
+
+
+@router.get("/{symbol}/more-info")
+async def get_more_info(symbol: str, market: str = "CN"):
+    """TQ 扩展指标(104字段, 含封单/竞价/连板/估值等)。仅 CN 且 TQ 在线时有数。"""
+    from src.core.marketdata_client import md_more_info
+
+    market_code = _parse_market(market)
+    if market_code != MarketCode.CN:
+        raise HTTPException(400, "more-info 仅支持 CN 市场(TQ 扩展指标)")
+    rows = await asyncio.to_thread(md_more_info, [symbol], market_code.value)
+    if not rows:
+        raise HTTPException(404, "扩展指标不存在(TQ 未连接或该股无数据)")
+    return rows[0]
 
 
 # 公司简介内存缓存(避免每次详情页都调 zhitu 耗时 1.8s)

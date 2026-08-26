@@ -88,6 +88,7 @@ def _quote_to_row(q: Quote) -> dict:
         "turnover_rate": q.turnover_rate,
         "volume_ratio": q.volume_ratio,
         "pe_ratio": q.pe_ratio,
+        "pb_ratio": q.pb_ratio,
         "circulating_market_value": q.circulating_market_value,
         "total_market_value": q.total_market_value,
         "quote_time": q.quote_time.isoformat() if q.quote_time else None,
@@ -170,3 +171,46 @@ def md_stock_data(symbols: list[str], market: str) -> list:
         high_price=q.high_price or 0.0, low_price=q.low_price or 0.0,
         prev_close=q.prev_close or 0.0,
         volume_ratio=getattr(q, "volume_ratio", None)) for q in quotes]
+
+
+def md_more_info(symbols: list[str], market: str = "CN") -> list[dict]:
+    """TQ 扩展指标(104字段), 返回 list[dict] 供 API 透传。同步。"""
+    items = get_market_data().more_info(symbols, market=market)
+    out = []
+    for m in items:
+        out.append({
+            "symbol": m.symbol,
+            "market": m.market,
+            "turnover_rate": m.turnover_rate,
+            "volume_ratio": m.volume_ratio,
+            "commission_ratio": m.commission_ratio,
+            "total_market_value": m.total_market_value,
+            "circulating_market_value": m.circulating_market_value,
+            "change_pct": m.change_pct,
+            "change_pct_5d": m.change_pct_5d,
+            "change_pct_20d": m.change_pct_20d,
+            "change_pct_ytd": m.change_pct_ytd,
+            "limit_up_amount": m.limit_up_amount,
+            "limit_up_ratio": m.limit_up_ratio,
+            "open_amount": m.open_amount,
+            "open_limit_buy": m.open_limit_buy,
+            "consecutive_limit_days": m.consecutive_limit_days,
+            "consecutive_up_days": m.consecutive_up_days,
+            "pe_dynamic": m.pe_dynamic,
+            "pe_ttm": m.pe_ttm,
+            "pb": m.pb,
+            "dividend_yield": m.dividend_yield,
+            "beta": m.beta,
+            "ma5_price": m.ma5_price,
+            "high_52w": m.high_52w,
+            "low_52w": m.low_52w,
+            "l2_tick_num": m.l2_tick_num,
+            "l2_order_num": m.l2_order_num,
+            "total_buy_vol": m.total_buy_vol,
+            "total_sell_vol": m.total_sell_vol,
+            "cancel_buy": m.cancel_buy,
+            "cancel_sell": m.cancel_sell,
+            "raw": m.raw,
+            "quote_time": m.quote_time.isoformat() if m.quote_time else None,
+        })
+    return out

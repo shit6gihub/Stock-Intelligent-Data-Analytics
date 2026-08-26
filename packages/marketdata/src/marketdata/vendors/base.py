@@ -89,3 +89,9 @@ class NorthboundVendor(Vendor):
     """北向资金 vendor:fetch 返回 list[NorthboundItem]。市场级(symbols 可空)。"""
 
     pass
+
+
+class MoreInfoVendor(Vendor):
+    """扩展指标 vendor:fetch 返回 list[MoreInfo]。按 symbol(批量, TQ get_more_info)。"""
+
+    pass

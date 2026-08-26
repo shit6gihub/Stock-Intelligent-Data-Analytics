@@ -262,6 +262,60 @@ class NorthboundItem:
 
 
 @dataclass
+class MoreInfo:
+    """通达信 get_more_info 扩展指标(104字段, 2026-08-26 P1)。TQ独有, 盘中实时。
+    核心字段强类型, 全量原始值保留在 raw 供前端透传。
+    """
+
+    symbol: str
+    market: str = "CN"
+    name: str = ""
+    # —— 行情扩展 ——
+    turnover_rate: float | None = None       # fHSL 换手率(%)
+    volume_ratio: float | None = None        # fLianB 量比
+    commission_ratio: float | None = None    # Wtb 委比(%)
+    total_market_value: float | None = None  # Zsz 总市值(亿)
+    circulating_market_value: float | None = None  # Ltsz 流通市值(亿)
+    # —— 涨幅序列 ——
+    change_pct: float | None = None          # ZAF 当日涨幅(%)
+    change_pct_5d: float | None = None       # ZAFPre5 5日涨幅
+    change_pct_20d: float | None = None      # ZAFPre20 20日涨幅
+    change_pct_ytd: float | None = None      # ZAFYear 年初至今
+    # —— 封单竞价 ——
+    limit_up_amount: float | None = None     # FCAmo 封单额(万元)
+    limit_up_ratio: float | None = None      # FCb 封成比
+    open_amount: float | None = None         # OpenAmo 开盘金额(万元)
+    open_limit_buy: float | None = None      # OpenZTBuy 竞价涨停买入金额(万元)
+    # —— 连板 ——
+    consecutive_limit_days: int | None = None  # EverZTCount 连板天
+    consecutive_up_days: int | None = None   # ConZAFDateNum 连涨天数
+    # —— 估值 ——
+    pe_dynamic: float | None = None          # DynaPE 动态市盈率
+    pe_ttm: float | None = None              # StaticPE_TTM TTM市盈率
+    pb: float | None = None                  # PB_MRQ 市净率
+    dividend_yield: float | None = None      # DYRatio 股息率(%)
+    beta: float | None = None                # BetaValue
+    # —— 其他 ——
+    ma5_price: float | None = None           # MA5Value 5日均价
+    high_52w: float | None = None            # HisHigh 52周最高
+    low_52w: float | None = None             # HisLow 52周最低
+    # —— L2 逐笔(需开通Level-2, 未开通时为 0, 盘中实时, 2026-08-26 增补) ——
+    l2_tick_num: int | None = None           # L2TicNum L2逐笔数
+    l2_order_num: int | None = None          # L2OrderNum L2委托数
+    total_buy_vol: float | None = None       # TotalBVol 总买量(手)
+    total_sell_vol: float | None = None      # TotalSVol 总卖量(手)
+    cancel_buy: float | None = None          # BCancel 撤买量(手)
+    cancel_sell: float | None = None         # SCancel 撤卖量(手)
+    zjl: float | None = None                 # Zjl 主买净额(万元)
+    zjl_hb: float | None = None              # Zjl_HB 主力净流入(万元, 同花顺口径'主力净额')
+    listed_date: str = ""                    # J_start 上市日期(来自get_stock_info时填)
+    # —— 原始透传 ——
+    raw: dict = field(default_factory=dict)  # 完整104字段原始字符串值
+    quote_time: datetime | None = None
+    timestamp: datetime = field(default_factory=datetime.now)
+
+
+@dataclass
 class FlashNews:
     """快讯(7×24,对齐 cls/sina/eastmoney 快讯流)。市场级,symbols 可空。"""
 

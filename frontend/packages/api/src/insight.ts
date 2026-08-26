@@ -18,6 +18,9 @@ export const insightApi = {
   quote: <T>(symbol: string, market: string) =>
     fetchAPI<T>(`/quotes/${encodeURIComponent(symbol)}?market=${encodeURIComponent(market)}`),
 
+  moreInfo: <T>(symbol: string, market: string) =>
+    fetchAPI<T>(`/quotes/${encodeURIComponent(symbol)}/more-info?market=${encodeURIComponent(market)}`),
+
   company: <T>(symbol: string, market: string) =>
     fetchAPI<T>(`/quotes/${encodeURIComponent(symbol)}/company?market=${encodeURIComponent(market)}`),
 

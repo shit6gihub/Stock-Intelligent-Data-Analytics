@@ -42,8 +42,47 @@ interface QuoteResponse {
   turnover_rate?: number | null
   volume_ratio?: number | null
   pe_ratio?: number | null
+  pb_ratio?: number | null
   total_market_value?: number | null
   circulating_market_value?: number | null
+}
+
+interface MoreInfoResponse {
+  symbol: string
+  market: string
+  turnover_rate: number | null
+  volume_ratio: number | null
+  commission_ratio: number | null
+  total_market_value: number | null
+  circulating_market_value: number | null
+  change_pct: number | null
+  change_pct_5d: number | null
+  change_pct_20d: number | null
+  change_pct_ytd: number | null
+  limit_up_amount: number | null
+  limit_up_ratio: number | null
+  open_amount: number | null
+  open_limit_buy: number | null
+  consecutive_limit_days: number | null
+  consecutive_up_days: number | null
+  pe_dynamic: number | null
+  pe_ttm: number | null
+  pb: number | null
+  dividend_yield: number | null
+  beta: number | null
+  ma5_price: number | null
+  high_52w: number | null
+  low_52w: number | null
+  l2_tick_num: number | null
+  l2_order_num: number | null
+  total_buy_vol: number | null
+  total_sell_vol: number | null
+  cancel_buy: number | null
+  cancel_sell: number | null
+  zjl: number | null
+  zjl_hb: number | null
+  raw: Record<string, string>
+  quote_time: string | null
 }
 
 interface CompanyInfo {
@@ -190,6 +229,46 @@ function formatMarketCap(value: number | null | undefined, market?: string): str
   if (abs >= 1e8) return `${(n / 1e8).toFixed(2)}亿元`
   if (abs >= 1e4) return `${(n / 1e4).toFixed(2)}万元`
   return `${n.toFixed(0)}元`
+}
+
+const MORE_INFO_TIPS: Record<string, string> = {
+  commission_ratio: "委比=(委买手数-委卖手数)/(委买+委卖)×100%。+100%全买盘，-100%全卖盘。+40%以上偏多，-40%以下偏空，但需结合价格位置看",
+  limit_up_amount: "封单额=涨停价上的封单资金(元)。越大越强势，封单1亿以上为强封",
+  limit_up_ratio: "封成比=封单额/流通市值。衡量封单强度，>5%为超强封板",
+  open_amount: "竞价金额=09:15-09:25集合竞价成交额。放量高开易冲高回落",
+  open_limit_buy: "竞价涨停买=竞价阶段涨停价的买单金额。预判开盘强度",
+  consecutive_limit_days: "连板天数=连续涨停天数。≥3板为强势连板，注意炸板风险",
+  consecutive_up_days: "连涨天数=连续上涨天数（含非涨停）。看趋势延续性",
+  change_pct_5d: "5日涨幅=近5交易日累计涨跌。>15%短期过热，<-10%超跌",
+  change_pct_20d: "20日涨幅=近月累计。看中期趋势",
+  change_pct_ytd: "年初至今=今年以来累计。看年内主升/主跌",
+  pe_dynamic: "动态PE=股价/预估每股收益。越低越便宜，<15低估，>40高估，结合行业对比",
+  pb: "市净率=股价/每股净资产。<2破净附近，>5品牌溢价高",
+  dividend_yield: "股息率=年分红/股价。>3%媲美理财，适合红利策略",
+  beta: "Beta=相对大盘弹性。1跟大盘同步，>1.2更敏感，<0.8更稳健",
+  ma5_price: "5日均价=近5日收盘均值。站上偏多，跌破偏空",
+  high_52w_low_52w: "52周高/低=近一年最高/最低。接近新高压力大，接近新低有反弹可能",
+  l2_tick_num: "L2逐笔数=Level2逐笔成交笔数（需L2权限）。数值大说明交投活跃",
+  l2_order_num: "L2委托数=Level2委托队列笔数。看盘口深度",
+  total_buy_vol: "总买量=全天委托买入总量（手）。与总卖量对比看多空力量",
+  total_sell_vol: "总卖量=全天委托卖出总量。与总买量对比，卖>买为抛压重",
+  cancel_buy: "撤买=撤销的买单数。撤单多为假单诱多，需警惕虚假买盘",
+  cancel_sell: "撤卖=撤销的卖单数。撤卖多为假单诱空或洗盘",
+  zjl: "主买净额=主动买入净额（万元，=主动买-主动卖）。正为多方占优，负为空方占优",
+  zjl_hb: "主力净流入=主力净额（万元，同花顺口径）。衡量大单/主力资金整体方向，持续为正代表主力建仓",
+}
+
+function InfoTip({ k }: { k: string }) {
+  const tip = MORE_INFO_TIPS[k]
+  if (!tip) return null
+  return (
+    <span
+      className="ml-1 inline-flex h-3 w-3 items-center justify-center rounded-full bg-muted-foreground/15 text-[8px] text-muted-foreground cursor-help"
+      title={tip}
+    >
+      ?
+    </span>
+  )
 }
 
 function formatTime(isoTime?: string): string {
@@ -617,6 +696,8 @@ export default function StockInsightModal(props: {
     20
   )
   const [quote, setQuote] = useState<QuoteResponse | null>(null)
+  const [moreInfo, setMoreInfo] = useState<MoreInfoResponse | null>(null)
+  const [moreInfoLoading, setMoreInfoLoading] = useState(false)
   const [companyInfo, setCompanyInfo] = useState<CompanyInfo | null>(null)
   const [companyLoading, setCompanyLoading] = useState(false)
   // 基本面明细(龙虎榜/股东户数/分红/两融/事件日历): 懒加载 + 静默降级
@@ -664,6 +745,19 @@ export default function StockInsightModal(props: {
     if (!symbol) return
     const data = await insightApi.quote<QuoteResponse>(symbol, market)
     setQuote(data || null)
+  }, [symbol, market])
+
+  const loadMoreInfo = useCallback(async () => {
+    if (!symbol) return
+    setMoreInfoLoading(true)
+    try {
+      const data = await insightApi.moreInfo<MoreInfoResponse>(symbol, market)
+      setMoreInfo(data || null)
+    } catch {
+      setMoreInfo(null)
+    } finally {
+      setMoreInfoLoading(false)
+    }
   }, [symbol, market])
 
   const loadCompany = useCallback(async () => {
@@ -963,29 +1057,29 @@ export default function StockInsightModal(props: {
     if (!symbol) return
     setLoading(true)
     try {
-      await Promise.allSettled([loadQuote(), loadKline(), loadMiniKline(), loadHoldingAgg()])
+      await Promise.allSettled([loadQuote(), loadMoreInfo(), loadKline(), loadMiniKline(), loadHoldingAgg()])
     } catch (e) {
       toast(e instanceof Error ? e.message : '加载失败', 'error')
     } finally {
       setLoading(false)
     }
-  }, [symbol, loadQuote, loadKline, loadMiniKline, loadHoldingAgg, toast])
+  }, [symbol, loadQuote, loadMoreInfo, loadKline, loadMiniKline, loadHoldingAgg, toast])
 
   const handleRefreshAll = useCallback(async () => {
     if (!symbol) return
     setLoading(true)
     try {
-      await Promise.allSettled([loadQuote(), loadKline(), loadMiniKline(), loadSuggestions(), loadNews(), loadAnnouncements(), loadHoldingAgg(), loadReports(), loadFundamentals()])
+      await Promise.allSettled([loadQuote(), loadMoreInfo(), loadKline(), loadMiniKline(), loadSuggestions(), loadNews(), loadAnnouncements(), loadHoldingAgg(), loadReports(), loadFundamentals()])
     } catch (e) {
       toast(e instanceof Error ? e.message : '加载失败', 'error')
     } finally {
       setLoading(false)
     }
-  }, [symbol, loadQuote, loadKline, loadMiniKline, loadSuggestions, loadNews, loadAnnouncements, loadHoldingAgg, loadReports, loadFundamentals, toast])
+  }, [symbol, loadQuote, loadMoreInfo, loadKline, loadMiniKline, loadSuggestions, loadNews, loadAnnouncements, loadHoldingAgg, loadReports, loadFundamentals, toast])
 
   const refreshForAuto = useCallback(async () => {
     if (!symbol) return
-    const tasks: Promise<any>[] = [loadQuote(), loadHoldingAgg()]
+    const tasks: Promise<any>[] = [loadQuote(), loadMoreInfo(), loadHoldingAgg()]
     if (tab === 'overview' || tab === 'kline') {
       tasks.push(loadKline(), loadMiniKline({ silent: true }))
     }
@@ -1008,7 +1102,7 @@ export default function StockInsightModal(props: {
       tasks.push(loadFundamentals())
     }
     await Promise.allSettled(tasks)
-  }, [symbol, tab, loadQuote, loadHoldingAgg, loadKline, loadMiniKline, loadSuggestions, loadNews, loadAnnouncements, loadReports, loadCompany, loadFundamentals])
+  }, [symbol, tab, loadQuote, loadMoreInfo, loadHoldingAgg, loadKline, loadMiniKline, loadSuggestions, loadNews, loadAnnouncements, loadReports, loadCompany, loadFundamentals])
 
   const loadDeepResult = useCallback(async () => {
     if (!symbol) return
@@ -1045,6 +1139,7 @@ export default function StockInsightModal(props: {
     setDeepHistory(null)
     setFundamentals(null)
     setFundamentalsLoaded(false)
+    setMoreInfo(null)
     loadCore()
   }, [props.open, symbol, market, loadCore])
 
@@ -1876,6 +1971,51 @@ export default function StockInsightModal(props: {
                     )}
                   </div>
                 </div>
+
+                {/* TQ 扩展指标 · 104字段精简18项（委比/封单/竞价/连板/涨幅/估值） */}
+                {moreInfo && (
+                  <div className="card p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-[11px] text-muted-foreground">扩展指标 · TQ实时</div>
+                      <div className="text-[10px] text-muted-foreground">{moreInfoLoading ? '更新中…' : moreInfo.quote_time ? formatTime(moreInfo.quote_time) : ''}</div>
+                    </div>
+                    <div className="grid grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-2 text-[11px]">
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">委比<InfoTip k="commission_ratio" /></div><div className="font-mono">{moreInfo.commission_ratio != null ? `${Number(moreInfo.commission_ratio).toFixed(2)}%` : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">封单额<InfoTip k="limit_up_amount" /></div><div className="font-mono">{moreInfo.limit_up_amount != null && moreInfo.limit_up_amount !== 0 ? `${(moreInfo.limit_up_amount/10000).toFixed(2)}亿` : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">封成比<InfoTip k="limit_up_ratio" /></div><div className="font-mono">{moreInfo.limit_up_ratio != null ? Number(moreInfo.limit_up_ratio).toFixed(2) : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">竞价金额<InfoTip k="open_amount" /></div><div className="font-mono">{moreInfo.open_amount != null && moreInfo.open_amount !== 0 ? `${(moreInfo.open_amount/10000).toFixed(2)}亿` : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">竞价涨停买<InfoTip k="open_limit_buy" /></div><div className="font-mono">{moreInfo.open_limit_buy != null && moreInfo.open_limit_buy !== 0 ? `${(moreInfo.open_limit_buy/10000).toFixed(2)}亿` : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">连板天<InfoTip k="consecutive_limit_days" /></div><div className="font-mono">{moreInfo.consecutive_limit_days ?? '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">连涨天<InfoTip k="consecutive_up_days" /></div><div className="font-mono">{moreInfo.consecutive_up_days ?? '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">5日涨幅<InfoTip k="change_pct_5d" /></div><div className={`font-mono ${moreInfo.change_pct_5d != null && moreInfo.change_pct_5d>0 ? 'text-rose-500' : moreInfo.change_pct_5d!=null&&moreInfo.change_pct_5d<0 ? 'text-emerald-500' : ''}`}>{moreInfo.change_pct_5d != null ? `${moreInfo.change_pct_5d>0?'+':''}${moreInfo.change_pct_5d.toFixed(2)}%` : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">20日涨幅<InfoTip k="change_pct_20d" /></div><div className={`font-mono ${moreInfo.change_pct_20d != null && moreInfo.change_pct_20d>0 ? 'text-rose-500' : moreInfo.change_pct_20d!=null&&moreInfo.change_pct_20d<0 ? 'text-emerald-500' : ''}`}>{moreInfo.change_pct_20d != null ? `${moreInfo.change_pct_20d>0?'+':''}${moreInfo.change_pct_20d.toFixed(2)}%` : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">年初至今<InfoTip k="change_pct_ytd" /></div><div className={`font-mono ${moreInfo.change_pct_ytd != null && moreInfo.change_pct_ytd>0 ? 'text-rose-500' : moreInfo.change_pct_ytd!=null&&moreInfo.change_pct_ytd<0 ? 'text-emerald-500' : ''}`}>{moreInfo.change_pct_ytd != null ? `${moreInfo.change_pct_ytd>0?'+':''}${moreInfo.change_pct_ytd.toFixed(2)}%` : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">动态PE<InfoTip k="pe_dynamic" /></div><div className="font-mono">{moreInfo.pe_dynamic != null ? Number(moreInfo.pe_dynamic).toFixed(2) : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">市净率<InfoTip k="pb" /></div><div className="font-mono">{moreInfo.pb != null ? Number(moreInfo.pb).toFixed(2) : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">股息率<InfoTip k="dividend_yield" /></div><div className="font-mono">{moreInfo.dividend_yield != null ? `${Number(moreInfo.dividend_yield).toFixed(2)}%` : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">Beta<InfoTip k="beta" /></div><div className="font-mono">{moreInfo.beta != null ? Number(moreInfo.beta).toFixed(2) : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">5日均价<InfoTip k="ma5_price" /></div><div className="font-mono">{moreInfo.ma5_price != null ? formatNumber(moreInfo.ma5_price) : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">52周高/低<InfoTip k="high_52w_low_52w" /></div><div className="font-mono text-[10px]">{moreInfo.high_52w != null ? Number(moreInfo.high_52w).toFixed(2) : '--'} / {moreInfo.low_52w != null ? Number(moreInfo.low_52w).toFixed(2) : '--'}</div></div>
+                    </div>
+                    {/* L2 逐笔（需Level2，开通后实时） */}
+                    <div className="mt-3 pt-3 border-t border-border/40 grid grid-cols-3 md:grid-cols-6 gap-2 text-[11px]">
+                      <div className="rounded bg-amber-500/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">L2逐笔数<InfoTip k="l2_tick_num" /></div><div className="font-mono">{moreInfo.l2_tick_num != null ? Number(moreInfo.l2_tick_num).toLocaleString() : '--'}</div></div>
+                      <div className="rounded bg-amber-500/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">L2委托数<InfoTip k="l2_order_num" /></div><div className="font-mono">{moreInfo.l2_order_num != null ? Number(moreInfo.l2_order_num).toLocaleString() : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">总买量<InfoTip k="total_buy_vol" /></div><div className="font-mono">{moreInfo.total_buy_vol != null ? `${(moreInfo.total_buy_vol/100).toFixed(0)}手` : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">总卖量<InfoTip k="total_sell_vol" /></div><div className="font-mono">{moreInfo.total_sell_vol != null ? `${(moreInfo.total_sell_vol/100).toFixed(0)}手` : '--'}</div></div>
+                      <div className="rounded bg-rose-500/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">撤买<InfoTip k="cancel_buy" /></div><div className="font-mono">{moreInfo.cancel_buy != null ? `${(moreInfo.cancel_buy).toFixed(0)}` : '--'}</div></div>
+                      <div className="rounded bg-emerald-500/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">撤卖<InfoTip k="cancel_sell" /></div><div className="font-mono">{moreInfo.cancel_sell != null ? `${(moreInfo.cancel_sell).toFixed(0)}` : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">主力净流入<InfoTip k="zjl_hb" /></div><div className={`font-mono ${moreInfo.zjl_hb != null ? (moreInfo.zjl_hb >= 0 ? 'text-red-600' : 'text-green-700') : ''}`}>{moreInfo.zjl_hb != null ? `${(moreInfo.zjl_hb).toFixed(0)}万` : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground flex items-center">主买净额<InfoTip k="zjl" /></div><div className={`font-mono ${moreInfo.zjl != null ? (moreInfo.zjl >= 0 ? 'text-red-600' : 'text-green-700') : ''}`}>{moreInfo.zjl != null ? `${(moreInfo.zjl).toFixed(0)}万` : '--'}</div></div>
+                    </div>
+                    {moreInfo.total_buy_vol != null && moreInfo.total_sell_vol != null && (moreInfo.total_buy_vol + moreInfo.total_sell_vol) > 0 && (
+                      <div className="mt-2 h-1.5 w-full flex rounded overflow-hidden bg-muted">
+                        <div className="bg-rose-500" style={{width: `${(moreInfo.total_buy_vol / (moreInfo.total_buy_vol + moreInfo.total_sell_vol) * 100).toFixed(1)}%`}} />
+                        <div className="bg-emerald-500 flex-1" />
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-stretch">
                   <div className="card p-4 h-full flex flex-col">

@@ -2,6 +2,14 @@
 
 ## 2026-08-26
 
+### feature
+
+- 通达信 TQ 数据源回归开源仓库(撤销"移出私有维护"): tq.py 重新入 git, server.py/registry 重新注册 TQ 为 quote/kline 主源(priority 0), 隧道断开自动降级腾讯/东财
+- MoreInfo 扩展指标透传(104字段): types.py 新增 MoreInfo 强类型 + TqMoreInfoVendor + /quotes/{symbol}/more-info 端点 + 前端洞察卡片(封成比/封单额/撤单量/逐笔笔数等)
+- L2 主力净额字段: MoreInfo 新增 zjl(主买净额)/zjl_hb(主力净流入), 对齐同花顺口径, 前端卡片展示
+- 通达信本地数据解析器 src/collectors/tdx_local_parser.py: 北向分券商持仓(signals_sys_*.dat) + 概念归属(extern_sys.txt), 含 11 单测
+- L2AMO 分档资金 scripts/l2_amo_formula.py: 系统内置 ZJBY 公式输出超/大/中/小 4 档净额, 与 get_more_info Zjl_HB 精确对齐(误差<0.01)
+
 ### update
 
 - TQ 数据源(vendors/tq.py + registry/seed 注册)移出开源仓库,转私有维护(依赖个人小主机通达信网关,他人无法复现)。生产环境保留:文件仍在生产容器与本地工作区,后续 TQ 迭代只在私有副本进行,不再进 git。仓库内 quote/kline 路由回到 腾讯→ths→新浪/智兔 主链。
