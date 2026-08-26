@@ -14,6 +14,7 @@
 
 - 修复 migration boolean 类型 bug: agent_configs.visible/enabled 与 users.is_active 用 0/1 导致 PG 严格类型启动崩溃(SQLite 宽松不报错), 改 false/true
 - 修复 migration SQLite→PG 系统性兼容(生产临时库实测 101-124 全跑通): AUTOINCREMENT→SERIAL PRIMARY KEY(19处)、DATETIME→TIMESTAMP(31处)、INSERT OR IGNORE→INSERT...ON CONFLICT DO NOTHING(5处)、boolean 列 INTEGER→BOOLEAN+seed 0/1→True/False、json 列 strategy_tags LIKE 加 ::text 转型(10处)+TEXT→JSON(3处)、_m117 try/except ALTER→_add_column_if_missing(PG 失败会 abort transaction)、_m124 PG 分支加 DROP CONSTRAINT IF EXISTS 幂等
+- 修复 migration 数据回填缺列+OR REPLACE 语法(有数据临时库实测回填通过): entry_candidates 回填补 candidate_source(NOT NULL 违反)、建表 SQL 补 candidate_source/strategy_tags/is_holding_snapshot/plan_quality 列+evidence/plan/meta TEXT→JSON、INSERT OR REPLACE→INSERT...ON CONFLICT DO UPDATE(2处)
 
 ### update
 

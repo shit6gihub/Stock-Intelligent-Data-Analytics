@@ -461,6 +461,10 @@ CREATE TABLE IF NOT EXISTS entry_candidates (
   action_label TEXT NOT NULL DEFAULT '观望',
   signal TEXT DEFAULT '',
   reason TEXT DEFAULT '',
+  candidate_source TEXT NOT NULL DEFAULT 'watchlist',
+  strategy_tags JSON DEFAULT '[]',
+  is_holding_snapshot BOOLEAN DEFAULT FALSE,
+  plan_quality INTEGER DEFAULT 0,
   entry_low REAL,
   entry_high REAL,
   stop_loss REAL,
@@ -469,9 +473,9 @@ CREATE TABLE IF NOT EXISTS entry_candidates (
   source_agent TEXT DEFAULT '',
   source_suggestion_id INTEGER,
   source_trace_id TEXT DEFAULT '',
-  evidence TEXT DEFAULT '[]',
-  plan TEXT DEFAULT '{}',
-  meta TEXT DEFAULT '{}',
+  evidence JSON DEFAULT '[]',
+  plan JSON DEFAULT '{}',
+  meta JSON DEFAULT '{}',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT uq_entry_candidate_stock_date UNIQUE(stock_symbol, stock_market, snapshot_date)
@@ -498,7 +502,7 @@ CREATE TABLE IF NOT EXISTS entry_candidates (
 INSERT INTO entry_candidates (
   stock_symbol, stock_market, stock_name, snapshot_date,
   status, score, action, action_label, signal, reason,
-  source_agent, source_suggestion_id, evidence, plan, meta
+  candidate_source, source_agent, source_suggestion_id, evidence, plan, meta
 )
 SELECT
   s.stock_symbol,
@@ -520,6 +524,7 @@ SELECT
   COALESCE(s.action_label, '观望'),
   COALESCE(s.signal, ''),
   COALESCE(s.reason, ''),
+  'watchlist',
   COALESCE(s.agent_name, ''),
   s.id,
   '[]',
@@ -1258,7 +1263,7 @@ VALUES(
 
     regime_insert = text(
         """
-INSERT OR REPLACE INTO market_regime_snapshots(
+INSERT INTO market_regime_snapshots(
   snapshot_date, market, regime, regime_score, confidence, breadth_up_pct,
   avg_change_pct, volatility_pct, active_ratio, sample_size, meta, updated_at
 )
@@ -1266,11 +1271,22 @@ VALUES(
   :snapshot_date, :market, :regime, :regime_score, :confidence, :breadth_up_pct,
   :avg_change_pct, :volatility_pct, :active_ratio, :sample_size, :meta, CURRENT_TIMESTAMP
 )
+ON CONFLICT (snapshot_date, market) DO UPDATE SET
+  regime = EXCLUDED.regime,
+  regime_score = EXCLUDED.regime_score,
+  confidence = EXCLUDED.confidence,
+  breadth_up_pct = EXCLUDED.breadth_up_pct,
+  avg_change_pct = EXCLUDED.avg_change_pct,
+  volatility_pct = EXCLUDED.volatility_pct,
+  active_ratio = EXCLUDED.active_ratio,
+  sample_size = EXCLUDED.sample_size,
+  meta = EXCLUDED.meta,
+  updated_at = EXCLUDED.updated_at
 """
     )
     risk_insert = text(
         """
-INSERT OR REPLACE INTO portfolio_risk_snapshots(
+INSERT INTO portfolio_risk_snapshots(
   snapshot_date, market, total_signals, active_signals, held_signals, unheld_signals,
   high_risk_ratio, concentration_top5, avg_rank_score, risk_level, meta, updated_at
 )
@@ -1278,6 +1294,17 @@ VALUES(
   :snapshot_date, :market, :total_signals, :active_signals, :held_signals, :unheld_signals,
   :high_risk_ratio, :concentration_top5, :avg_rank_score, :risk_level, :meta, CURRENT_TIMESTAMP
 )
+ON CONFLICT (snapshot_date, market) DO UPDATE SET
+  total_signals = EXCLUDED.total_signals,
+  active_signals = EXCLUDED.active_signals,
+  held_signals = EXCLUDED.held_signals,
+  unheld_signals = EXCLUDED.unheld_signals,
+  high_risk_ratio = EXCLUDED.high_risk_ratio,
+  concentration_top5 = EXCLUDED.concentration_top5,
+  avg_rank_score = EXCLUDED.avg_rank_score,
+  risk_level = EXCLUDED.risk_level,
+  meta = EXCLUDED.meta,
+  updated_at = EXCLUDED.updated_at
 """
     )
 
