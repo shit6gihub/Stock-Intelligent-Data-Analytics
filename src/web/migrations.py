@@ -2142,15 +2142,16 @@ def run_versioned_migrations(engine: Engine) -> None:
         _ensure_schema_table(conn)
 
     for m in MIGRATIONS:
-        with engine.begin() as conn:
-            _ensure_schema_table(conn)
-            rec = _get_applied(conn, m.version)
-            if rec and rec[2] == 1 and rec[1] == m.checksum:
-                continue
+        try:
+            with engine.begin() as conn:
+                _ensure_schema_table(conn)
+                rec = _get_applied(conn, m.version)
+                if rec and rec[2] == 1 and rec[1] == m.checksum:
+                    continue
 
-            conn.execute(
-                text(
-                    """
+                conn.execute(
+                    text(
+                        """
 INSERT INTO schema_migrations(version, name, checksum, success, error)
 VALUES(:version, :name, :checksum, 0, '')
 ON CONFLICT(version) DO UPDATE SET
@@ -2159,16 +2160,15 @@ ON CONFLICT(version) DO UPDATE SET
   success = 0,
   error = ''
 """
-                ),
-                {
-                    "version": m.version,
-                    "name": m.name,
-                    "checksum": m.checksum,
-                },
-            )
-            logger.info("Applying migration v%s: %s", m.version, m.name)
+                    ),
+                    {
+                        "version": m.version,
+                        "name": m.name,
+                        "checksum": m.checksum,
+                    },
+                )
+                logger.info("Applying migration v%s: %s", m.version, m.name)
 
-            try:
                 m.runner(conn)
                 conn.execute(
                     text(
@@ -2180,20 +2180,41 @@ SET success = 1,
 WHERE version = :version
 """
                     ),
-                    {"version": m.version},
+                    {
+                        "version": m.version,
+                    },
                 )
-            except Exception as exc:
-                conn.execute(
-                    text(
-                        """
-UPDATE schema_migrations
-SET success = 0,
-    error = :error,
-    applied_at = CURRENT_TIMESTAMP
-WHERE version = :version
+        except Exception as exc:
+            # 2026-08-27 fix (5+1 评审 B 轨): PG 下 m.runner 抛异常后原事务已进入
+            # aborted 状态, 在同一事务里写 success=0 必报 "current transaction is
+            # aborted", 失败记录写不进、原始错误被掩盖、启动持续失败。
+            # 修法: 失败记录改用**新连接/新事务**写入(原事务回滚后此前
+            # success=0 的 INSERT 也不复存在, 故用 INSERT ... ON CONFLICT
+            # 保证失败行一定落库); 最后 re-raise 原始异常。
+            try:
+                with engine.begin() as conn2:
+                    _ensure_schema_table(conn2)
+                    conn2.execute(
+                        text(
+                            """
+INSERT INTO schema_migrations(version, name, checksum, success, error, applied_at)
+VALUES(:version, :name, :checksum, 0, :error, CURRENT_TIMESTAMP)
+ON CONFLICT(version) DO UPDATE SET
+  success = 0,
+  error = excluded.error,
+  applied_at = CURRENT_TIMESTAMP
 """
-                    ),
-                    {"version": m.version, "error": str(exc)[:2000]},
+                        ),
+                        {
+                            "version": m.version,
+                            "name": m.name,
+                            "checksum": m.checksum,
+                            "error": str(exc)[:2000],
+                        },
+                    )
+            except Exception as log_exc:
+                logger.error(
+                    "Migration v%s 失败记录写入也失败: %s", m.version, log_exc
                 )
-                logger.exception("Migration v%s failed: %s", m.version, m.name)
-                raise
+            logger.exception("Migration v%s failed: %s", m.version, m.name)
+            raise

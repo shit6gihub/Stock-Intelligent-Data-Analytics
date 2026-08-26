@@ -155,9 +155,20 @@ class KlineBackfillScheduler:
         return _backfill_in_worker(BACKFILL_DAYS)
 
     def schedule_one_off(self, symbol: str, market: str, delay_seconds: int = 60) -> None:
-        # 2026-08-17 v0.2.65: 发布任务到 Redis Stream (fire-and-forget, 不阻塞主流程)
+        """加股快速 backfill(2026-08-17):
+        - 用户加自选股后 60 秒延迟入库
+        - 60 秒延迟合并 1 分钟内多次 add(用户连续点不会重复拉)
+        - 失败静默 — 18:00 cron 兜底
+
+        2026-08-27 fix (5+1 评审 B 轨): 原实现把任务发布到 Redis Stream, 但全仓库
+        没有任何消费者(见 streams.py 注释 'consumer: 待定'), 消息从不执行; 且
+        APScheduler 兜底块被错误缩进嵌在 except 内, 只在 publish 抛异常时触发
+        (Redis 不可用时 publish 优雅返回 None, 几乎不抛) → 兜底实际是死代码。
+        现改为: 无条件调度 APScheduler 兜底(当前唯一真实入库路径), Stream 发布
+        保留作为未来 worker 的预留。
+        """
+        # 1) 发布到 Redis Stream 预留(暂无消费者, fire-and-forget 不阻塞主流程)
         try:
-            import asyncio
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(publish_kline_backfill(symbol, market, days=800))
@@ -166,47 +177,42 @@ class KlineBackfillScheduler:
         except Exception as e:
             logger.debug(f"[kline_backfill] stream publish skipped: {e}")
 
+        # 2) 无条件调度 APScheduler 兜底(当前唯一真实入库路径)
+        # APScheduler 跑在它自己的后台线程(没有 asyncio loop)
+        # 但 server.py 跑在 uvicorn 的 asyncio loop 里
+        # 所以要从 apscheduler 线程 → uvicorn 线程用 call_soon_threadsafe
+        import server as _server_mod
+        from datetime import timedelta
 
-            """加股快速 backfill(2026-08-17):
-            - 用户加自选股后 60 秒延迟入库
-            - 60 秒延迟合并 1 分钟内多次 add(用户连续点不会重复拉)
-            - 失败静默 — 18:00 cron 兜底
-            """
-            # APScheduler 跑在它自己的后台线程(没有 asyncio loop)
-            # 但 server.py 跑在 uvicorn 的 asyncio loop 里
-            # 所以要从 apscheduler 线程 → uvicorn 线程用 run_coroutine_threadsafe
-            import server as _server_mod
-
-            run_date = datetime.now(timezone.utc).replace(microsecond=0)
-            from datetime import timedelta
-            run_date = run_date + timedelta(seconds=delay_seconds)
-
-            job_id = f"kline_backfill_oneoff_{symbol}_{market}"
-            try:
-                loop = _server_mod._kline_oneoff_loop
-                if loop is None:
-                    logger.warning(
-                        f"[kline oneoff] server.py lifespan 未设置 _kline_oneoff_loop, "
-                        f"跳过 {symbol}.{market}(18:00 cron 兜底)"
-                    )
-                    return
-                self.scheduler.add_job(
-                    lambda: loop.call_soon_threadsafe(
-                        asyncio.ensure_future,
-                        self._backfill_one_symbol(symbol, market),
-                    ),
-                    "date",
-                    run_date=run_date,
-                    id=job_id,
-                    replace_existing=True,
-                    misfire_grace_time=300,
+        run_date = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(
+            seconds=delay_seconds
+        )
+        job_id = f"kline_backfill_oneoff_{symbol}_{market}"
+        try:
+            loop = _server_mod._kline_oneoff_loop
+            if loop is None:
+                logger.warning(
+                    f"[kline oneoff] server.py lifespan 未设置 _kline_oneoff_loop, "
+                    f"跳过 {symbol}.{market}(18:00 cron 兜底)"
                 )
-                logger.info(
-                    f"[kline oneoff] 已调度 {symbol}.{market} "
-                    f"在 {run_date.strftime('%H:%M:%S')} UTC 拉取"
-                )
-            except Exception as e:
-                logger.warning(f"[kline oneoff] 调度失败 {symbol}.{market}: {e}")
+                return
+            self.scheduler.add_job(
+                lambda: loop.call_soon_threadsafe(
+                    asyncio.ensure_future,
+                    self._backfill_one_symbol(symbol, market),
+                ),
+                "date",
+                run_date=run_date,
+                id=job_id,
+                replace_existing=True,
+                misfire_grace_time=300,
+            )
+            logger.info(
+                f"[kline oneoff] 已调度 {symbol}.{market} "
+                f"在 {run_date.strftime('%H:%M:%S')} UTC 拉取"
+            )
+        except Exception as e:
+            logger.warning(f"[kline oneoff] 调度失败 {symbol}.{market}: {e}")
 
     async def _backfill_one_symbol(self, symbol: str, market: str):
         """加股 60s 后: 拉这 1 只股的 800 天 K线"""

@@ -14,6 +14,8 @@ import threading
 import time
 from collections import defaultdict
 
+from fastapi import WebSocketDisconnect
+
 logger = logging.getLogger(__name__)
 
 # 订阅者集合: {id: asyncio.Queue}(同一 event loop 内使用)
@@ -23,6 +25,7 @@ _next_id = 0
 
 # 聚合器状态
 _agg_running = False
+_agg_lock = threading.Lock()  # 2026-08-27 fix: check-then-set 原子化, 防并发首连起双聚合器线程
 _agg_interval_s = 5.0
 _last_snapshot: dict = {}
 
@@ -67,11 +70,16 @@ def _broadcast(payload: dict):
 
 
 def _ensure_aggregator():
-    """确保聚合器线程已启动(幂等)。"""
+    """确保聚合器线程已启动(幂等)。
+
+    2026-08-27 fix (5+1 评审 B 轨): 原 check-then-set 非原子, 并发首连可启动
+    两个聚合器线程重复拉行情+广播; 加锁包住检查与置位。
+    """
     global _agg_running
-    if _agg_running:
-        return
-    _agg_running = True
+    with _agg_lock:
+        if _agg_running:
+            return
+        _agg_running = True
     t = threading.Thread(target=_aggregator_loop, name="quote-stream-agg", daemon=True)
     t.start()
 
@@ -198,19 +206,22 @@ async def websocket_quote_handler(websocket):
     try:
         while True:
             payload = await q.get()
-            await websocket.send_text(json.dumps(payload, ensure_ascii=False))
-    except Exception:
+            try:
+                await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                # 2026-08-27 fix (5+1 评审 B 轨): 区分断开与发送异常, 不再全部静默吞
+                logger.debug(f"[quote_stream] send failed: {e}")
+                break
+    except WebSocketDisconnect:
         pass
-
-    await websocket.accept()
-    sid, q = subscribe()
-    try:
-        while True:
-            payload = await q.get()
-            await websocket.send_text(json.dumps(payload, ensure_ascii=False))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[quote_stream] 推送循环异常: {e}")
     finally:
+        # 2026-08-27 fix: 删除下方重复的 accept+subscribe 块(复制粘贴残留:
+        # 已 accept 的连接二次 accept 必抛, 且首次 subscribe 的队列永不退订);
+        # 无论何种退出路径都退订, 保证断连不泄漏订阅队列。
         unsubscribe(sid)
 
 

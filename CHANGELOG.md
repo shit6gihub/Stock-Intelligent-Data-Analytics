@@ -22,6 +22,11 @@
 - 修复 migration boolean 类型 bug: agent_configs.visible/enabled 与 users.is_active 用 0/1 导致 PG 严格类型启动崩溃(SQLite 宽松不报错), 改 false/true
 - 修复 migration SQLite→PG 系统性兼容(生产临时库实测 101-124 全跑通): AUTOINCREMENT→SERIAL PRIMARY KEY(19处)、DATETIME→TIMESTAMP(31处)、INSERT OR IGNORE→INSERT...ON CONFLICT DO NOTHING(5处)、boolean 列 INTEGER→BOOLEAN+seed 0/1→True/False、json 列 strategy_tags LIKE 加 ::text 转型(10处)+TEXT→JSON(3处)、_m117 try/except ALTER→_add_column_if_missing(PG 失败会 abort transaction)、_m124 PG 分支加 DROP CONSTRAINT IF EXISTS 幂等
 - 修复 migration 数据回填缺列+OR REPLACE 语法(有数据临时库实测回填通过): entry_candidates 回填补 candidate_source(NOT NULL 违反)、建表 SQL 补 candidate_source/strategy_tags/is_holding_snapshot/plan_quality 列+evidence/plan/meta TEXT→JSON、INSERT OR REPLACE→INSERT...ON CONFLICT DO UPDATE(2处)
+- 技术性修复(5+1 评审 B 轨, 4 项):
+  - migrations.py run_versioned_migrations 失败记录事务毒化: PG 下 runner 抛异常后同事务写 success=0 必报 current transaction is aborted, 失败记录写不进/原始错误被掩盖/启动持续失败 → 失败记录改用新连接新事务 INSERT...ON CONFLICT 写入后 re-raise 原始异常(幂等语义不变)
+  - database.py 四处 last_insert_rowid()(SQLite 专属, PG 下报 function does not exist 启动即崩) → 新增 _insert_returning_id 方言无关助手: PG 走 INSERT...RETURNING id, SQLite 保留 last_insert_rowid
+  - kline_backfill_scheduler.py schedule_one_off: APScheduler 兜底块原错误缩进嵌在 except 内(只在 Stream publish 抛异常时触发, 实际是死代码)→ 移到正常流程无条件调度; 删除死字符串字面量; Stream 发布保留作未来 worker 预留
+  - quote_stream.py WebSocket 订阅泄漏: 删除重复的 accept+subscribe 块(复制粘贴残留, 二次 accept 必抛且首次订阅队列永不退订, 每次断连泄漏一个队列); send 失败区分 WebSocketDisconnect 与发送异常; _ensure_aggregator check-then-set 加 threading.Lock 防并发首连起双聚合器线程
 
 ### update
 

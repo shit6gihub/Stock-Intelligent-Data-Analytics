@@ -419,6 +419,19 @@ def _migrate(engine):
             conn.commit()
 
 
+def _insert_returning_id(conn, insert_sql: str, params: dict) -> int:
+    """插入新行后方言无关地取自增主键 id。
+
+    2026-08-27 fix (5+1 评审 B 轨): ``SELECT last_insert_rowid()`` 是 SQLite 专属,
+    PG 下报 ``function last_insert_rowid() does not exist`` 触发即启动失败。
+    PG 用 INSERT ... RETURNING id; SQLite 保留 last_insert_rowid(全版本兼容)。
+    """
+    if IS_PG:
+        return conn.execute(text(f"{insert_sql} RETURNING id"), params).scalar()
+    conn.execute(text(insert_sql), params)
+    return conn.execute(text("SELECT last_insert_rowid()")).scalar()
+
+
 def _migrate_old_providers(engine):
     """如果存在旧的 ai_providers 表，迁移数据到 ai_services + ai_models"""
     with engine.connect() as conn:
@@ -445,20 +458,17 @@ def _migrate_old_providers(engine):
             key = (base_url, api_key)
             if key not in service_map:
                 # Create service
-                conn.execute(
-                    text(
-                        "INSERT INTO ai_services (name, base_url, api_key) VALUES (:name, :base_url, :api_key)"
-                    ),
+                result = _insert_returning_id(
+                    conn,
+                    "INSERT INTO ai_services (name, base_url, api_key) VALUES (:name, :base_url, :api_key)",
                     {"name": name, "base_url": base_url, "api_key": api_key},
                 )
-                result = conn.execute(text("SELECT last_insert_rowid()")).scalar()
                 service_map[key] = result
 
             service_id = service_map[key]
-            conn.execute(
-                text(
-                    "INSERT INTO ai_models (name, service_id, model, is_default) VALUES (:name, :service_id, :model, :is_default)"
-                ),
+            new_model_id = _insert_returning_id(
+                conn,
+                "INSERT INTO ai_models (name, service_id, model, is_default) VALUES (:name, :service_id, :model, :is_default)",
                 {
                     "name": name,
                     "service_id": service_id,
@@ -466,7 +476,6 @@ def _migrate_old_providers(engine):
                     "is_default": is_default,
                 },
             )
-            new_model_id = conn.execute(text("SELECT last_insert_rowid()")).scalar()
 
             # Update references: agent_configs.ai_provider_id → ai_model_id
             if _has_column(conn, "agent_configs", "ai_provider_id"):
@@ -509,13 +518,11 @@ def _migrate_settings_to_models(engine):
         if ai_base_url and ai_model:
             existing = conn.execute(text("SELECT COUNT(*) FROM ai_services")).scalar()
             if existing == 0:
-                conn.execute(
-                    text(
-                        "INSERT INTO ai_services (name, base_url, api_key) VALUES (:name, :base_url, :api_key)"
-                    ),
+                service_id = _insert_returning_id(
+                    conn,
+                    "INSERT INTO ai_services (name, base_url, api_key) VALUES (:name, :base_url, :api_key)",
                     {"name": ai_model, "base_url": ai_base_url, "api_key": ai_api_key},
                 )
-                service_id = conn.execute(text("SELECT last_insert_rowid()")).scalar()
                 conn.execute(
                     text(
                         "INSERT INTO ai_models (name, service_id, model, is_default) VALUES (:name, :service_id, :model, 1)"
@@ -602,13 +609,11 @@ def _migrate_positions_to_accounts(engine):
         ).scalar()
         available_funds = float(old_funds) if old_funds else 0
 
-        conn.execute(
-            text(
-                "INSERT INTO accounts (name, available_funds, enabled) VALUES (:name, :funds, 1)"
-            ),
+        account_id = _insert_returning_id(
+            conn,
+            "INSERT INTO accounts (name, available_funds, enabled) VALUES (:name, :funds, 1)",
             {"name": "默认账户", "funds": available_funds},
         )
-        account_id = conn.execute(text("SELECT last_insert_rowid()")).scalar()
 
         # 迁移持仓数据
         for row in stocks_with_position:
