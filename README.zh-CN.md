@@ -60,7 +60,7 @@ SIDA 不重复造轮子 — 把经过验证的开源项目整合成一条流水�
 
 *仪表盘 · K线+主力意图 · 预测与验证 · 机会发现 · AI 对话 · 模拟盘*
 
-*在线演示：[https://www.sida.hengsheng-elec.com](https://www.sida.hengsheng-elec.com) — 演示账号：`demo` / `sida_demo_2026`*
+
 
 ## 快速开始
 
