@@ -22,6 +22,7 @@ def test_package_vendors_by_type_content():
         "fundamentals": frozenset({"eastmoney", "tencent", "ths_f10", "zhitu"}),
         "dragon_tiger": frozenset({"eastmoney", "ftshare"}),
         "margin": frozenset({"eastmoney", "ftshare"}),
+        "more_info": frozenset({"tq"}),
         "shareholders": frozenset({"eastmoney", "zhitu"}),
         "dividend": frozenset({"eastmoney", "zhitu"}),
         "northbound": frozenset({"ths"}),
