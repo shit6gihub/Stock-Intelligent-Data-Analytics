@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   version INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
   checksum TEXT NOT NULL,
-  applied_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   success INTEGER NOT NULL DEFAULT 0,
   error TEXT DEFAULT ''
 )
@@ -153,7 +153,7 @@ def _m101_agent_config_kind(conn: Connection) -> None:
         conn,
         "agent_configs",
         "visible",
-        "ALTER TABLE agent_configs ADD COLUMN visible INTEGER DEFAULT 1",
+        "ALTER TABLE agent_configs ADD COLUMN visible BOOLEAN DEFAULT TRUE",
     )
     _add_column_if_missing(
         conn,
@@ -262,13 +262,13 @@ def _m103_agent_run_observability(conn: Connection) -> None:
         conn,
         "agent_runs",
         "notify_attempted",
-        "ALTER TABLE agent_runs ADD COLUMN notify_attempted INTEGER DEFAULT 0",
+        "ALTER TABLE agent_runs ADD COLUMN notify_attempted BOOLEAN DEFAULT FALSE",
     )
     _add_column_if_missing(
         conn,
         "agent_runs",
         "notify_sent",
-        "ALTER TABLE agent_runs ADD COLUMN notify_sent INTEGER DEFAULT 0",
+        "ALTER TABLE agent_runs ADD COLUMN notify_sent BOOLEAN DEFAULT FALSE",
     )
     _add_column_if_missing(
         conn,
@@ -449,7 +449,7 @@ def _m108_entry_candidates_table(conn: Connection) -> None:
         text(
             """
 CREATE TABLE IF NOT EXISTS entry_candidates (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   stock_symbol TEXT NOT NULL,
   stock_market TEXT NOT NULL DEFAULT 'CN',
   stock_name TEXT DEFAULT '',
@@ -472,8 +472,8 @@ CREATE TABLE IF NOT EXISTS entry_candidates (
   evidence TEXT DEFAULT '[]',
   plan TEXT DEFAULT '{}',
   meta TEXT DEFAULT '{}',
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT uq_entry_candidate_stock_date UNIQUE(stock_symbol, stock_market, snapshot_date)
 )
 """
@@ -495,7 +495,7 @@ CREATE TABLE IF NOT EXISTS entry_candidates (
     conn.execute(
         text(
             """
-INSERT OR IGNORE INTO entry_candidates (
+INSERT INTO entry_candidates (
   stock_symbol, stock_market, stock_name, snapshot_date,
   status, score, action, action_label, signal, reason,
   source_agent, source_suggestion_id, evidence, plan, meta
@@ -531,7 +531,7 @@ JOIN (
   FROM stock_suggestions
   GROUP BY stock_symbol, COALESCE(NULLIF(TRIM(stock_market), ''), 'CN')
 ) latest
-ON latest.max_id = s.id
+ON latest.max_id = s.id ON CONFLICT DO NOTHING
 """
         ),
         {"today": today},
@@ -549,13 +549,13 @@ def _m109_entry_candidate_upgrade(conn: Connection) -> None:
         conn,
         "entry_candidates",
         "strategy_tags",
-        "ALTER TABLE entry_candidates ADD COLUMN strategy_tags TEXT DEFAULT '[]'",
+        "ALTER TABLE entry_candidates ADD COLUMN strategy_tags JSON DEFAULT '[]'",
     )
     _add_column_if_missing(
         conn,
         "entry_candidates",
         "is_holding_snapshot",
-        "ALTER TABLE entry_candidates ADD COLUMN is_holding_snapshot INTEGER DEFAULT 0",
+        "ALTER TABLE entry_candidates ADD COLUMN is_holding_snapshot BOOLEAN DEFAULT FALSE",
     )
     _add_column_if_missing(
         conn,
@@ -578,15 +578,15 @@ def _m109_entry_candidate_upgrade(conn: Connection) -> None:
         text(
             """
 CREATE TABLE IF NOT EXISTS entry_candidate_feedback (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   snapshot_date TEXT DEFAULT '',
   stock_symbol TEXT NOT NULL,
   stock_market TEXT NOT NULL DEFAULT 'CN',
   candidate_source TEXT NOT NULL DEFAULT 'watchlist',
-  strategy_tags TEXT DEFAULT '[]',
-  useful INTEGER DEFAULT 1,
+  strategy_tags JSON DEFAULT '[]',
+  useful BOOLEAN DEFAULT TRUE,
   reason TEXT DEFAULT '',
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """
         )
@@ -613,24 +613,24 @@ def _m110_entry_candidate_outcomes(conn: Connection) -> None:
         text(
             """
 CREATE TABLE IF NOT EXISTS entry_candidate_outcomes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   candidate_id INTEGER NOT NULL REFERENCES entry_candidates(id) ON DELETE CASCADE,
   snapshot_date TEXT DEFAULT '',
   stock_symbol TEXT NOT NULL,
   stock_market TEXT NOT NULL DEFAULT 'CN',
   candidate_source TEXT NOT NULL DEFAULT 'watchlist',
-  strategy_tags TEXT DEFAULT '[]',
+  strategy_tags JSON DEFAULT '[]',
   horizon_days INTEGER NOT NULL DEFAULT 1,
   target_date TEXT DEFAULT '',
   base_price REAL,
   outcome_price REAL,
   outcome_return_pct REAL,
-  hit_target INTEGER,
-  hit_stop INTEGER,
+  hit_target BOOLEAN,
+  hit_stop BOOLEAN,
   outcome_status TEXT DEFAULT 'pending',
   meta TEXT DEFAULT '{}',
-  evaluated_at DATETIME,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  evaluated_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT uq_entry_outcome_candidate_horizon UNIQUE(candidate_id, horizon_days)
 )
 """
@@ -653,18 +653,18 @@ def _m111_strategy_layer(conn: Connection) -> None:
         text(
             """
 CREATE TABLE IF NOT EXISTS strategy_catalog (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   code TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
   description TEXT DEFAULT '',
   version TEXT DEFAULT 'v1',
-  enabled INTEGER DEFAULT 1,
+  enabled BOOLEAN DEFAULT TRUE,
   market_scope TEXT DEFAULT 'ALL',
   risk_level TEXT DEFAULT 'medium',
   params TEXT DEFAULT '{}',
   default_weight REAL DEFAULT 1.0,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """
         )
@@ -679,7 +679,7 @@ CREATE TABLE IF NOT EXISTS strategy_catalog (
         text(
             """
 CREATE TABLE IF NOT EXISTS strategy_signal_runs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   snapshot_date TEXT NOT NULL,
   stock_symbol TEXT NOT NULL,
   stock_market TEXT NOT NULL DEFAULT 'CN',
@@ -709,11 +709,11 @@ CREATE TABLE IF NOT EXISTS strategy_signal_runs (
   source_suggestion_id INTEGER,
   source_candidate_id INTEGER,
   trace_id TEXT DEFAULT '',
-  is_holding_snapshot INTEGER DEFAULT 0,
+  is_holding_snapshot BOOLEAN DEFAULT FALSE,
   context_quality_score REAL,
   payload TEXT DEFAULT '{}',
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT uq_strategy_signal_daily_unique UNIQUE(snapshot_date, stock_symbol, stock_market, strategy_code, source_candidate_id)
 )
 """
@@ -739,7 +739,7 @@ CREATE TABLE IF NOT EXISTS strategy_signal_runs (
         text(
             """
 CREATE TABLE IF NOT EXISTS strategy_outcomes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   signal_run_id INTEGER NOT NULL REFERENCES strategy_signal_runs(id) ON DELETE CASCADE,
   strategy_code TEXT NOT NULL,
   snapshot_date TEXT DEFAULT '',
@@ -751,12 +751,12 @@ CREATE TABLE IF NOT EXISTS strategy_outcomes (
   base_price REAL,
   outcome_price REAL,
   outcome_return_pct REAL,
-  hit_target INTEGER,
-  hit_stop INTEGER,
+  hit_target BOOLEAN,
+  hit_stop BOOLEAN,
   outcome_status TEXT DEFAULT 'pending',
   meta TEXT DEFAULT '{}',
-  evaluated_at DATETIME,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  evaluated_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT uq_strategy_outcome_signal_horizon UNIQUE(signal_run_id, horizon_days)
 )
 """
@@ -782,16 +782,16 @@ CREATE TABLE IF NOT EXISTS strategy_outcomes (
         text(
             """
 CREATE TABLE IF NOT EXISTS strategy_weights (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   strategy_code TEXT NOT NULL,
   market TEXT NOT NULL DEFAULT 'ALL',
   regime TEXT NOT NULL DEFAULT 'default',
   weight REAL NOT NULL DEFAULT 1.0,
   reason TEXT DEFAULT '',
   meta TEXT DEFAULT '{}',
-  effective_from DATETIME DEFAULT CURRENT_TIMESTAMP,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  effective_from TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT uq_strategy_weight_key UNIQUE(strategy_code, market, regime)
 )
 """
@@ -807,7 +807,7 @@ CREATE TABLE IF NOT EXISTS strategy_weights (
         text(
             """
 CREATE TABLE IF NOT EXISTS strategy_weight_history (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   strategy_code TEXT NOT NULL,
   market TEXT NOT NULL DEFAULT 'ALL',
   regime TEXT NOT NULL DEFAULT 'default',
@@ -817,7 +817,7 @@ CREATE TABLE IF NOT EXISTS strategy_weight_history (
   window_days INTEGER DEFAULT 45,
   sample_size INTEGER DEFAULT 0,
   meta TEXT DEFAULT '{}',
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """
         )
@@ -836,12 +836,12 @@ CREATE TABLE IF NOT EXISTS strategy_weight_history (
     # Seed strategy catalog (parameterized to avoid ':' bind parsing in JSON literals)
     seed_sql = text(
         """
-INSERT OR IGNORE INTO strategy_catalog(
+INSERT INTO strategy_catalog(
   code, name, description, version, enabled, market_scope, risk_level, params, default_weight
 )
 VALUES(
   :code, :name, :description, :version, :enabled, :market_scope, :risk_level, :params, :default_weight
-)
+) ON CONFLICT DO NOTHING
 """
     )
     seed_rows = [
@@ -850,7 +850,7 @@ VALUES(
             "name": "趋势延续",
             "description": "顺势跟随，优先均线多头且动量延续",
             "version": "v1",
-            "enabled": 1,
+            "enabled": True,
             "market_scope": "ALL",
             "risk_level": "medium",
             "params": '{"horizon_days":5}',
@@ -861,7 +861,7 @@ VALUES(
             "name": "MACD金叉",
             "description": "MACD 金叉确认，偏中短线",
             "version": "v1",
-            "enabled": 1,
+            "enabled": True,
             "market_scope": "ALL",
             "risk_level": "medium",
             "params": '{"horizon_days":3}',
@@ -872,7 +872,7 @@ VALUES(
             "name": "放量突破",
             "description": "放量突破关键位，偏进攻",
             "version": "v1",
-            "enabled": 1,
+            "enabled": True,
             "market_scope": "ALL",
             "risk_level": "high",
             "params": '{"horizon_days":3}',
@@ -883,7 +883,7 @@ VALUES(
             "name": "回踩确认",
             "description": "回踩支撑后二次启动",
             "version": "v1",
-            "enabled": 1,
+            "enabled": True,
             "market_scope": "ALL",
             "risk_level": "low",
             "params": '{"horizon_days":5}',
@@ -894,7 +894,7 @@ VALUES(
             "name": "超跌反弹",
             "description": "超跌后的反弹交易",
             "version": "v1",
-            "enabled": 1,
+            "enabled": True,
             "market_scope": "ALL",
             "risk_level": "high",
             "params": '{"horizon_days":3}',
@@ -905,7 +905,7 @@ VALUES(
             "name": "Agent建议",
             "description": "来自既有 Agent 的综合建议映射",
             "version": "v1",
-            "enabled": 1,
+            "enabled": True,
             "market_scope": "ALL",
             "risk_level": "medium",
             "params": '{"horizon_days":3}',
@@ -916,7 +916,7 @@ VALUES(
             "name": "市场扫描",
             "description": "市场池扫描策略（热门与活跃）",
             "version": "v1",
-            "enabled": 1,
+            "enabled": True,
             "market_scope": "ALL",
             "risk_level": "medium",
             "params": '{"horizon_days":3}',
@@ -931,7 +931,7 @@ VALUES(
         conn.execute(
             text(
                 """
-INSERT OR IGNORE INTO strategy_signal_runs (
+INSERT INTO strategy_signal_runs (
   snapshot_date, stock_symbol, stock_market, stock_name,
   strategy_code, strategy_name, strategy_version, risk_level, source_pool,
   score, rank_score, confidence, status, action, action_label, signal, reason,
@@ -945,20 +945,20 @@ SELECT
   ec.stock_market,
   ec.stock_name,
   CASE
-    WHEN ec.strategy_tags LIKE '%trend_follow%' THEN 'trend_follow'
-    WHEN ec.strategy_tags LIKE '%macd_golden%' THEN 'macd_golden'
-    WHEN ec.strategy_tags LIKE '%volume_breakout%' THEN 'volume_breakout'
-    WHEN ec.strategy_tags LIKE '%pullback%' THEN 'pullback'
-    WHEN ec.strategy_tags LIKE '%rebound%' THEN 'rebound'
+    WHEN ec.strategy_tags::text LIKE '%trend_follow%' THEN 'trend_follow'
+    WHEN ec.strategy_tags::text LIKE '%macd_golden%' THEN 'macd_golden'
+    WHEN ec.strategy_tags::text LIKE '%volume_breakout%' THEN 'volume_breakout'
+    WHEN ec.strategy_tags::text LIKE '%pullback%' THEN 'pullback'
+    WHEN ec.strategy_tags::text LIKE '%rebound%' THEN 'rebound'
     WHEN ec.candidate_source = 'market_scan' THEN 'market_scan'
     ELSE 'watchlist_agent'
   END AS strategy_code,
   CASE
-    WHEN ec.strategy_tags LIKE '%trend_follow%' THEN '趋势延续'
-    WHEN ec.strategy_tags LIKE '%macd_golden%' THEN 'MACD金叉'
-    WHEN ec.strategy_tags LIKE '%volume_breakout%' THEN '放量突破'
-    WHEN ec.strategy_tags LIKE '%pullback%' THEN '回踩确认'
-    WHEN ec.strategy_tags LIKE '%rebound%' THEN '超跌反弹'
+    WHEN ec.strategy_tags::text LIKE '%trend_follow%' THEN '趋势延续'
+    WHEN ec.strategy_tags::text LIKE '%macd_golden%' THEN 'MACD金叉'
+    WHEN ec.strategy_tags::text LIKE '%volume_breakout%' THEN '放量突破'
+    WHEN ec.strategy_tags::text LIKE '%pullback%' THEN '回踩确认'
+    WHEN ec.strategy_tags::text LIKE '%rebound%' THEN '超跌反弹'
     WHEN ec.candidate_source = 'market_scan' THEN '市场扫描'
     ELSE 'Agent建议'
   END AS strategy_name,
@@ -989,11 +989,11 @@ SELECT
   ec.source_suggestion_id,
   ec.id,
   COALESCE(ec.source_trace_id, ''),
-  COALESCE(ec.is_holding_snapshot, 0),
+  COALESCE(ec.is_holding_snapshot, FALSE),
   COALESCE(ec.meta, '{}'),
   ec.created_at,
   ec.updated_at
-FROM entry_candidates ec
+FROM entry_candidates ec ON CONFLICT DO NOTHING
 """
             )
         )
@@ -1003,7 +1003,7 @@ FROM entry_candidates ec
         conn.execute(
             text(
                 """
-INSERT OR IGNORE INTO strategy_outcomes (
+INSERT INTO strategy_outcomes (
   signal_run_id, strategy_code, snapshot_date, stock_symbol, stock_market, source_pool,
   horizon_days, target_date, base_price, outcome_price, outcome_return_pct,
   hit_target, hit_stop, outcome_status, meta, evaluated_at, created_at
@@ -1027,7 +1027,7 @@ SELECT
   eco.evaluated_at,
   eco.created_at
 FROM entry_candidate_outcomes eco
-JOIN strategy_signal_runs sr ON sr.source_candidate_id = eco.candidate_id
+JOIN strategy_signal_runs sr ON sr.source_candidate_id = eco.candidate_id ON CONFLICT DO NOTHING
 """
             )
         )
@@ -1038,7 +1038,7 @@ def _m112_strategy_analytics_snapshots(conn: Connection) -> None:
         text(
             """
 CREATE TABLE IF NOT EXISTS market_regime_snapshots (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   snapshot_date TEXT NOT NULL,
   market TEXT NOT NULL DEFAULT 'CN',
   regime TEXT NOT NULL DEFAULT 'neutral',
@@ -1050,8 +1050,8 @@ CREATE TABLE IF NOT EXISTS market_regime_snapshots (
   active_ratio REAL,
   sample_size INTEGER DEFAULT 0,
   meta TEXT DEFAULT '{}',
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT uq_market_regime_day_market UNIQUE(snapshot_date, market)
 )
 """
@@ -1072,7 +1072,7 @@ CREATE TABLE IF NOT EXISTS market_regime_snapshots (
         text(
             """
 CREATE TABLE IF NOT EXISTS strategy_factor_snapshots (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   signal_run_id INTEGER NOT NULL REFERENCES strategy_signal_runs(id) ON DELETE CASCADE,
   snapshot_date TEXT NOT NULL,
   stock_symbol TEXT NOT NULL,
@@ -1087,8 +1087,8 @@ CREATE TABLE IF NOT EXISTS strategy_factor_snapshots (
   regime_multiplier REAL DEFAULT 1.0,
   final_score REAL NOT NULL DEFAULT 0.0,
   factor_payload TEXT DEFAULT '{}',
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT uq_strategy_factor_signal UNIQUE(signal_run_id)
 )
 """
@@ -1109,7 +1109,7 @@ CREATE TABLE IF NOT EXISTS strategy_factor_snapshots (
         text(
             """
 CREATE TABLE IF NOT EXISTS portfolio_risk_snapshots (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   snapshot_date TEXT NOT NULL,
   market TEXT NOT NULL DEFAULT 'CN',
   total_signals INTEGER DEFAULT 0,
@@ -1121,8 +1121,8 @@ CREATE TABLE IF NOT EXISTS portfolio_risk_snapshots (
   avg_rank_score REAL,
   risk_level TEXT DEFAULT 'medium',
   meta TEXT DEFAULT '{}',
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT uq_portfolio_risk_day_market UNIQUE(snapshot_date, market)
 )
 """
@@ -1161,7 +1161,7 @@ ORDER BY snapshot_date DESC, stock_market ASC, rank_score DESC
 
     factor_insert = text(
         """
-INSERT OR IGNORE INTO strategy_factor_snapshots(
+INSERT INTO strategy_factor_snapshots(
   signal_run_id, snapshot_date, stock_symbol, stock_market, strategy_code,
   alpha_score, catalyst_score, quality_score, risk_penalty, crowd_penalty, source_bonus,
   regime_multiplier, final_score, factor_payload
@@ -1170,7 +1170,7 @@ VALUES(
   :signal_run_id, :snapshot_date, :stock_symbol, :stock_market, :strategy_code,
   :alpha_score, :catalyst_score, :quality_score, :risk_penalty, :crowd_penalty, :source_bonus,
   :regime_multiplier, :final_score, :factor_payload
-)
+) ON CONFLICT DO NOTHING
 """
     )
 
@@ -1386,7 +1386,7 @@ def _m113_market_scan_snapshot_and_mixed_source(conn: Connection) -> None:
         text(
             """
 CREATE TABLE IF NOT EXISTS market_scan_snapshots (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   snapshot_date TEXT NOT NULL,
   stock_symbol TEXT NOT NULL,
   stock_market TEXT NOT NULL DEFAULT 'CN',
@@ -1395,8 +1395,8 @@ CREATE TABLE IF NOT EXISTS market_scan_snapshots (
   score_seed REAL NOT NULL DEFAULT 0.0,
   quote TEXT DEFAULT '{}',
   meta TEXT DEFAULT '{}',
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT uq_market_scan_snapshot_symbol UNIQUE(snapshot_date, stock_symbol, stock_market)
 )
 """
@@ -1444,7 +1444,7 @@ def _m114_paper_trading_tables(conn: Connection) -> None:
             text(
                 """
 CREATE TABLE paper_trading_account (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     initial_capital REAL NOT NULL DEFAULT 1000000.0,
     current_capital REAL NOT NULL DEFAULT 1000000.0,
     total_pnl REAL NOT NULL DEFAULT 0.0,
@@ -1452,9 +1452,9 @@ CREATE TABLE paper_trading_account (
     winning_trades INTEGER NOT NULL DEFAULT 0,
     max_drawdown_pct REAL NOT NULL DEFAULT 0.0,
     peak_capital REAL NOT NULL DEFAULT 1000000.0,
-    enabled BOOLEAN DEFAULT 1,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    enabled BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """
             )
@@ -1464,7 +1464,7 @@ CREATE TABLE paper_trading_account (
             text(
                 """
 CREATE TABLE paper_trading_positions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     stock_symbol TEXT NOT NULL,
     stock_market TEXT NOT NULL DEFAULT 'CN',
     stock_name TEXT DEFAULT '',
@@ -1479,9 +1479,9 @@ CREATE TABLE paper_trading_positions (
     signal_snapshot_date TEXT DEFAULT '',
     signal_action TEXT DEFAULT '',
     strategy_code TEXT DEFAULT '',
-    opened_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    closed_at DATETIME,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    closed_at TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """
             )
@@ -1493,7 +1493,7 @@ CREATE TABLE paper_trading_positions (
             text(
                 """
 CREATE TABLE paper_trading_trades (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     stock_symbol TEXT NOT NULL,
     stock_market TEXT NOT NULL DEFAULT 'CN',
     stock_name TEXT DEFAULT '',
@@ -1507,8 +1507,8 @@ CREATE TABLE paper_trading_trades (
     signal_snapshot_date TEXT DEFAULT '',
     strategy_code TEXT DEFAULT '',
     holding_days INTEGER DEFAULT 0,
-    opened_at DATETIME,
-    closed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    opened_at TIMESTAMP,
+    closed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     meta TEXT DEFAULT '{}'
 )
 """
@@ -1533,7 +1533,7 @@ def _m116_chat_tables(conn: Connection) -> None:
     conn.execute(
         text("""
         CREATE TABLE IF NOT EXISTS chat_conversations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             title TEXT DEFAULT '',
             stock_symbol TEXT,
             stock_market TEXT,
@@ -1546,7 +1546,7 @@ def _m116_chat_tables(conn: Connection) -> None:
     conn.execute(
         text("""
         CREATE TABLE IF NOT EXISTS chat_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             conversation_id INTEGER NOT NULL,
             role TEXT NOT NULL DEFAULT 'user',
             content TEXT NOT NULL DEFAULT '',
@@ -1570,10 +1570,12 @@ def _m116_chat_tables(conn: Connection) -> None:
 
 def _m117_chat_initial_context(conn: Connection) -> None:
     """Add initial_context column to chat_conversations."""
-    try:
-        conn.execute(text("ALTER TABLE chat_conversations ADD COLUMN initial_context TEXT"))
-    except Exception:
-        pass  # column already exists
+    _add_column_if_missing(
+        conn,
+        "chat_conversations",
+        "initial_context",
+        "ALTER TABLE chat_conversations ADD COLUMN initial_context TEXT",
+    )
 
 
 def _m119_notifications_table(conn: Connection) -> None:
@@ -1581,7 +1583,7 @@ def _m119_notifications_table(conn: Connection) -> None:
     conn.execute(
         text("""
         CREATE TABLE IF NOT EXISTS notifications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             category TEXT NOT NULL DEFAULT 'system',
             level TEXT NOT NULL DEFAULT 'info',
             title TEXT NOT NULL DEFAULT '',
@@ -1943,10 +1945,15 @@ def _m124_analysis_history_user_id_unique(conn: Connection) -> None:
         return
 
     if _dialect_is_pg(conn):
-        # PG: 直接 DROP CONSTRAINT + ADD CONSTRAINT
+        # PG: 直接 DROP CONSTRAINT + ADD CONSTRAINT（幂等：先删旧约束再建新约束）
         conn.execute(
             text(
                 "ALTER TABLE analysis_history DROP CONSTRAINT IF EXISTS uq_agent_stock_date"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE analysis_history DROP CONSTRAINT IF EXISTS uq_agent_stock_date_user"
             )
         )
         conn.execute(
@@ -1984,7 +1991,7 @@ ADD CONSTRAINT uq_agent_stock_date_user UNIQUE (agent_name, stock_symbol, analys
         text(
             """
 CREATE TABLE analysis_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     user_id VARCHAR(36),
     agent_name VARCHAR NOT NULL,
     stock_symbol VARCHAR NOT NULL,
