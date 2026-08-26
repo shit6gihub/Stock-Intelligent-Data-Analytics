@@ -10,6 +10,10 @@
 - 通达信本地数据解析器 src/collectors/tdx_local_parser.py: 北向分券商持仓(signals_sys_*.dat) + 概念归属(extern_sys.txt), 含 11 单测
 - L2AMO 分档资金 scripts/l2_amo_formula.py: 系统内置 ZJBY 公式输出超/大/中/小 4 档净额, 与 get_more_info Zjl_HB 精确对齐(误差<0.01)
 
+### fix
+
+- 修复 migration boolean 类型 bug: agent_configs.visible/enabled 与 users.is_active 用 0/1 导致 PG 严格类型启动崩溃(SQLite 宽松不报错), 改 false/true
+
 ### update
 
 - TQ 数据源(vendors/tq.py + registry/seed 注册)移出开源仓库,转私有维护(依赖个人小主机通达信网关,他人无法复现)。生产环境保留:文件仍在生产容器与本地工作区,后续 TQ 迭代只在私有副本进行,不再进 git。仓库内 quote/kline 路由回到 腾讯→ths→新浪/智兔 主链。
