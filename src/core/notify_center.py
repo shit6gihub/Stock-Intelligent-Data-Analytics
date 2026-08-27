@@ -12,7 +12,7 @@ import asyncio
 import logging
 
 from src.web.database import SessionLocal
-from src.web.models import Notification, NotifyChannel
+from src.web.models import Notification, NotifyChannel, User
 
 logger = logging.getLogger(__name__)
 
@@ -246,6 +246,24 @@ _CATEGORY_LINKS = {
 }
 
 
+def _resolve_owner_user_id() -> str | None:
+    """解析 owner(管理员) 的 user_id, 供后台任务无用户上下文时兜底推送。"""
+    db = SessionLocal()
+    try:
+        u = (
+            db.query(User)
+            .filter(User.role == "owner", User.is_active.is_(True))
+            .order_by(User.id.asc())
+            .first()
+        )
+        return str(u.id) if u else None
+    except Exception as e:
+        logger.warning("[通知中心] 解析 owner 失败: %s", e)
+        return None
+    finally:
+        db.close()
+
+
 def notify_task_done(
     task_label: str,
     *,
@@ -257,8 +275,15 @@ def notify_task_done(
     duration_ms: int | None = None,
     link: str = "",
     status: str = "",
+    user_id: str | None = None,
 ) -> int | None:
-    """后台任务收尾统一入口: 成功/失败都写站内, 失败额外外发。"""
+    """后台任务收尾统一入口: 成功/失败都写站内, 失败额外外发。
+
+    user_id: 多用户改造后渠道全归属 user_id(无全局渠道), 后台任务无用户上下文时
+    兜底推给 owner(role=owner), 否则站内通知永远 skipped("未配置通知渠道")。
+    """
+    if user_id is None:
+        user_id = _resolve_owner_user_id()
     dur = f"（耗时 {duration_ms / 1000:.1f}s）" if duration_ms else ""
     if status == "skipped":
         title = f"⏭️ {task_label} 已跳过{dur}"
@@ -277,4 +302,5 @@ def notify_task_done(
         link=link or _CATEGORY_LINKS.get(category, ""),
         source=source or task_label,
         trace_id=trace_id,
+        user_id=user_id,
     )

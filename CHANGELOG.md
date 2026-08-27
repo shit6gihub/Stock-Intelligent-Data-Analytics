@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-27
+
+### fix
+
+- 盘中监测等 Agent 推送渠道失效: `notify_task_done` 无 user_id 上下文时兜底推 owner(role=owner)。多用户改造后 notify_channels 全归属 user_id、无全局渠道，此前 agent 后台任务收尾通知调 `push_notification` 未传 user_id → `_build_notifier(None)` 查不到渠道 → 站内通知永远 skipped("未配置通知渠道")、不外发，用户收不到盘中监测等 Agent 的信号/完成通知
+
 ## 2026-08-26
 
 ### feature
