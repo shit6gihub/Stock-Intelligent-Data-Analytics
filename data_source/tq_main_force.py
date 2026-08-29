@@ -139,15 +139,38 @@ class TQClient:
                 continue
         return out
 
-    def l2amo_bands(self, code: str) -> Optional[Dict[str, float]]:
-        """L2AMO 分档净额(超大/大/中/小单, 万元)。
+    def l2amo_bands(self, code: str, hq_date: str = "") -> Optional[Dict[str, float]]:
+        """分档净额(超大/大/中/小单, 万元)。
 
-        [BLOCKED 2026-08-29] formula_process_mul_zb 参数模板未定,
-        20+ 组合全部 ErrorId 5 "periodstr error"(见 TQ3 回邮)。
-        拿到可用调用样例后在此实现; 当前一律返回 None(上游优雅降级)。
+        [2026-08-29 变更] formula 路线废弃(ErrorId 5, 见 TQ3 回邮)。
+        改走 TQ4 自建分档: 读 C:\\TdxQ\\darkflow\\{code}_{date}.json
+        (由 order_cluster.py 从超盘回放 .tck 逐笔还原产出, 口径=逐笔
+        成交金额切档, 委托号显式关联研究中)。
+
+        盘中/无落盘文件时返回 None(证据链如实标"盘后补全", 不编造)。
         """
-        logger.info("L2AMO 分档数据暂不可用(formula 接口参数待定), %s 分档字段为 None", code)
-        return None
+        import os
+
+        if not hq_date:
+            return None
+        path = os.path.join(r"C:\TdxQ\darkflow", f"{code}_{hq_date}.json")
+        if not os.path.exists(path):
+            logger.info("darkflow 分档缺失: %s (盘后补全), %s", path, code)
+            return None
+        try:
+            with open(path, encoding="utf-8") as f:
+                payload = json.load(f)
+            bands = payload["bands"]
+            return {
+                "超大单净额": bands["超大单"]["net_wan"],
+                "大单净额": bands["大单"]["net_wan"],
+                "中单净额": bands["中单"]["net_wan"],
+                "小单净额": bands["小单"]["net_wan"],
+                "_口径": payload.get("banding口径", ""),
+            }
+        except (KeyError, ValueError, OSError) as exc:
+            logger.warning("darkflow %s 解析失败: %s", path, exc)
+            return None
 
 
 # ---- 组装 -----------------------------------------------------------
@@ -176,7 +199,7 @@ def build_main_force_row(
     total = inside + outside
     now = float(snap.get("Now", 0) or 0)
 
-    bands = client.l2amo_bands(code) or {}
+    bands = client.l2amo_bands(code, str(info.get("HqDate", ""))) or {}
 
     # 60 日分位(近 60 日收盘序列含当日)
     closes = client.kline_closes(code, kline_days)
