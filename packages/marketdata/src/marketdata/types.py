@@ -316,6 +316,42 @@ class MoreInfo:
 
 
 @dataclass
+class DarkFlowTq:
+    """通达信 L2 暗盘资金(逐笔还原 + 十档盘口, 盘后, ZCode TQ4 采集)。
+
+    数据源: 超盘回放落盘 .tck(逐笔成交+委托, 带委托号) + .img(十档盘口),
+    由小主机 ZCode 盘后采集解析, 产出 JSON 同步到 DATA_DIR/darkflow/。
+    盘后数据(超盘回放=历史日), 盘中无 → 字段为 None 时前端显式标"盘后补全"。
+    """
+
+    symbol: str
+    market: str = "CN"
+    date: str = ""                          # 交易日期 YYYYMMDD
+    # —— 自建分档(按委托还原总金额切, 万元; 替代 L2AMO formula) ——
+    xl_net: float | None = None             # 超大单净额(委托还原≥100万)
+    large_net: float | None = None          # 大单净额(20-100万)
+    mid_net: float | None = None            # 中单净额(5-20万)
+    small_net: float | None = None          # 小单净额(<5万)
+    # —— 委托号聚簇还原(拆单识别) ——
+    total_orders: int | None = None         # 逐笔委托总笔数
+    reconstructed_orders: int | None = None # 聚簇还原后委托数
+    split_order_count: int | None = None    # 拆单委托数(一笔委托拆多笔成交)
+    avg_split_parts: float | None = None    # 平均拆单份数
+    # —— 撤单动向 ——
+    cancel_ratio: float | None = None       # 撤单比(撤单笔数/总笔数, 0~1)
+    cancel_buy_vol: float | None = None     # 撤买量(手)
+    cancel_sell_vol: float | None = None    # 撤卖量(手)
+    # —— 十档盘口意图 ——
+    tuopan: bool | None = None              # 托盘(某档委托量≥4倍均值且金额≥500万)
+    yapan: bool | None = None               # 压盘
+    suopan: bool | None = None              # 锁盘(买卖档委托量巨大且价差收窄)
+    data_status: str = "insufficient"       # complete / insufficient
+    raw: dict = field(default_factory=dict) # 原始 JSON 透传
+    quote_time: datetime | None = None
+    timestamp: datetime = field(default_factory=datetime.now)
+
+
+@dataclass
 class FlashNews:
     """快讯(7×24,对齐 cls/sina/eastmoney 快讯流)。市场级,symbols 可空。"""
 

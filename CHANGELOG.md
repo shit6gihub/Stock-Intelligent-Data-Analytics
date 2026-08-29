@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-29
+
+### feature
+
+- 通达信 L2 暗盘资金接入口(逐笔还原+十档盘口+自建分档, 盘后 ZCode TQ4 采集): types.py 新增 DarkFlowTq 强类型 + marketdata_client.md_dark_flow_tq 读取 DATA_DIR/darkflow/*.json + /quotes/{symbol}/dark-flow-tq 端点 + 前端暗盘资金卡片(超大/大/中/小单净额+拆单委托+撤单比+托盘/压盘/锁盘), 盘后数据无文件时静默降级
+
 ## 2026-08-27
 
 ### fix

@@ -141,6 +141,20 @@ async def get_more_info(symbol: str, market: str = "CN"):
     return rows[0]
 
 
+@router.get("/{symbol}/dark-flow-tq")
+async def get_dark_flow_tq(symbol: str, market: str = "CN"):
+    """通达信 L2 暗盘资金(逐笔还原+十档盘口+自建分档, 盘后, ZCode TQ4 采集)。"""
+    from src.core.marketdata_client import md_dark_flow_tq
+
+    market_code = _parse_market(market)
+    if market_code != MarketCode.CN:
+        raise HTTPException(400, "dark-flow-tq 仅支持 CN 市场")
+    data = await asyncio.to_thread(md_dark_flow_tq, symbol, market_code.value)
+    if not data:
+        raise HTTPException(404, "暗盘资金无数据(TQ4 盘后采集未覆盖该股或尚未采集)")
+    return data
+
+
 # 公司简介内存缓存(避免每次详情页都调 zhitu 耗时 1.8s)
 _COMPANY_CACHE: dict = {}  # {(symbol, market): (ts, payload)}
 _COMPANY_CACHE_TTL = 3600  # 1 小时

@@ -214,3 +214,32 @@ def md_more_info(symbols: list[str], market: str = "CN") -> list[dict]:
             "quote_time": m.quote_time.isoformat() if m.quote_time else None,
         })
     return out
+
+
+def md_dark_flow_tq(symbol: str, market: str = "CN") -> dict | None:
+    """读取 ZCode TQ4 采集的通达信 L2 暗盘资金 JSON(盘后, DATA_DIR/darkflow/)。
+
+    文件命名: {symbol}.json 或 {symbol}_{yyyymmdd}.json, 同名多份取日期最新。
+    无文件/读取失败 → 返回 None(API 层回 404, 前端显式标"盘后补全")。
+    schema 契约见 packages/marketdata types.DarkFlowTq。
+    """
+    import glob
+    import json as _json
+    import os
+
+    data_dir = os.environ.get("DATA_DIR", "/app/data")
+    dark_dir = os.path.join(data_dir, "darkflow")
+    candidates: list[str] = []
+    exact = os.path.join(dark_dir, f"{symbol}.json")
+    if os.path.isfile(exact):
+        candidates.append(exact)
+    candidates += sorted(glob.glob(os.path.join(dark_dir, f"{symbol}_*.json")), reverse=True)
+    if not candidates:
+        return None
+    path = candidates[0]
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return _json.load(f)
+    except (OSError, ValueError) as exc:
+        logger.warning("darkflow 读取失败 %s: %s", path, exc)
+        return None

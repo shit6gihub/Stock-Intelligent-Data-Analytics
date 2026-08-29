@@ -85,6 +85,27 @@ interface MoreInfoResponse {
   quote_time: string | null
 }
 
+interface DarkFlowTqResponse {
+  symbol?: string
+  market?: string
+  date?: string
+  xl_net: number | null
+  large_net: number | null
+  mid_net: number | null
+  small_net: number | null
+  total_orders: number | null
+  reconstructed_orders: number | null
+  split_order_count: number | null
+  avg_split_parts: number | null
+  cancel_ratio: number | null
+  cancel_buy_vol: number | null
+  cancel_sell_vol: number | null
+  tuopan: boolean | null
+  yapan: boolean | null
+  suopan: boolean | null
+  data_status: string
+}
+
 interface CompanyInfo {
   symbol?: string
   name?: string | null
@@ -698,6 +719,7 @@ export default function StockInsightModal(props: {
   const [quote, setQuote] = useState<QuoteResponse | null>(null)
   const [moreInfo, setMoreInfo] = useState<MoreInfoResponse | null>(null)
   const [moreInfoLoading, setMoreInfoLoading] = useState(false)
+  const [darkFlowTq, setDarkFlowTq] = useState<DarkFlowTqResponse | null>(null)
   const [companyInfo, setCompanyInfo] = useState<CompanyInfo | null>(null)
   const [companyLoading, setCompanyLoading] = useState(false)
   // 基本面明细(龙虎榜/股东户数/分红/两融/事件日历): 懒加载 + 静默降级
@@ -757,6 +779,16 @@ export default function StockInsightModal(props: {
       setMoreInfo(null)
     } finally {
       setMoreInfoLoading(false)
+    }
+  }, [symbol, market])
+
+  const loadDarkFlowTq = useCallback(async () => {
+    if (!symbol) return
+    try {
+      const data = await insightApi.darkFlowTq<DarkFlowTqResponse>(symbol, market)
+      setDarkFlowTq(data || null)
+    } catch {
+      setDarkFlowTq(null) // 404 = 盘后未采集, 静默降级
     }
   }, [symbol, market])
 
@@ -1057,25 +1089,25 @@ export default function StockInsightModal(props: {
     if (!symbol) return
     setLoading(true)
     try {
-      await Promise.allSettled([loadQuote(), loadMoreInfo(), loadKline(), loadMiniKline(), loadHoldingAgg()])
+      await Promise.allSettled([loadQuote(), loadMoreInfo(), loadDarkFlowTq(), loadKline(), loadMiniKline(), loadHoldingAgg()])
     } catch (e) {
       toast(e instanceof Error ? e.message : '加载失败', 'error')
     } finally {
       setLoading(false)
     }
-  }, [symbol, loadQuote, loadMoreInfo, loadKline, loadMiniKline, loadHoldingAgg, toast])
+  }, [symbol, loadQuote, loadMoreInfo, loadDarkFlowTq, loadKline, loadMiniKline, loadHoldingAgg, toast])
 
   const handleRefreshAll = useCallback(async () => {
     if (!symbol) return
     setLoading(true)
     try {
-      await Promise.allSettled([loadQuote(), loadMoreInfo(), loadKline(), loadMiniKline(), loadSuggestions(), loadNews(), loadAnnouncements(), loadHoldingAgg(), loadReports(), loadFundamentals()])
+      await Promise.allSettled([loadQuote(), loadMoreInfo(), loadDarkFlowTq(), loadKline(), loadMiniKline(), loadSuggestions(), loadNews(), loadAnnouncements(), loadHoldingAgg(), loadReports(), loadFundamentals()])
     } catch (e) {
       toast(e instanceof Error ? e.message : '加载失败', 'error')
     } finally {
       setLoading(false)
     }
-  }, [symbol, loadQuote, loadMoreInfo, loadKline, loadMiniKline, loadSuggestions, loadNews, loadAnnouncements, loadHoldingAgg, loadReports, loadFundamentals, toast])
+  }, [symbol, loadQuote, loadMoreInfo, loadDarkFlowTq, loadKline, loadMiniKline, loadSuggestions, loadNews, loadAnnouncements, loadHoldingAgg, loadReports, loadFundamentals, toast])
 
   const refreshForAuto = useCallback(async () => {
     if (!symbol) return
@@ -2012,6 +2044,36 @@ export default function StockInsightModal(props: {
                       <div className="mt-2 h-1.5 w-full flex rounded overflow-hidden bg-muted">
                         <div className="bg-rose-500" style={{width: `${(moreInfo.total_buy_vol / (moreInfo.total_buy_vol + moreInfo.total_sell_vol) * 100).toFixed(1)}%`}} />
                         <div className="bg-emerald-500 flex-1" />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 暗盘资金 · TQ逐笔还原(盘后, ZCode TQ4 采集) */}
+                {darkFlowTq && darkFlowTq.data_status === 'complete' && (
+                  <div className="card p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-[11px] text-muted-foreground">暗盘资金 · TQ逐笔还原</div>
+                      <div className="text-[10px] text-muted-foreground">{darkFlowTq.date ? `盘后 ${darkFlowTq.date}` : '盘后'}</div>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]">
+                      <div className="rounded bg-violet-500/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground">超大单净额</div><div className={`font-mono ${darkFlowTq.xl_net != null ? (darkFlowTq.xl_net >= 0 ? 'text-red-600' : 'text-green-700') : ''}`}>{darkFlowTq.xl_net != null ? `${darkFlowTq.xl_net.toFixed(0)}万` : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground">大单净额</div><div className={`font-mono ${darkFlowTq.large_net != null ? (darkFlowTq.large_net >= 0 ? 'text-red-600' : 'text-green-700') : ''}`}>{darkFlowTq.large_net != null ? `${darkFlowTq.large_net.toFixed(0)}万` : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground">中单净额</div><div className={`font-mono ${darkFlowTq.mid_net != null ? (darkFlowTq.mid_net >= 0 ? 'text-red-600' : 'text-green-700') : ''}`}>{darkFlowTq.mid_net != null ? `${darkFlowTq.mid_net.toFixed(0)}万` : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground">小单净额</div><div className={`font-mono ${darkFlowTq.small_net != null ? (darkFlowTq.small_net >= 0 ? 'text-red-600' : 'text-green-700') : ''}`}>{darkFlowTq.small_net != null ? `${darkFlowTq.small_net.toFixed(0)}万` : '--'}</div></div>
+                    </div>
+                    <div className="mt-3 pt-3 border-t border-border/40 grid grid-cols-3 md:grid-cols-5 gap-2 text-[11px]">
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground">拆单委托</div><div className="font-mono">{darkFlowTq.split_order_count != null ? darkFlowTq.split_order_count.toLocaleString() : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground">平均拆单份数</div><div className="font-mono">{darkFlowTq.avg_split_parts != null ? darkFlowTq.avg_split_parts.toFixed(1) : '--'}</div></div>
+                      <div className="rounded bg-accent/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground">撤单比</div><div className="font-mono">{darkFlowTq.cancel_ratio != null ? `${(darkFlowTq.cancel_ratio * 100).toFixed(1)}%` : '--'}</div></div>
+                      <div className="rounded bg-rose-500/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground">撤买量</div><div className="font-mono">{darkFlowTq.cancel_buy_vol != null ? `${darkFlowTq.cancel_buy_vol.toFixed(0)}` : '--'}</div></div>
+                      <div className="rounded bg-emerald-500/10 px-2 py-1.5"><div className="text-[10px] text-muted-foreground">撤卖量</div><div className="font-mono">{darkFlowTq.cancel_sell_vol != null ? `${darkFlowTq.cancel_sell_vol.toFixed(0)}` : '--'}</div></div>
+                    </div>
+                    {(darkFlowTq.tuopan || darkFlowTq.yapan || darkFlowTq.suopan) && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {darkFlowTq.tuopan && <span className="rounded bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-600">⚠️ 托盘</span>}
+                        {darkFlowTq.yapan && <span className="rounded bg-sky-500/15 px-2 py-0.5 text-[10px] text-sky-600">压盘</span>}
+                        {darkFlowTq.suopan && <span className="rounded bg-violet-500/15 px-2 py-0.5 text-[10px] text-violet-600">锁盘</span>}
                       </div>
                     )}
                   </div>
