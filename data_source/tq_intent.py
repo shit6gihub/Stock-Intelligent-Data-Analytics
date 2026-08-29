@@ -51,6 +51,9 @@ RULE_PRIORITY = {
     "kongpan_wash": 9,      # 控盘洗盘
 }
 
+# 位置修正豁免名单: 对倒造假本身含位置语义(双大+不动), 不参与修正
+POSITION_ADJUST_EXEMPT = {"duidao_fake"}
+
 RULE_LABELS = {
     "zhenjin_attack": "外盘大+涨+放量=真金进攻",
     "zhuli_retreat": "内盘大+跌+放量=主力撤退",
@@ -80,6 +83,51 @@ def _f(row: Dict[str, Any], key: str, default: float = 0.0) -> float:
         return float(v)
     except (TypeError, ValueError):
         return default
+
+
+def position_adjust(rating: int, matched: List[str], pos: Optional[float],
+                    rules_cfg: Dict[str, Any], evidence: List[Dict[str, Any]]) -> tuple:
+    """MI1-BUG-01 修复: 位置优先两段式的第二段——位置修正。
+
+    口诀方法论: 位置决定性质——同样的量价形态, 高位是出货, 低位是洗盘吸筹。
+    - 危险/偏空(1-2) + 低位 → 降一档严重度(3): 低位跌=恐慌换手非出货
+    - 危险/偏空(1-2) + 高位 → 维持, 标注"高位出货信号强化"
+    - 强多(5) + 高位       → 降为 4: 高位放量进攻追高风险
+    - 中性(3) + 极端位置   → 维持 3, 证据链加位置提示
+    - 对倒造假(duidao_fake)本身含位置语义, 不参与修正
+    :return: (修正后评级, 修正说明 list)
+    """
+    notes: List[str] = []
+    if pos is None:
+        return rating, notes
+    if "duidao_fake" in matched:
+        return rating, notes
+    pos_high = float(rules_cfg["pos_high"])
+    pos_low = float(rules_cfg["pos_low"])
+    top = sorted(matched or [""], key=lambda r: RULE_PRIORITY.get(r, 99))[0] if matched else ""
+    if top == "duidao_fake":
+        return rating, notes
+    if rating in (1, 2) and pos <= pos_low:
+        evidence.append({"rule": "position_adjust", "口诀": "位置优先:低位修正",
+                         "判定逻辑": f"60日分位{pos}<=低位线{pos_low}, 低位跌=恐慌换手非出货, 严重度降一档",
+                         "字段值": {"原评级": rating, "60日分位": pos}})
+        return 3, ["低位跌=恐慌换手非出货, 评级 1/2 → 3"]
+    if rating in (1, 2) and pos >= pos_high:
+        evidence.append({"rule": "position_adjust", "口诀": "位置优先:高位强化",
+                         "判定逻辑": f"60日分位{pos}>=高位线{pos_high}, 高位出货信号强化",
+                         "字段值": {"原评级": rating, "60日分位": pos}})
+        return rating, ["高位出货信号强化, 维持评级"]
+    if rating == 5 and pos >= pos_high:
+        evidence.append({"rule": "position_adjust", "口诀": "位置优先:高位进攻降档",
+                         "判定逻辑": f"高位放量进攻追高风险, 60日分位{pos}>={pos_high}, 5→4",
+                         "字段值": {"原评级": 5, "60日分位": pos}})
+        return 4, ["高位放量进攻追高风险, 评级 5 → 4"]
+    if rating == 3 and (pos >= pos_high or pos <= pos_low):
+        tip = "位置提示:高位滞涨警惕" if pos >= pos_high else "位置提示:低位横盘可能吸筹尾声"
+        evidence.append({"rule": "position_adjust", "口诀": "位置优先:中性提示",
+                         "判定逻辑": tip, "字段值": {"60日分位": pos}})
+        notes.append(tip)
+    return rating, notes
 
 
 def evaluate_rules(row: Dict[str, Any], rules_cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -151,15 +199,29 @@ def evaluate_rules(row: Dict[str, Any], rules_cfg: Dict[str, Any]) -> Dict[str, 
         f"量比{vol_ratio}>={rules_cfg['vol_ratio_big']}(双大) 且 横盘|涨幅|<={rules_cfg['flat_pct']}%")
 
     # 叠加: 托盘出货(超大单净买 + 大单净卖) — 依赖 L2AMO 分档
+    # MI1-BUG-01 修复: 单次采样"超大买+大卖"误伤率高, 触发需满足其一:
+    #   (1) (|超大净|+|大净|) >= 成交额 × dump_min_pct%(config, 默认 3)
+    #   (2) 连续采样同向计数 >= tuopan_confirm_samples(row["托盘连续计数"], 轮询层维护)
     xl, d = _f(row, "超大单净额", float("nan")), _f(row, "大单净额", float("nan"))
     if xl != xl or d != d:  # NaN = 分档数据缺失
         evidence.append({"rule": "tuopan_dump", "口诀": RULE_LABELS["tuopan_dump"],
                          "判定逻辑": "需要 L2AMO 分档数据", "字段值": "数据不足(公式接口待接入)"})
     elif xl > 0 and d < 0:
-        matched.append("tuopan_dump")
-        evidence.append({"rule": "tuopan_dump", "口诀": RULE_LABELS["tuopan_dump"],
-                         "判定逻辑": "超大单净买+大单净卖(危险)",
-                         "字段值": {"超大单净额": xl, "大单净额": d}})
+        amt = _f(row, "成交额万")
+        gate_pct = float(rules_cfg.get("dump_min_pct", 3.0))
+        gate = amt > 0 and (abs(xl) + abs(d)) >= amt * gate_pct / 100.0
+        streak = int(_f(row, "托盘连续计数", 0))
+        confirm = int(rules_cfg.get("tuopan_confirm_samples", 2))
+        if gate or streak >= confirm:
+            matched.append("tuopan_dump")
+            evidence.append({"rule": "tuopan_dump", "口诀": RULE_LABELS["tuopan_dump"],
+                             "判定逻辑": f"超大买+大卖且{'净额过成交额' + str(gate_pct) + '%门槛' if gate else '连续' + str(streak) + '次同向'}(危险)",
+                             "字段值": {"超大单净额": xl, "大单净额": d, "成交额万": amt,
+                                        "托盘连续计数": streak}})
+        else:
+            evidence.append({"rule": "tuopan_dump", "口诀": RULE_LABELS["tuopan_dump"],
+                             "判定逻辑": f"同向但未过{gate_pct}%门槛且连续计数<{confirm}, 不置顶",
+                             "字段值": {"超大单净额": xl, "大单净额": d, "成交额万": amt}})
 
     if not matched:
         # 七口诀全不命中: 落中性观望, 证据链说明原因
@@ -167,9 +229,12 @@ def evaluate_rules(row: Dict[str, Any], rules_cfg: Dict[str, Any]) -> Dict[str, 
                          "判定逻辑": "七口诀条件均未满足(量价中性且位置中性)",
                          "字段值": dict(features)})
 
-    # 位置优先: 取优先级数字最小的命中规则作为最终评级
+    # 位置优先两段式: 规则粗评 → 位置修正(MI1-BUG-01)
     top = sorted(matched or ["none"], key=lambda r: RULE_PRIORITY.get(r, 99))[0]
     rating = RULE_RATINGS.get(top, 3) if matched else 3
+    rating, notes = position_adjust(rating, matched, pos, rules_cfg, evidence)
+    for n in notes:
+        evidence.append({"rule": "position_adjust", "口诀": "位置优先:提示", "判定逻辑": n, "字段值": {"60日分位": pos}})
     return {
         "rating": rating,
         "label": RATING_LABELS[rating],
