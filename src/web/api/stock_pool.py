@@ -45,25 +45,30 @@ def _valid_symbols(raw: list[str]) -> list[str]:
 
 
 def _resonance(gs, act, l2) -> tuple[str, int]:
-    """返回 (共振级别, 得分 0-3)。"""
+    """返回 (共振级别, 得分 0-2)。
+
+    2026-08-30 调整: GS 只做"趋势过滤"不做"买卖触发"——日线均线交叉的
+    signal(G/S点)滞后一天(知乎第三方实测"套都被套死了才提示"), 实战无价值;
+    只认 state(G区/S区)作方向过滤, S区/无GS 直接不共振。买卖强度看活跃度+L2资金。
+    """
+    # GS 趋势过滤: 只认 G区(趋势向上), S区/无GS 直接过滤
+    if not (gs and gs.get("state") == "G区"):
+        return "无", 0
     score = 0
-    # 趋势分
-    if gs and (gs.get("state") == "G区" or gs.get("signal") == "G"):
-        score += 1
-    # 强度分
+    # 强度分: AI机构活跃度 ≥ 强势线3
     if act:
         level = act.get("level")
         activity = act.get("activity")
         if level in ("大牛", "强势") or (isinstance(activity, (int, float)) and activity >= 3):
             score += 1
-    # 资金分
+    # 资金分: L2 主力净流入 > 0
     if l2 and l2.get("available") and isinstance(l2.get("zjl_hb"), (int, float)) and l2["zjl_hb"] > 0:
         score += 1
-    if score >= 3:
-        return "强", score
-    if score == 2:
-        return "弱", score
-    return "无", score
+    if score >= 2:
+        return "强", 2
+    if score == 1:
+        return "弱", 1
+    return "无", 0
 
 
 def _screen(symbols: list[str]) -> dict:

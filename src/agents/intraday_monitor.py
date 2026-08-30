@@ -700,9 +700,9 @@ def _append_decision_pioneer(lines: list, symbol: str) -> None:
         gs = d.get("gs")
         if gs:
             sig = {"G": "G买(上穿)", "S": "S卖(下穿)"}.get(gs.get("signal"), "无")
-            lines.append(f"- GS策略：当前{gs['state']}，最近信号{sig}")
+            lines.append(f"- GS趋势：{gs['state']}(方向过滤, 买卖点滞后仅参考, 最近{sig})")
         else:
-            lines.append("- GS策略：无数据")
+            lines.append("- GS趋势：无数据")
         l2 = d.get("l2") or {}
         if l2.get("available") and isinstance(l2.get("zjl_hb"), (int, float)):
             lines.append(

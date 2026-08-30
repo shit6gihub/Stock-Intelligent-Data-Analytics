@@ -155,23 +155,18 @@ export default function DecisionPioneerCard({ symbol, market }: { symbol: string
           )}
         </div>
 
-        {/* GS策略 */}
+        {/* GS策略(趋势过滤) */}
         <div className="rounded-lg bg-accent/20 px-2.5 py-1.5">
-          <div className="text-muted-foreground mb-0.5">GS策略(趋势)</div>
+          <div className="text-muted-foreground mb-0.5">GS策略(趋势过滤)</div>
           {gs ? (
             <>
-              <div className="font-mono text-[15px] font-semibold text-foreground">
-                {gs.state}
-                {gs.signal === 'G' ? (
-                  <span className="text-rose-700 dark:text-rose-400 text-[11px] ml-1">G买</span>
-                ) : gs.signal === 'S' ? (
-                  <span className="text-emerald-700 dark:text-emerald-400 text-[11px] ml-1">S卖</span>
-                ) : null}
-              </div>
+              <div className="font-mono text-[15px] font-semibold text-foreground">{gs.state}</div>
               <div className="text-muted-foreground mt-0.5">
                 快线{gs.a0?.toFixed(2)} / 慢线{gs.bb0?.toFixed(2)}
               </div>
-              <div className="text-[9px] text-muted-foreground/70 mt-0.5">G=上穿买入区 · S=下穿卖出区</div>
+              <div className="text-[9px] text-muted-foreground/70 mt-0.5">
+                方向过滤 · 买卖点滞后仅参考
+              </div>
             </>
           ) : (
             <div className="text-muted-foreground">无数据</div>
