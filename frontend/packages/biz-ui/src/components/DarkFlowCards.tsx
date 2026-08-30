@@ -40,10 +40,33 @@ export interface DarkFlowMnemonic {
   detail?: string | null
 }
 
+export interface DarkOrderGroup {
+  d: 'B' | 'S' | string
+  n: number
+  amt: number
+  t0: string
+  t1: string
+  p0: number
+  p1: number
+  contrarian: boolean
+  price_dir: string
+  reason: string
+}
+
+export interface DarkOrder {
+  buy_amt: number
+  sell_amt: number
+  net: number
+  herd_buy: number
+  herd_sell: number
+  groups: DarkOrderGroup[]
+}
+
 export interface DarkFlowResp {
   main_intent: DarkFlowMainIntent | null
   inner_outer: DarkFlowInnerOuter | null
   mnemonic: DarkFlowMnemonic | null
+  dark_order: DarkOrder | null
 }
 
 /** 元 -> 万, 带符号, 无数据返回 '--' */
@@ -128,6 +151,7 @@ export default function DarkFlowCards({ symbol, market }: { symbol: string; mark
   const mi = data?.main_intent ?? null
   const io = data?.inner_outer ?? null
   const mn = data?.mnemonic ?? null
+  const darkOrder = data?.dark_order ?? null
   const insufficient = mi?.data_status === 'insufficient'
 
   const askAi = () => {
@@ -189,6 +213,37 @@ export default function DarkFlowCards({ symbol, market }: { symbol: string; mark
           <div className="text-[12px] text-muted-foreground">暂无主力意图数据(非A股/未开盘/数据源不可用)</div>
         )}
       </div>
+
+      {/* ============ 卡片: 暗盘资金(拆单识别, 2026-08-30) ============ */}
+      {darkOrder && darkOrder.net != null ? (
+        <div className="rounded-xl border border-border/50 bg-card p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[13px] font-semibold text-foreground">🕵️ 暗盘资金(拆单识别)</div>
+            <span className="text-[10px] text-muted-foreground">主力伪装的中小单·逆势+位置确认</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-[11px]">
+            <Stat label="暗盘净额" value={fmtWan(darkOrder.net)} valueClass={upColor(darkOrder.net)} />
+            <Stat label="疑似主力买" value={fmtWan(darkOrder.buy_amt)} valueClass={upColor(darkOrder.buy_amt)} />
+            <Stat label="疑似主力卖" value={fmtWan(darkOrder.sell_amt)} valueClass={upColor(darkOrder.sell_amt)} />
+            <Stat label="散户买(顺势)" value={fmtWan(darkOrder.herd_buy)} valueClass={upColor(darkOrder.herd_buy)} />
+            <Stat label="散户卖(解套)" value={fmtWan(darkOrder.herd_sell)} valueClass={upColor(darkOrder.herd_sell)} />
+          </div>
+          {darkOrder.groups?.length ? (
+            <div className="mt-2 space-y-1 border-t border-border/50 pt-2">
+              {darkOrder.groups.slice(0, 5).map((g, i) => (
+                <div key={i} className="flex items-center justify-between text-[11px]">
+                  <span className={`font-mono ${g.d === 'B' ? 'text-rose-700 dark:text-rose-400' : 'text-emerald-700 dark:text-emerald-400'}`}>
+                    {g.d === 'B' ? '买' : '卖'} {g.n}笔 {fmtWan(g.amt)}
+                  </span>
+                  <span className={g.contrarian ? 'text-amber-700 dark:text-amber-400 font-medium' : 'text-muted-foreground'}>
+                    {g.reason}{g.contrarian ? '·主力' : ''} @ {g.t0}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* ============ 卡片②: 内盘外盘 ============ */}
       <div className="rounded-xl border border-border/50 bg-card p-3">

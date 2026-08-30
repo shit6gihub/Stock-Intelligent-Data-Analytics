@@ -4,13 +4,15 @@
 
 ### feature
 
-- 决策先锋三指标(GS策略 + AI机构活跃度 + L2主力净流入, 盘中实时): src/core/decision_pioneer.py 新增 AI机构活跃度(7因子MAX×1.2零调参, 阈值1.56/3/6, 连强天数+5日均值) + GS策略(BB0慢线/A0快线交叉G买S卖) + L2主力净流入(TQ get_more_info Zjl_HB, 对齐同花顺暗盘口径); 后端 /api/decision-pioneer/{symbol} 端点 + /api/dark-flow 增 l2 字段; 前端 DecisionPioneerCard 卡片挂分时图下方; AI助手 get_decision_pioneer 工具; 盘中监测推送增"决策先锋三指标"段
+- 决策先锋三指标(GS策略 + AI机构活跃度 + L2主力净流入, 盘中实时): src/core/decision_pioneer.py 新增 AI机构活跃度(7因子MAX×1.2零调参, 阈值1.56/3/6, 连强天数+5日均值) + GS策略(BB0慢线/A0快线交叉G买S卖) + L2主力净流入(TQ get_more_info Zjl_HB, 明盘口径=同花顺主力净额); 后端 /api/decision-pioneer/{symbol} 端点 + /api/dark-flow 增 l2 字段; 前端 DecisionPioneerCard 卡片挂分时图下方; AI助手 get_decision_pioneer 工具; 盘中监测推送增"决策先锋三指标"段
 - 决策先锋选股池(三指标共振扫描, 盘中实时): src/web/api/stock_pool.py 新增 POST /api/stock-pool/screen(批量算GS+机构活跃度+L2净流入, 按共振强度排序); 前端机会页新增"选股池"Tab
 - K线缓存表迁移(_m125): klines 表自动建表(优先 TimescaleDB hypertable, 无扩展降级普通表), 恢复 PG 直读支撑机会页全盘扫描; 生产 PG 换 timescale/timescaledb:latest-pg16 镜像
+- 暗盘资金前端展示: 拆单识别结果(主力伪装的中小单, 逆势+位置确认)从 compute_dark_flow 暴露到 /api/dark-flow 响应(新增 dark_order 字段), 前端 DarkFlowCards 新增「暗盘资金(拆单识别)」卡片(暗盘净额+疑似主力买/卖+散户顺势/解套+拆单组明细top5)
 
 ### fix
 
 - 决策先锋 L2 主力净流入单位修复: 通达信 get_more_info 的 Zjl_HB 单位为万元(与成交额 Amount 同量纲), 此前 _l2_summary 误当元返回致前端/推送显示小 1 万倍; 现统一转元返回
+- 修正三指标口径: L2 Zjl_HB 是「主力净流入」(明盘口径, 同花顺主力净额), 非「暗盘资金」; 暗盘=拆单识别走 dark_flow(腾讯逐笔+.tck)。修正 decision_pioneer.py/intraday_monitor.py/darkflow.py/DecisionPioneerCard.tsx 中"对齐同花顺暗盘"的错误注释
 
 ### update
 

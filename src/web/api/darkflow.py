@@ -105,7 +105,7 @@ def build_darkflow_response(symbol_code: str) -> dict:
             "detail": "逐笔成交不足30笔, 内盘外盘口诀暂不判定(数据不足)",
         }
 
-    # L2 主力净流入(TQ get_more_info 盘中实时, 对齐同花顺暗盘口径: 主力净流入=明盘+暗盘)
+    # L2 主力净流入(TQ get_more_info 盘中实时, 明盘口径: 同花顺"主力净额", 非暗盘)
     l2 = None
     try:
         from src.core.decision_pioneer import _l2_summary, fetch_tq_l2
@@ -113,11 +113,17 @@ def build_darkflow_response(symbol_code: str) -> dict:
     except Exception as e:  # noqa: BLE001
         logger.debug(f"dark-flow L2 获取失败 {symbol_code}: {e}")
 
+    # 暗盘资金(拆单识别 v3): 主力伪装的中小单(逆势+位置确认), 同花顺"暗盘资金"口径。
+    # split_order = {buy_amt(疑似主力买), sell_amt(疑似主力卖), net(暗盘净额),
+    #                herd_buy/herd_sell(散户顺势/解套), groups(拆单组明细top10)}
+    dark_order = dark.get("split_order")
+
     return {
         "main_intent": main_intent,
         "inner_outer": inner_outer,
         "mnemonic": mnemonic,
         "l2": l2,
+        "dark_order": dark_order,
     }
 
 
