@@ -6,7 +6,7 @@ import { fetchAPI } from '@panwatch/api'
  * 决策先锋三指标卡片(2026-08-30)
  * 数据来自 GET /api/decision-pioneer/{symbol}?market=CN
  * (fetchAPI 自动补 /api 前缀)。盘中每 30 秒自动刷新, 与分时图节奏一致。
- * 三指标 = GS策略(趋势) × AI机构活跃度(强度) × L2主力净流入(资金, 对齐同花顺暗盘)。
+ * 三指标 = GS策略(趋势) × AI机构活跃度(强度) × L2主力净流入(资金, 明盘口径, 非暗盘)。
  */
 
 export interface InstitutionActivity {

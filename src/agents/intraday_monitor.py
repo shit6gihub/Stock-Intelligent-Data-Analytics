@@ -678,8 +678,8 @@ def _append_main_intent(lines: list, symbol: str) -> None:
 def _append_decision_pioneer(lines: list, symbol: str) -> None:
     """决策先锋三指标段(2026-08-30): GS策略 + AI机构活跃度 + L2主力净流入。
 
-    与主力意图段(逐笔)不同源: 本段=GS趋势(日线均线交叉) + 机构活跃度(纯K线波动)
-    + L2主力净流入(TQ get_more_info, 对齐同花顺暗盘口径)。数据源失败静默。
+    与主力意图段(逐笔, 真暗盘)不同源: 本段=GS趋势(日线均线交叉) + 机构活跃度(纯K线波动)
+    + L2主力净流入(TQ get_more_info.Zjl_HB, 明盘口径, 同花顺"主力资金"对齐)。数据源失败静默。
     """
     try:
         from src.core.decision_pioneer import fetch_decision_pioneer
