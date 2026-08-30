@@ -43,12 +43,15 @@ python run_intent.py --codes 002361.SZ,603737.SH --output ./out
 | pos_high / pos_low | 0.7 / 0.3 | 60 日收盘分位的高位/低位线 |
 | kline_days | 60 | 分位回看窗口 |
 
-## 数据口径(2026-08-29 实测, 详见 TQ3 回邮)
+## 数据口径(2026-08-29 实测, 详见 TQ3/TQ4 回邮)
 - 撤单量/内外盘单位为【手】; 涨幅为 %; 量比沿用 fLianB; 成交额为万元
 - 分位=当前价在近 60 日收盘序列中的排名占比
-- **L2AMO 分档净额(超大/大/中/小单)暂为 None**: formula_process_mul_zb 接口
-  参数待定(ErrorId 5), 见 TQ3 回邮; `tq_main_force.TQClient.l2amo_bands`
-  预留接入点, 拿到样例后补上, 托盘出货规则自动生效
+- **L2AMO 分档净额(超大/大/中/小单)走 TQ4 自建分档**: .tck 逐笔还原(order_cluster.py),
+  盘后落盘数据, 输出至 C:\TdxQ\darkflow\{代码}_{日期}.json; 盘中/无落盘时返回 None,
+  证据链如实标"盘后补全"。formula_process_mul_zb 公式路线已废弃(接口层不在本机,
+  且自建分档按委托/逐笔还原更准, 详见 TQ4 回邮)
+- 托盘出货(超大买+大卖)触发门槛: 净额合计 ≥ 成交额×dump_min_pct(默认3%) 或
+  连续 tuopan_confirm_samples 次同向采样(见 mi1_config.json)
 
 ## 已知边界
 - 周末/盘后取到的是最近交易日收盘快照, 评级口径即"当日收盘意图"

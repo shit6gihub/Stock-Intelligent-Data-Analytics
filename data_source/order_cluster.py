@@ -94,12 +94,26 @@ def parse_tck(path: str) -> Dict[str, Any]:
             "orders_cancel": orders_cancel, "anchors": anchors}
 
 
-def band_summary(parsed: Dict[str, Any]) -> Dict[str, Any]:
-    """逐笔成交金额切档 → 四档 买/卖/净额(万元)。"""
+# 分档阈值(元, 按单笔/单委托成交金额) — 可被 mi1_config.json rules 段覆盖:
+#   band_xl / band_l / band_m (调用方传入 cfg 时生效)
+BAND_XL = 1_000_000.0   # 超大单 >= 100 万
+BAND_L = 200_000.0      # 大单   >= 20 万
+BAND_M = 50_000.0       # 中单   >= 5 万
+
+
+def band_summary(parsed: Dict[str, Any], cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """逐笔成交金额切档 → 四档 买/卖/净额(万元)。
+
+    :param cfg: mi1_config.json 的 rules 段; 可含 band_xl/band_l/band_m(元)。
+    """
+    cfg = cfg or {}
+    band_xl = float(cfg.get("band_xl", BAND_XL))
+    band_l = float(cfg.get("band_l", BAND_L))
+    band_m = float(cfg.get("band_m", BAND_M))
     bands = {
-        "超大单": {"ge": BAND_XL, "buy": 0.0, "sell": 0.0, "n": 0},
-        "大单": {"ge": BAND_L, "buy": 0.0, "sell": 0.0, "n": 0},
-        "中单": {"ge": BAND_M, "buy": 0.0, "sell": 0.0, "n": 0},
+        "超大单": {"ge": band_xl, "buy": 0.0, "sell": 0.0, "n": 0},
+        "大单": {"ge": band_l, "buy": 0.0, "sell": 0.0, "n": 0},
+        "中单": {"ge": band_m, "buy": 0.0, "sell": 0.0, "n": 0},
         "小单": {"ge": 0.0, "buy": 0.0, "sell": 0.0, "n": 0},
     }
     zero_price = 0
@@ -108,11 +122,11 @@ def band_summary(parsed: Dict[str, Any]) -> Dict[str, Any]:
             zero_price += 1
             continue
         amt = t["amount"]
-        if amt >= BAND_XL:
+        if amt >= band_xl:
             b = bands["超大单"]
-        elif amt >= BAND_L:
+        elif amt >= band_l:
             b = bands["大单"]
-        elif amt >= BAND_M:
+        elif amt >= band_m:
             b = bands["中单"]
         else:
             b = bands["小单"]

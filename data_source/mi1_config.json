@@ -19,7 +19,10 @@
     "pos_low": 0.3,
     "kline_days": 60,
     "dump_min_pct": 3.0,
-    "tuopan_confirm_samples": 2
+    "tuopan_confirm_samples": 2,
+    "band_xl": 1000000.0,
+    "band_l": 200000.0,
+    "band_m": 50000.0
   },
   "_comment": "rules 段全部参数可调，禁止在代码里硬编码；评级优先级见 tq_intent.py RULE_PRIORITY（位置优先+危险信号置顶）"
 }
