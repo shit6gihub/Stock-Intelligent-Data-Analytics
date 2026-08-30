@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, BookOpen, Filter, RefreshCw, Share2, Sparkles, ScanSearch, ThumbsDown, ThumbsUp, Download } from 'lucide-react'
 import {
   getToken,
+  fetchAPI,
   recommendationsApi,
   stocksApi,
   strategiesApi,
@@ -34,7 +35,18 @@ import StrategyLibraryDialog from '@/components/StrategyLibraryDialog'
 type SourceFilter = 'all' | 'market_scan' | 'watchlist' | 'mixed' | 'strategy' | 'auction' | 'tdx' | 'wencai'
 type HoldingFilter = 'all' | 'held' | 'unheld'
 type RiskFilter = 'all' | 'low' | 'medium' | 'high'
-type ToolTab = 'resonance' | 'strategy' | 'tdx' | 'wencai'
+type ToolTab = 'resonance' | 'strategy' | 'tdx' | 'wencai' | 'stockpool'
+
+type StockPoolRow = {
+  symbol: string
+  activity: number | null
+  activity_level: string | null
+  gs_state: string | null
+  gs_signal: string | null
+  l2_net: number | null
+  resonance: string
+  score: number
+}
 
 // ── 共振查询(2026-08-22): 一句输入 → 问小达+问财并发 → (可选)策略库精筛 → 共振排序 ──
 type ResonanceRow = {
@@ -368,6 +380,36 @@ export default function OpportunitiesPage() {
   const { toast } = useToast()
   const [feedbackMap, setFeedbackMap] = useState<Record<string, boolean>>({})
   const [feedbackPending, setFeedbackPending] = useState<Set<string>>(new Set())
+
+  // 选股池(决策先锋三指标共振扫描, 2026-08-30)
+  const [poolSymbols, setPoolSymbols] = useState('002361, 600519, 300750, 002407')
+  const [poolRows, setPoolRows] = useState<StockPoolRow[]>([])
+  const [poolLoading, setPoolLoading] = useState(false)
+  const [poolScanned, setPoolScanned] = useState(false)
+
+  const runStockPool = useCallback(async () => {
+    const symbols = poolSymbols
+      .split(/[,，\s]+/)
+      .map((s) => s.trim())
+      .filter((s) => /^\d{6}$/.test(s))
+    if (!symbols.length) {
+      toast('请输入至少一个6位股票代码', 'error')
+      return
+    }
+    setPoolLoading(true)
+    try {
+      const res = await fetchAPI<{ rows: StockPoolRow[]; truncated?: boolean }>('/stock-pool/screen', {
+        method: 'POST',
+        body: JSON.stringify({ symbols }),
+      })
+      setPoolRows(res.rows ?? [])
+      setPoolScanned(true)
+    } catch (e) {
+      toast(`选股池扫描失败: ${e instanceof Error ? e.message : '未知错误'}`, 'error')
+    } finally {
+      setPoolLoading(false)
+    }
+  }, [poolSymbols, toast])
 
   const loadFeedback = useCallback(async (snapDate: string, rows: StrategySignalItem[]) => {
     if (!snapDate || rows.length === 0) return
@@ -1309,6 +1351,7 @@ export default function OpportunitiesPage() {
             <TabsTrigger value="strategy">策略选股</TabsTrigger>
             <TabsTrigger value="tdx">问小达</TabsTrigger>
             <TabsTrigger value="wencai">问财</TabsTrigger>
+            <TabsTrigger value="stockpool">选股池</TabsTrigger>
           </TabsList>
           {/* 共振查询(2026-08-22): 一句输入 → 问小达+问财并发 → 策略库精筛 → 共振排序 */}
           <TabsContent value="resonance">
@@ -1716,6 +1759,101 @@ export default function OpportunitiesPage() {
           </TabsContent>
           <TabsContent value="wencai">
             <WencaiPanel embedded />
+          </TabsContent>
+          <TabsContent value="stockpool">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Input
+                value={poolSymbols}
+                onChange={(e) => setPoolSymbols(e.target.value)}
+                placeholder="输入6位股票代码, 逗号分隔, 如 002361,600519"
+                className="h-8 text-[12px] flex-1 min-w-[260px]"
+              />
+              <Button size="sm" onClick={() => void runStockPool()} disabled={poolLoading}>
+                {poolLoading ? '扫描中...' : '扫描共振'}
+              </Button>
+            </div>
+            <div className="mt-2 text-[11px] text-muted-foreground">
+              决策先锋三指标共振：GS趋势 + AI机构活跃度 + L2主力净流入，三项全满足=强共振
+            </div>
+            {poolScanned ? (
+              poolRows.length ? (
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full text-[12px] border-collapse">
+                    <thead>
+                      <tr className="text-left text-muted-foreground border-b border-border/50">
+                        <th className="py-1.5 pr-2 font-medium">代码</th>
+                        <th className="py-1.5 pr-2 font-medium">活跃度</th>
+                        <th className="py-1.5 pr-2 font-medium">GS状态</th>
+                        <th className="py-1.5 pr-2 font-medium">L2净流入</th>
+                        <th className="py-1.5 font-medium">共振</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {poolRows.map((r) => (
+                        <tr key={r.symbol} className="border-b border-border/30">
+                          <td className="py-1.5 pr-2 font-mono">{r.symbol}</td>
+                          <td className="py-1.5 pr-2 font-mono">
+                            {r.activity != null ? (
+                              <span
+                                className={
+                                  r.activity_level === '大牛' || r.activity_level === '强势'
+                                    ? 'text-rose-600'
+                                    : ''
+                                }
+                              >
+                                {r.activity.toFixed(2)}
+                                {r.activity_level ? `(${r.activity_level})` : ''}
+                              </span>
+                            ) : (
+                              '--'
+                            )}
+                          </td>
+                          <td className="py-1.5 pr-2 font-mono">
+                            {r.gs_state ?? '--'}
+                            {r.gs_signal === 'G' ? ' G买' : r.gs_signal === 'S' ? ' S卖' : ''}
+                          </td>
+                          <td className="py-1.5 pr-2 font-mono">
+                            {r.l2_net != null ? (
+                              <span
+                                className={
+                                  r.l2_net > 0
+                                    ? 'text-rose-600'
+                                    : r.l2_net < 0
+                                      ? 'text-emerald-600'
+                                      : ''
+                                }
+                              >
+                                {r.l2_net > 0 ? '+' : ''}
+                                {r.l2_net.toFixed(0)}万
+                              </span>
+                            ) : (
+                              '--'
+                            )}
+                          </td>
+                          <td className="py-1.5">
+                            <span
+                              className={
+                                r.resonance === '强'
+                                  ? 'text-rose-600 font-semibold'
+                                  : r.resonance === '弱'
+                                    ? 'text-amber-600 font-medium'
+                                    : 'text-muted-foreground'
+                              }
+                            >
+                              {r.resonance === '强' ? '强共振' : r.resonance === '弱' ? '弱共振' : '无'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="mt-2 text-[11px] text-muted-foreground">无结果</div>
+              )
+            ) : (
+              <div className="mt-2 text-[11px] text-muted-foreground">输入代码后点「扫描共振」查看结果</div>
+            )}
           </TabsContent>
         </Tabs>
       </div>

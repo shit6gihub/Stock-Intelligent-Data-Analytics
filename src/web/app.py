@@ -41,6 +41,7 @@ from src.web.api import (
     ths,
     darkflow,
     decision_pioneer,
+    stock_pool,
     boards,
     main_flow,
     auction_pool,
@@ -565,6 +566,13 @@ app.include_router(
     decision_pioneer.router,
     prefix="/api/decision-pioneer",
     tags=["decision-pioneer"],
+    dependencies=protected,
+)
+# 决策先锋选股池(三指标共振扫描, 盘中实时, 2026-08-30)
+app.include_router(
+    stock_pool.router,
+    prefix="/api/stock-pool",
+    tags=["stock-pool"],
     dependencies=protected,
 )
 # 板块数据(阶段2.1/2.2, 2026-08-20): 板块/概念列表 + 详情 + 成分股 + 轮动
