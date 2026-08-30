@@ -40,6 +40,7 @@ from src.web.api import (
     shadow,
     ths,
     darkflow,
+    decision_pioneer,
     boards,
     main_flow,
     auction_pool,
@@ -557,6 +558,13 @@ app.include_router(
     darkflow.router,
     prefix="/api/dark-flow",
     tags=["dark-flow"],
+    dependencies=protected,
+)
+# 决策先锋三指标(GS策略+暗盘资金+AI机构活跃度) + L2主力净流入(盘中实时, 2026-08-30)
+app.include_router(
+    decision_pioneer.router,
+    prefix="/api/decision-pioneer",
+    tags=["decision-pioneer"],
     dependencies=protected,
 )
 # 板块数据(阶段2.1/2.2, 2026-08-20): 板块/概念列表 + 详情 + 成分股 + 轮动

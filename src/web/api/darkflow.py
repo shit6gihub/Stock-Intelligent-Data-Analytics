@@ -105,10 +105,19 @@ def build_darkflow_response(symbol_code: str) -> dict:
             "detail": "逐笔成交不足30笔, 内盘外盘口诀暂不判定(数据不足)",
         }
 
+    # L2 主力净流入(TQ get_more_info 盘中实时, 对齐同花顺暗盘口径: 主力净流入=明盘+暗盘)
+    l2 = None
+    try:
+        from src.core.decision_pioneer import _l2_summary, fetch_tq_l2
+        l2 = _l2_summary(fetch_tq_l2(symbol_code))
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"dark-flow L2 获取失败 {symbol_code}: {e}")
+
     return {
         "main_intent": main_intent,
         "inner_outer": inner_outer,
         "mnemonic": mnemonic,
+        "l2": l2,
     }
 
 

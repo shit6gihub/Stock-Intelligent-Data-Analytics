@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-30
+
+### feature
+
+- 决策先锋三指标(GS策略 + AI机构活跃度 + L2主力净流入, 盘中实时): src/core/decision_pioneer.py 新增 AI机构活跃度(7因子MAX×1.2零调参, 阈值1.56/3/6, 连强天数+5日均值) + GS策略(BB0慢线/A0快线交叉G买S卖) + L2主力净流入(TQ get_more_info Zjl_HB, 对齐同花顺暗盘口径); 后端 /api/decision-pioneer/{symbol} 端点 + /api/dark-flow 增 l2 字段; 前端 DecisionPioneerCard 卡片挂分时图下方; AI助手 get_decision_pioneer 工具; 盘中监测推送增"决策先锋三指标"段
+
 ## 2026-08-29
 
 ### feature

@@ -675,6 +675,47 @@ def _append_main_intent(lines: list, symbol: str) -> None:
         logger.debug(f"主力意图段获取失败(不影响其他段): {e}")
 
 
+def _append_decision_pioneer(lines: list, symbol: str) -> None:
+    """决策先锋三指标段(2026-08-30): GS策略 + AI机构活跃度 + L2主力净流入。
+
+    与主力意图段(逐笔)不同源: 本段=GS趋势(日线均线交叉) + 机构活跃度(纯K线波动)
+    + L2主力净流入(TQ get_more_info, 对齐同花顺暗盘口径)。数据源失败静默。
+    """
+    try:
+        from src.core.decision_pioneer import fetch_decision_pioneer
+
+        d = fetch_decision_pioneer(symbol, "CN")
+        if not d:
+            return
+        lines.append("\n## 决策先锋三指标(GS趋势 × 机构活跃度 × L2资金)")
+        act = d.get("institution_activity")
+        if act:
+            ma5 = f"，5日均{act['ma5']}" if act.get("ma5") is not None else ""
+            lines.append(
+                f"- AI机构活跃度：{act['activity']:.2f}({act['level']})，"
+                f"连强{act['streak_days']}日{ma5}〔生命线1.56/强势线3/大牛线6〕"
+            )
+        else:
+            lines.append("- AI机构活跃度：无数据")
+        gs = d.get("gs")
+        if gs:
+            sig = {"G": "G买(上穿)", "S": "S卖(下穿)"}.get(gs.get("signal"), "无")
+            lines.append(f"- GS策略：当前{gs['state']}，最近信号{sig}")
+        else:
+            lines.append("- GS策略：无数据")
+        l2 = d.get("l2") or {}
+        if l2.get("available") and isinstance(l2.get("zjl_hb"), (int, float)):
+            lines.append(
+                f"- 主力净流入(L2·TQ)：{l2['zjl_hb'] / 1e4:+.0f}万"
+                f"({l2.get('direction') or '平衡'})，"
+                f"逐笔{l2.get('l2_tick_num') or 0}笔/委托{l2.get('l2_order_num') or 0}笔"
+            )
+        else:
+            lines.append("- 主力净流入(L2·TQ)：无数据(TQ未连接或休市)")
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"决策先锋段获取失败(不影响其他段): {e}")
+
+
 def get_realtime_volume_ratio(symbol: str, market: str = "CN") -> float | None:
     """取腾讯实时量比(独立于 ths quote 源, 后者无此字段)。
 
@@ -1487,6 +1528,10 @@ class IntradayMonitorAgent(BaseAgent):
         # 逐笔实时口径 + 筹码面 + 股东户数, 资金面之外的决策核心
         _append_main_intent(lines, stock.symbol)
 
+        # ============ 决策先锋三指标(2026-08-30) ============
+        # GS趋势 + 机构活跃度 + L2主力净流入(对齐同花顺暗盘)
+        _append_decision_pioneer(lines, stock.symbol)
+
         # 账户资金情况
         lines.append("\n## 账户资金")
         lines.append(f"- 总可用资金：{context.portfolio.total_available_funds:.0f} 元")
@@ -1778,6 +1823,14 @@ class IntradayMonitorAgent(BaseAgent):
         intent = _main_intent_summary(stock.symbol)
         if intent:
             lines.append(f"主力意图：{intent}")
+        # 决策先锋三指标(2026-08-30): 精简一行(GS+机构活跃度+L2)
+        try:
+            from src.core.decision_pioneer import decision_pioneer_text
+            dp = decision_pioneer_text(stock.symbol, "CN")
+            if dp:
+                lines.append(f"决策先锋：{dp}")
+        except Exception:  # noqa: BLE001
+            pass
         if triggers:
             lines.append("触发条件：")
             lines.extend([f"- {str(x)}" for x in triggers[:3]])

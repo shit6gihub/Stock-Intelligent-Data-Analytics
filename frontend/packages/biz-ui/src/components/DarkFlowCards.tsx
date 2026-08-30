@@ -4,6 +4,7 @@ import { fetchAPI } from '@panwatch/api'
 import { Button } from '@panwatch/base-ui/components/ui/button'
 import OrderBookObBar from './OrderBookObBar'
 import MainFlowCompareCard from './MainFlowCompareCard'
+import DecisionPioneerCard from './DecisionPioneerCard'
 
 /**
  * 主力意图 + 内盘外盘 双卡片(2026-08-13)
@@ -253,6 +254,9 @@ export default function DarkFlowCards({ symbol, market }: { symbol: string; mark
           <div className="mt-2 text-[12px] text-muted-foreground">内外盘均衡/无明显口诀信号</div>
         )}
       </div>
+
+      {/* ============ 卡片: 决策先锋三指标(2026-08-30) ============ */}
+      <DecisionPioneerCard symbol={symbol} market={market} />
 
       {/* ============ 卡片③: OB 盘口失衡条(2026-08-20) — 底部挂载 ============ */}
       <OrderBookObBar symbol={symbol} />
