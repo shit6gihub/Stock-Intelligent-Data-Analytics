@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import struct
 import zlib
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 REC_SIZE = 36
 HEADER_SIZE = 24
@@ -207,6 +207,61 @@ def parse_img(path: str) -> List[Dict[str, Any]]:
             snap[f"卖{i}价"] = fields.get(f"{40 + i - 1:02X}")
             snap[f"卖{i}量"] = fields.get(f"{50 + i - 1:02X}")
         out.append(snap)
+    return out
+
+
+# 分档阈值(元, 按单笔/单委托金额) — 与 order_cluster 同口径
+BAND_XL = 1_000_000.0   # 超大单 >= 100 万
+BAND_L = 200_000.0      # 大单   >= 20 万
+BAND_M = 50_000.0       # 中单   >= 5 万
+
+
+def reconstruct_order_bands(parsed: Dict[str, Any],
+                            cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """P0-3 委托级还原分档 (Hermes 口径)。
+
+    对每条已分类的 "00" 申报, 以 委托量*委托价 计金额, 按方向(B/S)切四档,
+    输出每档 买/卖/净额(万元)。双向(D) 同时计入买与卖(净额自对冲)。
+    验收(002361 2026-08-27): 超大+6427万/大+692万/中-2198万/小-3982万, 净+939万。
+    """
+    cfg = cfg or {}
+    band_xl = float(cfg.get("band_xl", BAND_XL))
+    band_l = float(cfg.get("band_l", BAND_L))
+    band_m = float(cfg.get("band_m", BAND_M))
+    bands = {
+        "超大单": {"ge": band_xl, "buy": 0.0, "sell": 0.0, "n": 0},
+        "大单": {"ge": band_l, "buy": 0.0, "sell": 0.0, "n": 0},
+        "中单": {"ge": band_m, "buy": 0.0, "sell": 0.0, "n": 0},
+        "小单": {"ge": 0.0, "buy": 0.0, "sell": 0.0, "n": 0},
+    }
+    classify_orders(parsed)  # 填充 o["dir"]
+    for o in parsed["orders"]:
+        if o["price"] <= 0:
+            continue
+        amt = o["vol"] * o["price"]
+        if amt >= band_xl:
+            b = bands["超大单"]
+        elif amt >= band_l:
+            b = bands["大单"]
+        elif amt >= band_m:
+            b = bands["中单"]
+        else:
+            b = bands["小单"]
+        b["n"] += 1
+        if o["dir"] in ("B", "D"):
+            b["buy"] += amt
+        if o["dir"] in ("S", "D"):
+            b["sell"] += amt
+    out: Dict[str, Any] = {}
+    wan = 1e4
+    net_total = 0.0
+    for name, b in bands.items():
+        buy_wan = round(b["buy"] / wan, 2)
+        sell_wan = round(b["sell"] / wan, 2)
+        net_wan = round(buy_wan - sell_wan, 2)
+        net_total += net_wan
+        out[name] = {"buy_wan": buy_wan, "sell_wan": sell_wan, "net_wan": net_wan, "n": b["n"]}
+    out["net_total_wan"] = round(net_total, 2)
     return out
 
 
