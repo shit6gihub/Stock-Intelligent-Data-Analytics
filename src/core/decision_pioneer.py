@@ -266,7 +266,9 @@ def _l2_summary(l2: dict | None) -> dict:
         cancel_total = cancel_buy + cancel_sell
     return {
         "available": True,
-        "zjl_hb": net,
+        # Zjl_HB 单位=万元(通达信 get_more_info 约定, 与成交额 Amount 同量纲)。
+        # 统一转元返回, 上层(前端 fmtWan / 推送 /1e4 / 选股池)按"元→万"换算口径一致。
+        "zjl_hb": net * 1e4 if net is not None else None,
         "direction": direction,
         "cancel_buy": cancel_buy,
         "cancel_sell": cancel_sell,
