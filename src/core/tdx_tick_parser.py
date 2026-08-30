@@ -129,19 +129,26 @@ def parse_tck(path: str) -> Dict[str, Any]:
     return {"trades": trades, "orders": orders, "cancels": cancels, "anchors": anchors}
 
 
-def classify_orders(parsed: Dict[str, Any]) -> Dict[str, int]:
-    """委托方向分类 (Hermes 口径, 2026-08-30 终版, 严格版)。
+# 连续竞价起点 (H)MMSSmmm: 9:30:00.000。集合竞价(9:15-9:30)为虚拟撮合,
+# 无真实主动/被动方向, 会污染方向判定 —— Hermes 口径①(2026-08-31)剔除之。
+CONTINUOUS_OPEN = 93_000_000
+
+
+def classify_orders(parsed: Dict[str, Any], continuous_only: bool = True) -> Dict[str, int]:
+    """委托方向分类 (Hermes 口径, 2026-08-31 定夺版, 严格+连续竞价)。
 
     对每条 "00" 申报:
       主动买 = a28 指向的成交存在 且 该成交 tag=="2B" 且 委托量 == 该成较量
       主动卖 = a32 指向的成交存在 且 该成交 tag=="2S" 且 委托量 == 该成较量
-    (a28/a32 定义即"指向主动买/卖成交", 故指向成交的方向标签必须自洽;
-     指向 dir 异常(非2B/2S)成交的指针视为无效, 不计入主动侧。)
+    continuous_only=True 时仅统计 time>=93000000 的连续竞价申报
+    (剔除集合竞价 127 条, 对齐 Hermes 验收 65,499)。
     返回统计: {"主动买": n, "主动卖": n, "双向": n, "被动": n, "total": n}
     """
     trade_by_seq: Dict[int, Dict[str, Any]] = {t["seq"]: t for t in parsed["trades"]}
     counts = {"主动买": 0, "主动卖": 0, "双向": 0, "被动": 0, "total": 0}
     for o in parsed["orders"]:
+        if continuous_only and o["time"] < CONTINUOUS_OPEN:
+            continue
         t28 = trade_by_seq.get(o["a28"])
         t32 = trade_by_seq.get(o["a32"])
         buy_match = (t28 is not None and t28["dir"] == "B"
@@ -265,15 +272,65 @@ def reconstruct_order_bands(parsed: Dict[str, Any],
     return out
 
 
+def reconstruct_trade_bands(parsed: Dict[str, Any],
+                            cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """P0-3 正确口径(Hermes 2026-08-31 定夺): 逐笔成交分档(明盘)。
+
+    数据源 = 成交记录(type=0); 按【单笔成交金额】切四档(100万/20万/5万);
+    方向 = 成交 tag(2B买/2S卖); 净额 = 买额 - 卖额。
+    验收(002361 2026-08-27): 超大+6427万/大+692万/中-2198万/小-3982万, 净+939万。
+    (注: 非"委托分档"、非"拆单聚簇"——.tck 无母单↔子单聚簇键, 拆单留待 TQ8 遗留项。)
+    """
+    cfg = cfg or {}
+    band_xl = float(cfg.get("band_xl", BAND_XL))
+    band_l = float(cfg.get("band_l", BAND_L))
+    band_m = float(cfg.get("band_m", BAND_M))
+    bands = {
+        "超大单": {"ge": band_xl, "buy": 0.0, "sell": 0.0, "n": 0},
+        "大单": {"ge": band_l, "buy": 0.0, "sell": 0.0, "n": 0},
+        "中单": {"ge": band_m, "buy": 0.0, "sell": 0.0, "n": 0},
+        "小单": {"ge": 0.0, "buy": 0.0, "sell": 0.0, "n": 0},
+    }
+    for t in parsed["trades"]:
+        if t["price"] <= 0:
+            continue
+        amt = t["amt"]
+        if amt >= band_xl:
+            b = bands["超大单"]
+        elif amt >= band_l:
+            b = bands["大单"]
+        elif amt >= band_m:
+            b = bands["中单"]
+        else:
+            b = bands["小单"]
+        b["n"] += 1
+        if t["dir"] == "B":
+            b["buy"] += amt
+        elif t["dir"] == "S":
+            b["sell"] += amt
+    out: Dict[str, Any] = {}
+    wan = 1e4
+    net_total = 0.0
+    for name, b in bands.items():
+        buy_wan = round(b["buy"] / wan, 2)
+        sell_wan = round(b["sell"] / wan, 2)
+        net_wan = round(buy_wan - sell_wan, 2)
+        net_total += net_wan
+        out[name] = {"buy_wan": buy_wan, "sell_wan": sell_wan, "net_wan": net_wan, "n": b["n"]}
+    out["net_total_wan"] = round(net_total, 2)
+    return out
+
+
 def acceptance_check(path: str) -> Dict[str, Any]:
     """P0-2 验收: 输出记录总数 + 方向分类 (对照 Hermes 实测:
     187,288 条 / 主动买 26,119 / 主动卖 23,870 / 双向 263 / 被动 15,247)"""
     parsed = parse_tck(path)
-    counts = classify_orders(parsed)
+    counts = classify_orders(parsed, continuous_only=True)
     ticks = to_ticks(parsed)
     return {
         "anchors": parsed["anchors"],
         "order_direction": counts,
+        "trade_bands": reconstruct_trade_bands(parsed),
         "ticks": len(ticks),
     }
 
@@ -289,5 +346,6 @@ if __name__ == "__main__":
           f"orders={a['orders']} cancels={a['cancels']}")
     print(f"price {a['price_min']}..{a['price_max']}  vol(股)={a['vol_total_share']:,}  "
           f"amount(元)={a['amount_total_yuan']:,.0f}")
-    print("order_direction:", json.dumps(res["order_direction"], ensure_ascii=False))
+    print("order_direction(连续竞价):", json.dumps(res["order_direction"], ensure_ascii=False))
+    print("trade_bands(逐笔成交):", json.dumps(res["trade_bands"], ensure_ascii=False))
     print("ticks:", res["ticks"])
