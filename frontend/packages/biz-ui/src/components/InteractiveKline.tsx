@@ -114,7 +114,9 @@ type HoverTip = {
 }
 
 function parseBusinessDay(dateStr: string): BusinessDay | null {
-  const m = String(dateStr || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  const s = String(dateStr || '').trim()
+  // 兼容 '20260828'(8位无横杠, fallback联网源) 和 '2026-08-28'(带横杠, PG路径)
+  const m = s.match(/^(\d{4})-?(\d{2})-?(\d{2})$/)
   if (!m) return null
   return { year: Number(m[1]), month: Number(m[2]), day: Number(m[3]) }
 }

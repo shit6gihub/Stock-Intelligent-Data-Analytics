@@ -45,10 +45,23 @@ def _parse_market(market: str) -> MarketCode:
         raise HTTPException(400, f"不支持的市场: {market}")
 
 
+def _fmt_date(d) -> str:
+    """统一日期格式为 YYYY-MM-DD(前端 parseBusinessDay 正则要求带横杠)。
+
+    fallback 联网源(腾讯/新浪/TQ)返回 '20260828' 8位无横杠, PG 路径返回 '2026-08-28'。
+    klines 表缺失走 fallback 时, 8位日期若不转横杠 → 前端 parseBusinessDay 全 null
+    → 日K被过滤空白(2026-08-30 线上 bug)。
+    """
+    s = str(d or "").strip()
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:]}"
+    return s[:10]
+
+
 def _serialize_klines(klines) -> list[dict]:
     return [
         {
-            "date": k.date,
+            "date": _fmt_date(k.date),
             "open": k.open,
             "close": k.close,
             "high": k.high,
