@@ -2074,6 +2074,47 @@ FROM _m124_analysis_history_old
     )
 
 
+def _m125_klines_table(conn: Connection) -> None:
+    """K线缓存表(klines) — 优先 TimescaleDB hypertable, 无扩展则降级普通表。
+
+    AGENTS.md 约定 K线读取走 PG 优先(get_klines), 支撑机会页全盘扫描。
+    全盘扫描需预存全市场历史(百万行级), hypertable 时间分区+压缩+retention;
+    数据量小或无 TimescaleDB 扩展时普通表+唯一索引够用。
+    """
+    conn.execute(
+        text(
+            """
+CREATE TABLE IF NOT EXISTS klines (
+  ts TIMESTAMPTZ NOT NULL,
+  symbol TEXT NOT NULL,
+  market TEXT NOT NULL,
+  period TEXT NOT NULL,
+  source TEXT NOT NULL,
+  open DOUBLE PRECISION,
+  high DOUBLE PRECISION,
+  low DOUBLE PRECISION,
+  close DOUBLE PRECISION,
+  volume BIGINT,
+  quality_flag INTEGER DEFAULT 1
+)
+"""
+        )
+    )
+    try:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS timescaledb"))
+        conn.execute(text("SELECT create_hypertable('klines', 'ts', if_not_exists => TRUE)"))
+        logger.info("klines: TimescaleDB hypertable 已启用")
+    except Exception as e:
+        logger.warning(f"klines: TimescaleDB 不可用, 降级普通表: {e}")
+    # 幂等唯一索引(ON CONFLICT 依赖; 含 ts 满足 hypertable 分区键要求)
+    conn.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_klines_symbol_period_ts "
+            "ON klines(symbol, market, period, ts, source)"
+        )
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(101, "agent_config_kind_and_visibility", _m101_agent_config_kind),
     Migration(102, "backfill_agent_kind_data", _m102_backfill_agent_kind),
@@ -2107,6 +2148,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         "analysis_history_user_id_unique",
         _m124_analysis_history_user_id_unique,
     ),
+    Migration(125, "klines_table", _m125_klines_table),
 )
 
 
