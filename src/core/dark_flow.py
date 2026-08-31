@@ -348,89 +348,98 @@ def _fetch_all_ticks(code: str, max_pages: int = 200) -> list[dict]:
     return ticks
 
 
-def _detect_split_orders(ticks: list[dict], window_sec: int = 90, min_consec: int = 3,
-                         lo: float = 5e4, hi: float = 100e4,
+def _detect_split_orders(ticks: list[dict], gap_sec: int = 10, window_sec: int = 90,
+                         min_consec: int = 3, lo: float = 5e4, hi: float | None = None,
                          prev_close: float | None = None) -> dict:
-    """拆单识别 v3: 识别主力伪装的中小单(含价格背景+套牢位置, 2026-08-11 二次修正)。
+    """拆单识别 v4: 时间间隔聚类识别"同方向密集成交簇"(拆单), 全簇累计暗盘流入/流出。
 
-    修正史:
-    v1 只按"同向+时间+金额" → 把散户割肉(跌中连续卖)误判为主力拆单卖
-    v2 加价格方向(逆势=跌中买/涨中卖) → 仍误判: 涨中卖可能是散户解套盘!
-       (用户洞察: 震荡后散户在上涨时卖套牢筹码, 神剑实测唯一涨中卖118万全是解套盘)
-    v3 加"相对昨收位置": 
-      - 涨中卖 + 价格<昨收(套牢区) = 散户解套(不是主力!)
-      - 涨中卖 + 价格>昨收(获利区) = 疑似主力派发
-      - 跌中买 + 价格<昨收 = 主力抄底吸筹(强信号)
-      - 跌中买 + 价格>昨收 = 回落承接(中性)
+    2026-08-31 修复(用户反馈: 金健米业同花顺暗盘流入8亿 vs 我们净流出358万, 方向反+量级差200倍):
+    - v3 只识别"金额5-100万且连续同方向不夹杂其他单"的簇, 涨停股成交密集夹杂反向/超范围单
+      → seq 频繁被打断, 漏检 90%+(金健米业中单买入6.5亿只识别出0.39亿)
+    - v3 把"获利区买入"判为散户追涨排除在暗盘外, 但同花顺暗盘=所有拆单簇, 不分主力/散户
+    修复:
+    1. 拆单簇 = 相邻同方向笔间隔≤gap_sec(10s) 且簇总跨度≤window_sec(90s) 的连续同向成交;
+       金额下限 lo=5万, 无上限(主力拆单每笔金额可大可小)
+    2. 所有簇计入暗盘: buy_amt=买入簇总额(暗盘流入), sell_amt=卖出簇总额(暗盘流出)
+    3. contrarian/reason 仅作意图属性(位置+方向), 不再用于区分是否计入暗盘
 
-    Returns: {buy_amt, sell_amt, net, contrarian_net, herd_buy, herd_sell, groups}
+    Returns: {buy_amt(暗盘流入), sell_amt(暗盘流出), net, groups}
     """
     def _t2s(t: str) -> int:
         h, m, s = t.split(":")
         return int(h) * 3600 + int(m) * 60 + int(s)
 
-    suspect_buy = suspect_sell = 0.0   # 疑似主力(逆势+位置确认)
-    herd_buy = herd_sell = 0.0         # 散户(顺势/解套)
-    groups = []
-    seq = []
-    for tk in ticks:
-        if lo <= tk["amt"] <= hi:
-            seq.append(tk)
+    clusters: list[dict] = []
+    cur: dict | None = None
+
+    def _flush() -> None:
+        if cur is not None and cur["n"] >= min_consec:
+            clusters.append(cur)
+
+    for tk in sorted(ticks, key=lambda x: x["t"]):
+        d = tk["d"]
+        amt = tk["amt"]
+        if d not in ("B", "S") or amt < lo or (hi is not None and amt > hi):
+            _flush()
+            cur = None
+            continue
+        ts = _t2s(tk["t"])
+        if (
+            cur is not None
+            and cur["d"] == d
+            and (ts - cur["last_ts"]) <= gap_sec
+            and (ts - cur["t0_ts"]) <= window_sec
+        ):
+            cur["amt"] += amt
+            cur["n"] += 1
+            cur["last_ts"] = ts
+            cur["t1"] = tk["t"]
+            cur["p1"] = tk["price"]
         else:
-            if len(seq) >= min_consec and all(x["d"] == seq[0]["d"] for x in seq):
-                dur = _t2s(seq[-1]["t"]) - _t2s(seq[0]["t"])
-                if dur <= window_sec:
-                    g = _classify_split(seq, prev_close)
-                    groups.append(g)
-                    if g["contrarian"]:
-                        if g["d"] == "B":
-                            suspect_buy += g["amt"]
-                        else:
-                            suspect_sell += g["amt"]
-                    else:
-                        if g["d"] == "B":
-                            herd_buy += g["amt"]
-                        else:
-                            herd_sell += g["amt"]
-            seq = []
-    # 尾组
-    if len(seq) >= min_consec and all(x["d"] == seq[0]["d"] for x in seq):
-        dur = _t2s(seq[-1]["t"]) - _t2s(seq[0]["t"])
-        if dur <= window_sec:
-            g = _classify_split(seq, prev_close)
-            groups.append(g)
-            if g["contrarian"]:
-                if g["d"] == "B":
-                    suspect_buy += g["amt"]
-                else:
-                    suspect_sell += g["amt"]
-            else:
-                if g["d"] == "B":
-                    herd_buy += g["amt"]
-                else:
-                    herd_sell += g["amt"]
+            _flush()
+            cur = {
+                "d": d, "amt": amt, "n": 1,
+                "t0": tk["t"], "t1": tk["t"],
+                "t0_ts": ts, "last_ts": ts,
+                "p0": tk["price"], "p1": tk["price"],
+            }
+    _flush()
+
+    buy_total = sell_total = 0.0
+    groups: list[dict] = []
+    for c in clusters:
+        seq = [
+            {"d": c["d"], "amt": c["amt"], "price": c["p0"], "t": c["t0"]},
+            {"d": c["d"], "amt": 0.0, "price": c["p1"], "t": c["t1"]},
+        ]
+        g = _classify_split(seq, prev_close)
+        g["amt"] = round(c["amt"])
+        g["n"] = c["n"]
+        g["t0"] = c["t0"]
+        g["t1"] = c["t1"]
+        g["p0"] = c["p0"]
+        g["p1"] = c["p1"]
+        groups.append(g)
+        if c["d"] == "B":
+            buy_total += c["amt"]
+        else:
+            sell_total += c["amt"]
 
     groups.sort(key=lambda g: -g["amt"])
     return {
-        "buy_amt": round(suspect_buy),
-        "sell_amt": round(suspect_sell),
-        "net": round(suspect_buy - suspect_sell),
-        "herd_buy": round(herd_buy),
-        "herd_sell": round(herd_sell),
+        "buy_amt": round(buy_total),
+        "sell_amt": round(sell_total),
+        "net": round(buy_total - sell_total),
         "groups": groups[:10],
     }
 
 
 def _classify_split(seq: list[dict], prev_close: float | None) -> dict:
-    """单组拆单分类, 返回组信息 + contrarian 标记。
+    """单组拆单簇分类, 返回组信息 + contrarian 标记(仅作意图展示, 不影响暗盘总额)。
 
-    2026-08-31 修复(用户反馈"只有散户没有主力"): 位置(套牢区/获利区)为主判据,
-    价格方向降级为辅助描述。原逻辑"涨中卖+获利区=主力派发"要求 price_dir=up,
-    但真实逐笔里主力在高位出货时价格往往横盘/微跌(主力压着卖), 90s 窗口内
-    price_dir 多为 flat/down, 导致获利区卖出全落到 else"横盘"被判散户,
-    暗盘只剩散户没有主力(神剑 002361 实测: 10 组拆单 0 组主力)。
-    修复: 获利区卖出(S+价格>昨收)=主力派发、套牢区买入(B+价格<昨收)=主力抄底,
-    不再要求价格方向; 散户侧补"散户追涨/散户割肉"两类。
+    2026-08-31: _detect_split_orders 改为全簇累计暗盘流入/流出后, 本函数的 contrarian
+    不再决定是否计入暗盘, 仅用于前端展示"逆势(疑似主力) vs 顺势(散户)"的标记。
+    判据: 位置(套牢/获利)为主 + 价格方向辅助。
     """
     direction = seq[0]["d"]
     amt_sum = sum(x["amt"] for x in seq)
