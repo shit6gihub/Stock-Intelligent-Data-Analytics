@@ -483,11 +483,14 @@ def auction_snapshot(ticks: List[dict], prev_close: Optional[float]) -> Dict[str
 # 算法三: wencai 候选池
 # ---------------------------------------------------------------------------
 
-def ai_candidate_pool(ths: THS) -> Dict[str, Any]:
-    """通过 wencai_nlp 查询两个量化 query, 返回候选股票列表。
+def ai_candidate_pool(vendor) -> Dict[str, Any]:
+    """通过 thsdk_vendor.wencai_query 查询一组 query, 返回去重候选股池。
 
-    返回结构: {queries: [原始 query...], candidates: [{code, name, query}...],
-    query_rows: {query: 行数}, errors: []}。股票代码统一转 USZA/USHA/USTM 格式。
+    返回结构: {queries: [...], candidates: [{code, name, query}...],
+    query_rows: {query: 行数}, errors: []}。股票代码统一映射为 USZA/USHA/USTM。
+
+    迁移 (2026-08-31 Hermes D4): 由内联 _CALLER.call(ths.wencai_nlp, q) 改为
+    vendor.wencai_query(q) (vendor 内置限频 0.5s + 熔断 + 重试, 凭据从 env 读)。
     """
     candidates: List[dict] = []
     seen: set = set()
@@ -495,21 +498,36 @@ def ai_candidate_pool(ths: THS) -> Dict[str, Any]:
     errors: List[str] = []
 
     for q in WENCAI_QUERIES:
-        resp = _CALLER.call(ths.wencai_nlp, q)
+        try:
+            resp = vendor.wencai_query(q)
+        except Exception as e:
+            errors.append(f"{q} -> 失败: {e}")
+            query_rows[q] = 0
+            continue
         if resp is None:
             errors.append(f"{q} -> 查询失败/熔断")
             query_rows[q] = 0
             continue
-        rows = [r for r in (resp.data or []) if isinstance(r, dict)]
+        # thsdk Response.data 是 List[dict]; 也可能 vendor 返回 DataFrame
+        rows = getattr(resp, "data", None)
+        if rows is None and hasattr(resp, "to_dict"):
+            try:
+                rows = resp.to_dict("records")
+            except Exception:
+                rows = []
+        elif rows is None:
+            rows = []
         query_rows[q] = len(rows)
         for r in rows:
+            if not isinstance(r, dict):
+                continue
             code = _convert_wencai_code(r.get("股票代码"))
             name = str(r.get("股票简称") or r.get("名称") or "").strip()
             if code and code not in seen:
                 seen.add(code)
                 candidates.append({"code": code, "name": name, "query": q})
 
-    note = f"共 {len(candidates)} 个去重候选; 两个 query 原始行数: {query_rows}"
+    note = f"共 {len(candidates)} 条候选; query 行数: {query_rows}"
     if errors:
         note += "; 失败: " + " | ".join(errors)
     return {
@@ -537,16 +555,30 @@ def run(symbol: str, date: Optional[str] = None, prev_close: Optional[float] = N
     Returns:
         {"close_surge": {...}, "auction": {...}, "wencai_pool": {...}}
     """
+    # wencai_vendor (2026-08-31 Hermes D4): 独立 vendor (凭据 env), 不在 THS 上下文里
+    # 凭据 THS_USERNAME/THS_PASSWORD 从 .env.sida.local 读; 缺凭据时 ai_candidate_pool 内异常被吞
+    _vendor = None
+    try:
+        from src.core.thsdk_vendor import get_vendor
+        _vendor = get_vendor()
+    except Exception as _ve:
+        import logging as _lg
+        _lg.getLogger(__name__).warning("thsdk_vendor 未初始化(可能 .env 缺凭据): %s", _ve)
+
     with THS() as ths:
-        # 1) 尾盘大单
+        # 1) 灏剧洏澶у崟
         bof_rows = _fetch_big_order_flow(ths, symbol)
-        # 2) 竞价快照(支持历史日期)
+        # 2) 绔炰环蹇�鐓�(鏀�鎸佸巻鍙叉棩鏈�)
         tick_rows = _fetch_tick_super_level1(ths, symbol, date)
-        # 3) 昨收: 显式传入优先; 否则日 K 线推算
+        # 3) 鏄ㄦ敹: 鏄惧紡浼犲叆浼樺厛; 鍚﹀垯鏃?K 绾挎帹绠?
         if prev_close is None:
             prev_close = _fetch_prev_close(ths, symbol)
-        # 4) wencai 候选池(游客可用, 与个股无关)
-        pool = ai_candidate_pool(ths)
+        # 4) wencai 鍊欓€夋睜(娓稿�㈠彲鐢�, 涓庝釜鑲℃棤鍏?
+        pool = ai_candidate_pool(_vendor) if _vendor else {
+            "queries": [], "candidates": [], "query_rows": {},
+            "errors": ["thsdk_vendor 未初始化(检查 THS_USERNAME/THS_PASSWORD 是否在 .env.sida.local)"],
+            "note": "wencai 候选池不可用; 请补 .env 凭据",
+        }
 
     close_surge = close_auction_surge(bof_rows)
     auction = auction_snapshot(tick_rows, prev_close)

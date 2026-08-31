@@ -32,5 +32,17 @@ docs/superpowers/
 .superpowers/
 panwatch.db
 src/.cache/
-aliyun-cli-linux-latest-amd64.tgz
+aliyun-cli-latest-amd64.tgz
 .codegraph/
+
+# === SIDA 2026-08-31 Hermes D3: 凭据治理 ===
+# 任何 .env* 文件 (含 .env, .env.local, .env.sida.local, .env.production 等)
+.env*
+!.env.example
+# 凭据/账号密码相关文件
+*credentials*
+*secret*
+thsdk_manual*.md   # 整改前先 _clean, 整改后标准命名 thsdk_manual.md (无 _clean 后缀)
+*.sealed.zip      # 加密压缩包
+# 旧 _clean 副本整改后会重命名为标准名 (thsdk_manual.md / thsdk_8q8a.md), 此条目清理后保留
+
