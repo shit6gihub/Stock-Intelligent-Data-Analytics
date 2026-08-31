@@ -243,3 +243,38 @@ def md_dark_flow_tq(symbol: str, market: str = "CN") -> dict | None:
     except (OSError, ValueError) as exc:
         logger.warning("darkflow 读取失败 %s: %s", path, exc)
         return None
+
+
+def md_formula_mul(formula_name: str, stock_list: list[str], **kw) -> dict:
+    """批量通达信指标公式(TQ formula_process_mul_zb)。
+
+    返回 {代码: {指标名: [值...]}}, 失败返回 {}。
+    kw: stock_period/count/return_count/dividend_type/xsflag。
+    内置公式: MACD / ZLJC(主力进出 JCL/JCM/JCS)。L2_AMO 需客户端自定义公式后按名调。
+    """
+    from marketdata.vendors.tq import formula_mul
+
+    try:
+        return formula_mul(formula_name, stock_list, **kw)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("md_formula_mul %s failed: %s", formula_name, e)
+        return {}
+
+
+def md_main_flow_zljc(stock_list: list[str]) -> dict:
+    """通达信 ZLJC(主力进出) 三档净量 → {代码: {jcl, jcm, jcs}}。
+
+    JCL/JCM/JCS = 超/大/中单净量(通达信内置"主力进出"指标)。明盘主力资金流现成口径,
+    与 get_more_info.Zjl_HB(主力净额) 互补: ZLJC 分三档、Zjl_HB 是含B净额。
+    """
+    raw = md_formula_mul("ZLJC", stock_list, return_count=1)
+    out: dict = {}
+    for code, metrics in raw.items():
+        if not isinstance(metrics, dict):
+            continue
+        out[code] = {
+            "jcl": (metrics.get("JCL") or [None])[0],
+            "jcm": (metrics.get("JCM") or [None])[0],
+            "jcs": (metrics.get("JCS") or [None])[0],
+        }
+    return out

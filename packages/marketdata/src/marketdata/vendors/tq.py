@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -23,7 +24,7 @@ from marketdata.vendors.base import KlineVendor, MoreInfoVendor, QuoteVendor
 
 logger = logging.getLogger(__name__)
 
-_TQ_URL = "http://172.18.0.1:5100/"  # 容器内宿主网关(panwatch-net); 宿主本机为 127.0.0.1:5100
+_TQ_URL = (os.environ.get("TDX_QUANT_URL") or "http://172.18.0.1:5100/").rstrip("/") + "/"  # 生产容器 env 注入直连地址; 兜底旧 frps 网关
 _TIMEOUT_S = 4.0  # 正常 <100ms; 隧道断开时快速失败交给降级链
 
 
@@ -263,3 +264,61 @@ class TqKlineVendor(KlineVendor):
             except Exception:  # noqa: BLE001
                 continue
         return out
+
+
+def formula_mul(
+    formula_name: str,
+    stock_list: list[str],
+    *,
+    formula_arg: str = "",
+    stock_period: str = "1d",
+    count: int = -1,
+    return_count: int = 1,
+    dividend_type: int = 0,
+    xsflag: int = -1,
+) -> dict:
+    """批量执行通达信指标公式(formula_process_mul_zb), 返回 {代码: {指标名: [值...]}}。
+
+    周期参数 stock_period + periodstr 必须同传(TQ 17709 特有: 缺 periodstr 报
+    "periodstr error"; 缺 stock_period 报 "formula data counts < 1")。
+    常用内置公式: MACD / ZLJC(主力进出: JCL/JCM/JCS 三档净量)。
+    L2_AMO 是公式函数(非独立公式), 需在客户端"公式管理器"自定义指标公式后按名调用。
+    """
+    params = {
+        "formula_name": formula_name,
+        "formula_arg": formula_arg,
+        "stock_list": stock_list,
+        "stock_period": stock_period,
+        "periodstr": stock_period,
+        "count": count,
+        "return_count": return_count,
+        "dividend_type": dividend_type,
+        "xsflag": xsflag,
+    }
+    v = _rpc("formula_process_mul_zb", params, timeout=max(_TIMEOUT_S, 60.0))
+    if not isinstance(v, dict):
+        return {}
+    v.pop("ErrorId", None)
+    v.pop("Error", None)
+    return v
+
+
+def formula_zb_single(
+    formula_name: str,
+    stock_code: str,
+    *,
+    formula_arg: str = "",
+    xsflag: int = -1,
+) -> dict:
+    """单只指标公式(依赖客户端当前打开的数据, 盘中实时单只场景)。"""
+    v = _rpc("formula_zb", {
+        "formula_name": formula_name,
+        "formula_arg": formula_arg,
+        "stock_code": stock_code,
+        "xsflag": xsflag,
+    }, timeout=max(_TIMEOUT_S, 60.0))
+    if not isinstance(v, dict):
+        return {}
+    v.pop("ErrorId", None)
+    v.pop("Error", None)
+    return v

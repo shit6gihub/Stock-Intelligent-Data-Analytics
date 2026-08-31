@@ -4,6 +4,7 @@
 
 ### feature
 
+- 通达信 TQ formula 引擎接入 + `_TQ_URL` 修复: `vendors/tq.py` 新增 `formula_mul`(formula_process_mul_zb 批量指标公式) + `formula_zb_single`(单只, 依赖客户端打开数据); `core/marketdata_client.py` 新增 `md_formula_mul` + `md_main_flow_zljc`(ZLJC 主力进出三档 jcl/jcm/jcs)。周期参数须 stock_period+periodstr 同传(缺 periodstr 报 periodstr error)。内置公式: MACD/ZLJC/ZJL。L2_AMO 是公式函数非独立公式, 需客户端公式管理器自定义后按名调。同时修复 `_TQ_URL` 硬编码旧 frps 地址 `172.18.0.1:5100`(已不通) → 改读 `TDX_QUANT_URL` 环境变量(生产容器注入 `172.27.16.1:17709` 直连), 兜底旧地址
 - 通达信 .tck 逐笔解析器落地 + 暗盘双数据源框架: 新增 `src/core/tdx_tick_parser.py`(36字节委托号级解析, 官方方向 2B主买/2S主卖 + 主动侧委托号 a28/a32 + 撤单 0C) + `src/core/dark_l2.py`(fetch_l2_ticks 接入层)。dark_flow 通过 `PANWATCH_DARK_SOURCE=tdx_tck` 切换: .tck 文件存在用官方方向(盘后精确), 找不到自动回退腾讯逐笔(盘中实时兜底)。官方方向比腾讯自解析方向准(交易所级标记), 修正暗盘方向误差。局限: .tck 仅主动侧(被动 maker 未落盘), 盘后数据(超盘回放落盘 zst_cache)
 
 ### fix
