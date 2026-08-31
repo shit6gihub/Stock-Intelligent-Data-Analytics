@@ -56,7 +56,9 @@ ABSORB_INTENSITY = 35.0   # 强吸筹: 主力参与度(占全市场成交) ≥ 3
 ABSORB_BUY_RATIO = 48.0   # 强吸筹: 主力买占比(买占主力成交) ≥ 48%
 
 # 暗盘数据源(2026-08-11 预留): 环境变量 PANWATCH_DARK_SOURCE 可切换
-#   tencent_ticks = 腾讯逐笔(免费, 默认, 已与同花顺暗盘验证误差7%)
+#   tencent_ticks = 腾讯逐笔(免费, 默认, 盘中实时, 方向自解析)
+#   tdx_tck       = 通达信 .tck 超盘回放落盘(盘后精确, 官方方向 2B/2S; 2026-08-31 接入,
+#                   找不到文件自动回退腾讯逐笔, 见 src/core/dark_l2.py + tdx_tick_parser.py)
 #   l2_tencent    = 腾讯L2(预留, 需付费账号)
 #   l2_sina       = 新浪L2(预留, 需购买)
 #   l2_itick      = iTick L2(预留, 99 USDT/月)
