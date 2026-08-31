@@ -91,6 +91,54 @@ class TestDarkFlowV5:
             assert 0 <= z["ratio"] <= 100
 
 
+class TestClassifySplit:
+    """2026-08-31 拆单分类修复: 位置(套牢/获利)为主判据, 价格方向降级辅助。
+    原逻辑"涨中卖+获利区=主力派发"要求 price_dir=up, 主力高位出货时价格横盘/微跌
+    被误判散户, 暗盘只剩散户没有主力。修复后获利区卖=主力派发、套牢区买=主力抄底。"""
+
+    def _seq(self, d, p0, p1, amt=50e4):
+        return [
+            {"d": d, "amt": amt, "price": p0, "t": "10:00:00"},
+            {"d": d, "amt": amt, "price": p1, "t": "10:00:03"},
+        ]
+
+    def test_profit_zone_sell_flat_is_distribution(self):
+        """获利区横盘卖出 = 主力派发(contrarian=True), 不再要求涨中卖。"""
+        g = df_module._classify_split(self._seq("S", 10.52, 10.52), 10.45)
+        assert g["contrarian"] is True
+        assert g["reason"] == "主力派发"
+
+    def test_profit_zone_sell_down_is_distribution(self):
+        """获利区微跌卖出 = 主力派发(高位压着卖)。"""
+        g = df_module._classify_split(self._seq("S", 10.51, 10.50), 10.45)
+        assert g["contrarian"] is True
+        assert g["reason"] == "主力派发"
+
+    def test_trapped_zone_buy_is_accumulation(self):
+        """套牢区买入 = 主力抄底(contrarian=True)。"""
+        g = df_module._classify_split(self._seq("B", 10.40, 10.39), 10.45)
+        assert g["contrarian"] is True
+        assert g["reason"] == "主力抄底"
+
+    def test_trapped_zone_sell_up_is_retail_unwind(self):
+        """套牢区涨中卖出 = 散户解套(contrarian=False)。"""
+        g = df_module._classify_split(self._seq("S", 10.40, 10.41), 10.45)
+        assert g["contrarian"] is False
+        assert g["reason"] == "散户解套"
+
+    def test_trapped_zone_sell_down_is_retail_cut(self):
+        """套牢区跌中卖出 = 散户割肉(contrarian=False)。"""
+        g = df_module._classify_split(self._seq("S", 10.40, 10.39), 10.45)
+        assert g["contrarian"] is False
+        assert g["reason"] == "散户割肉"
+
+    def test_profit_zone_buy_is_retail_chase(self):
+        """获利区买入 = 散户追涨(contrarian=False)。"""
+        g = df_module._classify_split(self._seq("B", 10.52, 10.53), 10.45)
+        assert g["contrarian"] is False
+        assert g["reason"] == "散户追涨"
+
+
 class TestJudgeSignal:
     def test_inflow_tail(self):
         assert "吸筹" in _judge_signal(8000e4, 8000e4, 3000e4, 5000e4, -5000e4,

@@ -422,7 +422,16 @@ def _detect_split_orders(ticks: list[dict], window_sec: int = 90, min_consec: in
 
 
 def _classify_split(seq: list[dict], prev_close: float | None) -> dict:
-    """单组拆单分类, 返回组信息 + contrarian 标记。"""
+    """单组拆单分类, 返回组信息 + contrarian 标记。
+
+    2026-08-31 修复(用户反馈"只有散户没有主力"): 位置(套牢区/获利区)为主判据,
+    价格方向降级为辅助描述。原逻辑"涨中卖+获利区=主力派发"要求 price_dir=up,
+    但真实逐笔里主力在高位出货时价格往往横盘/微跌(主力压着卖), 90s 窗口内
+    price_dir 多为 flat/down, 导致获利区卖出全落到 else"横盘"被判散户,
+    暗盘只剩散户没有主力(神剑 002361 实测: 10 组拆单 0 组主力)。
+    修复: 获利区卖出(S+价格>昨收)=主力派发、套牢区买入(B+价格<昨收)=主力抄底,
+    不再要求价格方向; 散户侧补"散户追涨/散户割肉"两类。
+    """
     direction = seq[0]["d"]
     amt_sum = sum(x["amt"] for x in seq)
     p0, p1 = seq[0]["price"], seq[-1]["price"]
@@ -431,20 +440,20 @@ def _classify_split(seq: list[dict], prev_close: float | None) -> dict:
     below_prev = prev_close is not None and p0 < prev_close
     contrarian = False
     reason = ""
-    if direction == "B" and price_dir == "down" and below_prev:
-        contrarian = True      # 跌中买+套牢区 = 主力抄底吸筹(强信号)
-        reason = "主力抄底"
-    elif direction == "S" and price_dir == "up" and not below_prev:
-        contrarian = True      # 涨中卖+获利区 = 主力派发
-        reason = "主力派发"
-    elif direction == "S" and price_dir == "up" and below_prev:
-        contrarian = False     # 涨中卖+套牢区 = 散户解套盘(用户洞察!)
-        reason = "散户解套"
-    elif direction == "B" and price_dir == "down" and not below_prev:
-        contrarian = False     # 跌中买+获利区 = 回落承接(中性)
-        reason = "回落承接"
-    else:
-        reason = "横盘"
+    if direction == "B":
+        if below_prev:
+            contrarian = True
+            reason = "主力抄底"          # 套牢区(价格<昨收)买入 = 主力抄底吸筹
+        else:
+            contrarian = False
+            reason = "回落承接" if price_dir == "down" else "散户追涨"
+    else:  # direction == "S"
+        if not below_prev:
+            contrarian = True
+            reason = "主力派发"          # 获利区(价格>昨收)卖出 = 主力高位出货
+        else:
+            contrarian = False
+            reason = "散户解套" if price_dir == "up" else "散户割肉"
 
     return {
         "d": direction, "n": len(seq), "amt": round(amt_sum),

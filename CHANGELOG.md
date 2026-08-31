@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-31
+
+### fix
+
+- 拆单识别分类修复(暗盘只剩散户没有主力): `src/core/dark_flow.py::_classify_split` 原逻辑"涨中卖+获利区=主力派发"要求 price_dir=up, 但主力高位出货时价格往往横盘/微跌(压着卖), 90s 窗口内 price_dir 多为 flat/down, 导致获利区卖出全落到 else"横盘"被判散户(神剑 002361 实测 10 组拆单 0 组主力)。改为位置(套牢/获利)为主判据: 获利区卖出=主力派发、套牢区买入=主力抄底, 价格方向降级为辅助描述; 散户侧补"散户追涨/散户割肉"两类。补 `test_dark_flow.py::TestClassifySplit` 6 例
+
 ## 2026-08-30
 
 ### feature
