@@ -22,6 +22,12 @@ def _init_test_db():
     """
     from src.web.database import init_db
 
+    # 2026-09-01 修复 CI 门禁: create_all 依赖 ORM 表注册, 但部分测试文件
+    # (test_run_progress_stale / test_pdf_export 等)不 import models,
+    # 导致 create_all 建空库 → 后续查询报 "no such table: users"。
+    # 先 import models 注册全部 54 张表, 再 init_db。
+    import src.web.models  # noqa: F401  确保 Base.metadata 注册全部表
+
     init_db()
 
 

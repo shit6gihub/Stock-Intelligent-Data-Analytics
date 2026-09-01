@@ -77,6 +77,10 @@ jobs:
         env:
           # 2026-08-23 Q2: 测试用默认 admin 登录(仅 CI 虚拟库)
           AUTH_ALLOW_DEFAULT_ADMIN: "1"
+          # 2026-09-01 修复 CI 门禁: 测试硬编码 admin/xz.170530 登录
+          # (test_multi_user_auth / test_permissions_rbac / entry_feedback),
+          # 缺 AUTH_PASSWORD 时默认账号密码不同 → 401 失败。这里对齐测试期望。
+          AUTH_PASSWORD: "xz.170530"
         run: |
           # CI(海外机房)无法访问国内行情源, 排除联网测试文件(本地全量跑已验证)。
           # 联网文件清单维护: 新增联网测试时加入此排除表。

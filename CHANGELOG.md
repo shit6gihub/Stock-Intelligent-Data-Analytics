@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-01
+
+### fix
+
+- **CI test 门禁修复**(ghcr 一直无法自动发版的原因, 2026-09-01)。根因 4 处: ①`src/web/migrations.py` 的 `_m111_strategy_layer` 是 PG-only 方言(SERIAL/`::text`/ON CONFLICT), 缺 `_dialect_is_pg` 保护, 测试 sqlite 环境跑它报 `unrecognized token ":"`(对齐其它 PG-only 迁移模式加保护); ②`tests/conftest.py` 的 `_init_test_db` 只调 `init_db()` 没先 `import src.web.models`, create_all 建空库 → 后续 `no such table: users`(先 import models 注册全部表); ③CI `build-and-push-image.yml` test job 只设 `AUTH_ALLOW_DEFAULT_ADMIN` 没设 `AUTH_PASSWORD`, 测试硬编码 `admin/xz.170530` 登录 → 401(补 env); ④S5 归属校验(2026-08-26)后 `get_run_progress` 查询序列/`export_tradingagents_analysis_pdf`/`chat` 工具执行加了 `user` 参数, 三个测试文件未同步 → `Depends object has no attribute 'id'` / mock 签名不匹配(补 user 参数 + 重写 run_progress mock 顺序 + tdx 异常类型改 NotImplementedError)。修复后 CI 命令全量 `1033 passed, 1 skipped` + marketdata `190 passed`。
+
 ## 2026-08-31
 
 ### feature

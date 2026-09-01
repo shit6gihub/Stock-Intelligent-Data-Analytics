@@ -654,6 +654,12 @@ CREATE TABLE IF NOT EXISTS entry_candidate_outcomes (
 
 
 def _m111_strategy_layer(conn: Connection) -> None:
+    # PG-only migration(SERIAL / ::text / ON CONFLICT 方言)。SQLite 测试环境
+    # 这些策略表已由 create_all(ORM) 建出, 此处建表/迁移数据在 sqlite 无意义且
+    # `::text` 语法会报 unrecognized token ":" → 直接跳过(对齐其它 PG-only 迁移的保护模式)。
+    # 生产 PostgreSQL 正常执行。2026-09-01 修复 CI test 门禁。
+    if not _dialect_is_pg(conn):
+        return
     conn.execute(
         text(
             """
