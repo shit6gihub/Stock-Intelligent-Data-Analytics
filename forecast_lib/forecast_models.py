@@ -201,41 +201,33 @@ _timesfm_lock = False
 
 
 def get_timesfm_predictor():
-    """懒加载 TimesFM (Google, CPU ~0.2s, 单变量最轻)。
-    
-    注意：timesfm 1.3.0 在 Python 3.11 下自动 fallback 到 PyTorch 后端，
-    但 HuggingFace 上的 google/timesfm-1.0-200m 只有 JAX 格式 checkpoint。
-    因此 TimesFM 在此环境下不可用，返回 None 让系统跳过而非报错。
+    """懒加载 TimesFM 2.5 PyTorch (Google)。
+
+    timesfm 3.0.2 使用 PyTorch 后端，通过 from_pretrained 加载。
     """
     global _timesfm_model, _timesfm_lock
     if _timesfm_model is not None:
         return _timesfm_model
     if _timesfm_lock:
-        return None  # 加载中，不抛异常
+        return None
     _timesfm_lock = True
     try:
-        import timesfm  # pip: timesfm
-        from timesfm import TimesFmHparams, TimesFmCheckpoint
-        hparams = TimesFmHparams(
-            context_len=512,
-            horizon_len=5,
-            input_patch_len=32,
-            output_patch_len=128,
-            num_layers=20,
-            model_dims=1280,
-            backend="jax",  # 强制使用 JAX 后端
+        import torch
+        from timesfm import TimesFM_2p5_200M_torch
+
+        _timesfm_model = TimesFM_2p5_200M_torch.from_pretrained(
+            "google/timesfm-2.5-200M-torch",
+            local_files_only=False
         )
-        checkpoint = TimesFmCheckpoint(
-            huggingface_repo_id="google/timesfm-1.0-200m",
-            version="jax"
-        )
-        _timesfm_model = timesfm.TimesFm(hparams, checkpoint)
-        _timesfm_model.load_from_checkpoint(checkpoint)
+        _timesfm_model.eval()
     except Exception as e:
         _timesfm_lock = False
-        raise HTTPException(502, f"TimesFM 加载失败: {e}")
+        print(f"TimesFM 加载失败: {e}", flush=True)
+        _timesfm_model = None
+        return None
     _timesfm_lock = False
     return _timesfm_model
+
 
 
 def timesfm_predict(df: pd.DataFrame, pred_len: int = 5):
