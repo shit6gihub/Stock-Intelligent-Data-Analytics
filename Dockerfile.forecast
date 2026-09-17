@@ -1,13 +1,13 @@
-# 数智分析 · 预测引擎 Dockerfile
+# 数智分析 · 预测引擎 Dockerfile (修复 TimesFM)
 #
-# 用途: A 股四模型融合预测引擎(Kronos/XGBoost/LinearRegression/Lag-Llama)
+# 用途: A 股五模型融合预测引擎(Kronos/Chronos-Bolt/XGBoost/LinearRegression/TimesFM)
 #       + 回测调度 + 报告生成(企微/dashboard 双格式)
 # 端口: 8010
 #
 # 自包含: 不依赖 panwatch-kronos:base 私有镜像,
-#         完全从 dockerhub python:3.11-slim 构建,自带 torch cpu + Kronos 源码。
+#         完全从 dockerhub python:3.11-slim 构建。
 # 构建: sudo docker build -f Dockerfile.forecast \
-#       -t ghcr.io/xiaoze-hub/stock-intelligent-data-analytics-forecast:0.1.4 .
+#       -t ghcr.io/shit6gihub/stock-intelligent-data-analytics-forecast:latest .
 
 ARG PYTHON_IMAGE=python:3.11-slim
 
@@ -15,6 +15,14 @@ ARG PYTHON_IMAGE=python:3.11-slim
 FROM ${PYTHON_IMAGE} AS builder
 
 WORKDIR /install
+
+# 构建代理(出网走 192.168.2.5:7890,绕过直连 TLS 被掐)
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ENV HTTP_PROXY=$HTTP_PROXY
+ENV HTTPS_PROXY=$HTTPS_PROXY
+ENV http_proxy=$HTTP_PROXY
+ENV https_proxy=$HTTPS_PROXY
 
 # 编译工具(部分 wheel 需要)
 RUN apt-get update && \
@@ -30,6 +38,11 @@ RUN pip install --no-cache-dir \
 RUN pip install --no-cache-dir \
     einops==0.8.1 huggingface_hub==0.33.1 safetensors==0.6.2 tqdm==4.67.1
 
+# JAX for TimesFM (必须安装，否则 timesfm 1.3+ 会 fallback 到 PyTorch)
+RUN pip install --no-cache-dir \
+    --index-url https://storage.googleapis.com/jax-releases/jax_releases.html \
+    jax==0.4.28 jaxlib==0.4.28
+
 # 预测引擎依赖(含 baostock,fetch_kline 拉日 K)
 COPY forecast_requirements.txt /install/
 RUN pip install --no-cache-dir --timeout 300 --retries 8 \
@@ -40,6 +53,14 @@ RUN pip install --no-cache-dir --timeout 300 --retries 8 \
 FROM ${PYTHON_IMAGE}
 
 WORKDIR /app
+
+# 运行时 stage 同样继承代理(若需要从网络拉模型权重等)
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ENV HTTP_PROXY=$HTTP_PROXY
+ENV HTTPS_PROXY=$HTTPS_PROXY
+ENV http_proxy=$HTTP_PROXY
+ENV https_proxy=$HTTPS_PROXY
 
 ENV TZ=Asia/Shanghai
 ENV PYTHONPATH=/app/Kronos
@@ -64,9 +85,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 urllib.request.urlopen('http://localhost:8010/health', timeout=5).read()" || exit 1
 
 EXPOSE 8010
-
-# 默认 4G 内存限制(Kronos/Lag-Llama ~1GB,留足缓冲)
-# docker run --memory=4g 或 docker-compose deploy.resources.limits.memory: 4g
 
 # CMD: uvicorn 起 fastapi,workers=1(模型全局单例,不允许多 worker)
 CMD ["python", "forecast_server.py"]
