@@ -216,7 +216,7 @@ def get_timesfm_predictor():
         from timesfm import TimesFM_2p5_200M_torch
 
         _timesfm_model = TimesFM_2p5_200M_torch.from_pretrained(
-            "google/timesfm-2.5-200M-torch",
+            "google/timesfm-1.0-200m-pytorch",
             local_files_only=False
         )
         _timesfm_model.eval()
