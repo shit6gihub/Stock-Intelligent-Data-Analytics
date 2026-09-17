@@ -233,10 +233,7 @@ def get_timesfm_predictor():
         _timesfm_model.load_from_checkpoint(checkpoint)
     except Exception as e:
         _timesfm_lock = False
-        # TimesFM 需要 JAX，当前环境不可用，静默跳过
-        print(f"TimesFM 不可用（缺少 JAX）: {e}", flush=True)
-        _timesfm_model = None  # 标记为不可用，避免重复尝试
-        return None
+        raise HTTPException(502, f"TimesFM 加载失败: {e}")
     _timesfm_lock = False
     return _timesfm_model
 
