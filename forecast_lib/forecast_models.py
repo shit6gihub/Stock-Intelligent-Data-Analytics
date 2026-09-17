@@ -220,7 +220,7 @@ def get_timesfm_predictor():
             "google/timesfm-2.5-200m-pytorch",
             local_files_only=False
         )
-        _timesfm_model.eval()
+        
     except Exception as e:
         _timesfm_lock = False
         print(f"TimesFM 加载失败: {e}", flush=True)
