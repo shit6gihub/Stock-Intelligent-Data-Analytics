@@ -204,6 +204,7 @@ def get_timesfm_predictor():
     """懒加载 TimesFM 2.5 PyTorch (Google)。
 
     timesfm 3.0.2 使用 PyTorch 后端，通过 from_pretrained 加载。
+    模型仓库: google/timesfm-2.5-200m-pytorch
     """
     global _timesfm_model, _timesfm_lock
     if _timesfm_model is not None:
@@ -216,7 +217,7 @@ def get_timesfm_predictor():
         from timesfm import TimesFM_2p5_200M_torch
 
         _timesfm_model = TimesFM_2p5_200M_torch.from_pretrained(
-            "google/timesfm-1.0-200m-pytorch",
+            "google/timesfm-2.5-200m-pytorch",
             local_files_only=False
         )
         _timesfm_model.eval()
