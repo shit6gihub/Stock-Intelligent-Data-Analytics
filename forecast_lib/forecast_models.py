@@ -28,8 +28,15 @@ def get_predictor():
     _model_lock = True
     try:
         from model import KronosPredictor, KronosTokenizer, Kronos
-        tokenizer = KronosTokenizer.from_pretrained("NeoQuasar/Kronos-Tokenizer-base")
-        model = Kronos.from_pretrained("NeoQuasar/Kronos-small")
+        # 使用本地模型路径，避免网络下载
+        tokenizer_path = os.path.join(KRONOS_MODEL_PATH, "kronos-tokenizer")
+        model_path = os.path.join(KRONOS_MODEL_PATH, "kronos-small")
+        if os.path.isdir(tokenizer_path) and os.path.isdir(model_path):
+            tokenizer = KronosTokenizer.from_pretrained(tokenizer_path, local_files_only=True)
+            model = Kronos.from_pretrained(model_path, local_files_only=True)
+        else:
+            tokenizer = KronosTokenizer.from_pretrained("NeoQuasar/Kronos-Tokenizer-base")
+            model = Kronos.from_pretrained("NeoQuasar/Kronos-small")
         _predictor = KronosPredictor(model, tokenizer, device="cpu", max_context=512)
     finally:
         _model_lock = False
@@ -194,30 +201,42 @@ _timesfm_lock = False
 
 
 def get_timesfm_predictor():
-    """懒加载 TimesFM (Google, CPU ~0.2s, 单变量最轻)。"""
+    """懒加载 TimesFM (Google, CPU ~0.2s, 单变量最轻)。
+    
+    注意：timesfm 1.3.0 在 Python 3.11 下自动 fallback 到 PyTorch 后端，
+    但 HuggingFace 上的 google/timesfm-1.0-200m 只有 JAX 格式 checkpoint。
+    因此 TimesFM 在此环境下不可用，返回 None 让系统跳过而非报错。
+    """
     global _timesfm_model, _timesfm_lock
     if _timesfm_model is not None:
         return _timesfm_model
     if _timesfm_lock:
-        raise HTTPException(503, "TimesFM 加载中,请稍候")
+        return None  # 加载中，不抛异常
     _timesfm_lock = True
     try:
         import timesfm  # pip: timesfm
-        # TimesFM 官方: TimesFm(hparams=..., checkpoint=...)
-        _timesfm_model = timesfm.TimesFm(
+        from timesfm import TimesFmHparams, TimesFmCheckpoint
+        hparams = TimesFmHparams(
             context_len=512,
             horizon_len=5,
             input_patch_len=32,
             output_patch_len=128,
             num_layers=20,
             model_dims=1280,
-            backend="cpu",
+            backend="jax",  # 强制使用 JAX 后端
         )
-        # 加载 checkpoint (首次自动下载)
-        _timesfm_model.load_from_checkpoint(repo_id="google/timesfm-1.0-200m")
+        checkpoint = TimesFmCheckpoint(
+            huggingface_repo_id="google/timesfm-1.0-200m",
+            version="jax"
+        )
+        _timesfm_model = timesfm.TimesFm(hparams, checkpoint)
+        _timesfm_model.load_from_checkpoint(checkpoint)
     except Exception as e:
         _timesfm_lock = False
-        raise HTTPException(502, f"TimesFM 加载失败: {e}")
+        # TimesFM 需要 JAX，当前环境不可用，静默跳过
+        print(f"TimesFM 不可用（缺少 JAX）: {e}", flush=True)
+        _timesfm_model = None  # 标记为不可用，避免重复尝试
+        return None
     _timesfm_lock = False
     return _timesfm_model
 
